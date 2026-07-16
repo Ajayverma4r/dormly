@@ -1,0 +1,8 @@
+# Ignore backend secrets and heavy folders
+backend/node_modules/
+backend/.env
+backend/uploads/
+
+# Ignore root zip files and OS clutter
+*.zip
+.DS_Store
