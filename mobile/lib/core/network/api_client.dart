@@ -10,9 +10,9 @@ class ApiClient {
   final _storage = const FlutterSecureStorage();
 
   ApiClient() {
-    dio = Dio(BaseOptions(baseUrl: const String.fromEnvironment(
+   dio = Dio(BaseOptions(baseUrl: const String.fromEnvironment(
       'API_BASE_URL',
-      defaultValue: 'http://localhost:4000',
+      defaultValue: 'https://dormly-backend.onrender.com',
     )));
 
     dio.interceptors.add(InterceptorsWrapper(

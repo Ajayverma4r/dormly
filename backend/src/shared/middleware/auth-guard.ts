@@ -13,11 +13,15 @@ export interface AuthedRequest extends Request {
 
 export function authGuard(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
+  // Reports/downloads open as plain links (browser can't attach custom headers),
+  // so we also accept the token as a query param for exactly that case.
+  const token = header?.startsWith('Bearer ') ? header.slice(7) : (req.query.token as string | undefined);
+  if (!token) {
     return res.status(401).json({ error: 'Missing bearer token' });
   }
   try {
-    const payload = jwt.verify(header.slice(7), env.jwtAccessSecret) as any;
+    const payload = jwt.verify(token, env.jwtAccessSecret) as any;
+    
     req.userId = payload.sub;
     req.ctxType = payload.ctxType;
     req.ctxId = payload.ctxId;

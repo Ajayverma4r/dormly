@@ -8,6 +8,7 @@ import { billingRouter } from '@modules/billing/billing.routes';
 import { analyticsRouter } from '@modules/analytics/analytics.routes';
 import { complaintRouter } from '@modules/complaints/complaint.routes';
 import { staffRouter } from '@modules/staff/staff.routes';
+import { reportsRouter } from '@modules/reports/reports.routes';
 
 const controller = new PropertiesController();
 export const propertiesRouter = Router();
@@ -22,3 +23,4 @@ propertiesRouter.use('/:propertyId/tenancies', requirePropertyAccess, tenancyRou
 propertiesRouter.use('/:propertyId/analytics', requirePropertyAccess, analyticsRouter);
 propertiesRouter.use('/:propertyId/complaints', requirePropertyAccess, complaintRouter);
 propertiesRouter.use('/:propertyId/staff', requirePropertyAccess, staffRouter);
+propertiesRouter.use('/:propertyId/reports', requirePropertyAccess, reportsRouter);
