@@ -14,6 +14,8 @@ import '../../../analytics/data/analytics_repository.dart';
 import '../../../complaints/presentation/complaints_list_screen.dart';
 import '../../../staff/presentation/staff_list_screen.dart';
 import '../../../auth/data/auth_repository.dart';
+import '../../../reports/presentation/reports_screen.dart';
+import '../property_shell_screen.dart';
 
 final hierarchyLevelsProvider =
     FutureProvider.family<List<HierarchyLevel>, String>((ref, propertyId) async {
@@ -58,10 +60,10 @@ class DynamicDashboardScreen extends ConsumerWidget {
         // Staff's entire job is complaints — no rooms, billing, or analytics
         // access at all. They land directly on the Complaints screen with
         // nothing else visible.
-        if (role == 'staff') {
+       if (role == 'staff') {
           return ComplaintsListScreen(propertyId: propertyId, isRoot: true);
         }
-        return _OwnerManagerDashboard(propertyId: propertyId, propertyName: propertyName, role: role);
+        return PropertyShellScreen(propertyId: propertyId, propertyName: propertyName);
       },
     );
   }
@@ -182,6 +184,13 @@ class _OwnerManagerDashboard extends ConsumerWidget {
                       builder: (context) => ComplaintsListScreen(propertyId: propertyId),
                     ));
                   }),
+
+                  if (canManage)
+                    _quickAction(context, 'Reports', Icons.description_outlined, const Color(0xFF0891B2), () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => ReportsScreen(propertyId: propertyId),
+                      ));
+                    }),
                   if (isOwnerOrAdmin)
                     _quickAction(context, 'Team', Icons.badge_outlined, const Color(0xFF7C3AED), () {
                       Navigator.of(context).push(MaterialPageRoute(

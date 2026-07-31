@@ -18,6 +18,11 @@ class TenancyRepository {
     return List<Map<String, dynamic>>.from(res.data['data']);
   }
 
+  Future<List<Map<String, dynamic>>> listByProperty(String propertyId) async {
+    final res = await _client.dio.get('/v1/properties/$propertyId/tenancies');
+    return List<Map<String, dynamic>>.from(res.data['data']);
+  }
+
   Future<Map<String, dynamic>> create(
     String propertyId, {
     required String nodeId,
