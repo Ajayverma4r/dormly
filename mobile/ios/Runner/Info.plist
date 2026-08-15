@@ -66,5 +66,20 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Google AdMob — replace with your production App ID before release.
+	     Test App ID is safe to use during development. -->
+	<key>GADApplicationIdentifier</key>
+	<string>ca-app-pub-3940256099942544~3347511713</string>
+	<!-- Razorpay: UPI app deep-link callbacks on iOS -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>upi</string>
+		<string>paytm</string>
+		<string>phonepe</string>
+		<string>gpay</string>
+		<string>bhim</string>
+		<string>credpay</string>
+		<string>mobikwik</string>
+	</array>
 </dict>
 </plist>

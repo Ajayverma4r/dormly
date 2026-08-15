@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../staff/presentation/staff_list_screen.dart';
+import '../../subscription/presentation/paywall_screen.dart';
 
 class PropertyMoreScreen extends ConsumerWidget {
   final String propertyId;
@@ -25,22 +26,21 @@ class PropertyMoreScreen extends ConsumerWidget {
         children: [
           Text(propertyName, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 16),
-          if (isOwnerOrAdmin)
+          if (isOwnerOrAdmin) ...[
             _tile(context, 'Team', 'Manage staff & managers', Icons.badge_outlined,
                 () => Navigator.of(context).push(MaterialPageRoute(builder: (context) => StaffListScreen(propertyId: propertyId)))),
+            const SizedBox(height: 10),
+            _tile(context, 'Subscription & Billing', 'Manage your plan, view invoices', Icons.workspace_premium_outlined,
+                () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PaywallScreen()))),
+          ],
           if (canManage) ...[
             const SizedBox(height: 10),
             _tile(context, 'Structure Settings', 'Rename, reorder, add levels', Icons.tune,
                 () => context.push('/dashboard/$propertyId/structure')),
           ],
           const SizedBox(height: 10),
-          _tile(context, 'All Properties', 'Switch to another property', Icons.apartment_outlined, () {
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            } else {
-              context.go('/properties');
-            }
-          }),
+          _tile(context, 'All Properties', 'Switch to another property', Icons.apartment_outlined,
+              () => context.go('/home')),
           const SizedBox(height: 24),
           const Divider(),
           const SizedBox(height: 12),

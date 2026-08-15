@@ -16,7 +16,6 @@ import '../../features/structure/presentation/structure_editor/structure_editor_
 import '../../features/properties/presentation/properties_list_screen.dart';
 import '../../features/auth/presentation/context_picker_screen.dart';
 import '../../features/tenant_portal/presentation/tenant_dashboard_screen.dart';
-import '../../features/home/presentation/main_shell_screen.dart';
 import '../../features/staff/presentation/invitations_screen.dart';
 import '../../features/notifications/presentation/notifications_screen.dart';
 
@@ -25,12 +24,28 @@ final appRouter = GoRouter(
   routes: [
     GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
     GoRoute(path: '/login', builder: (context, state) => const PhoneLoginScreen()),
-    GoRoute(path: '/otp', builder: (context, state) => OtpVerifyScreen(
-          phone: state.extra as String? ?? '',
-        )),
-        GoRoute(path: '/onboarding/welcome', builder: (context, state) => const WelcomeScreen()),
+    GoRoute(
+      path: '/otp',
+      builder: (context, state) => OtpVerifyScreen(phone: state.extra as String? ?? ''),
+    ),
+    GoRoute(path: '/onboarding/welcome', builder: (context, state) => const WelcomeScreen()),
     GoRoute(path: '/onboarding/create-property', builder: (context, state) => const PropertyWizardScreen()),
     GoRoute(path: '/dashboard/empty', builder: (context, state) => const EmptyDashboardScreen()),
+
+    // Primary property shell — all roles land here after login.
+    // DynamicDashboardScreen handles the role check internally:
+    //   owner/admin/manager → PropertyShellScreen (5-tab nav)
+    //   staff              → ComplaintsListScreen
+    GoRoute(
+      path: '/property/:propertyId',
+      builder: (context, state) => DynamicDashboardScreen(
+        propertyId: state.pathParameters['propertyId']!,
+        propertyName: (state.extra as Map?)?['propertyName'] ?? 'Dashboard',
+      ),
+    ),
+
+    // Legacy deep-link alias — kept so any existing push('/dashboard/:id') calls
+    // still work without a breaking change.
     GoRoute(
       path: '/dashboard/:propertyId',
       builder: (context, state) => DynamicDashboardScreen(
@@ -38,31 +53,33 @@ final appRouter = GoRouter(
         propertyName: (state.extra as Map?)?['propertyName'] ?? 'Dashboard',
       ),
     ),
+
     GoRoute(
-  path: '/dashboard/:propertyId/structure',
-  builder: (context, state) => StructureEditorScreen(
-    propertyId: state.pathParameters['propertyId']!,
-  ),
-),
+      path: '/dashboard/:propertyId/structure',
+      builder: (context, state) => StructureEditorScreen(
+        propertyId: state.pathParameters['propertyId']!,
+      ),
+    ),
 
-GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
+    GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
 
-GoRoute(path: '/home', builder: (context, state) => const MainShellScreen()),
+    // /home is the property picker for owners with multiple properties.
+    GoRoute(path: '/home', builder: (context, state) => const PropertiesListScreen()),
+    GoRoute(path: '/properties', builder: (context, state) => const PropertiesListScreen()),
 
-GoRoute(
-  path: '/select-context',
-  builder: (context, state) => ContextPickerScreen(
-    contexts: state.extra as List<Map<String, dynamic>>,
-  ),
-),
-GoRoute(
-  path: '/invitations',
-  builder: (context, state) => InvitationsScreen(
-    invitations: state.extra as List<Map<String, dynamic>>,
-  ),
-),
+    GoRoute(
+      path: '/select-context',
+      builder: (context, state) => ContextPickerScreen(
+        contexts: state.extra as List<Map<String, dynamic>>,
+      ),
+    ),
+    GoRoute(
+      path: '/invitations',
+      builder: (context, state) => InvitationsScreen(
+        invitations: state.extra as List<Map<String, dynamic>>,
+      ),
+    ),
 
-GoRoute(path: '/tenant/dashboard', builder: (context, state) => const TenantDashboardScreen()),
-GoRoute(path: '/properties', builder: (context, state) => const PropertiesListScreen()),
+    GoRoute(path: '/tenant/dashboard', builder: (context, state) => const TenantDashboardScreen()),
   ],
 );

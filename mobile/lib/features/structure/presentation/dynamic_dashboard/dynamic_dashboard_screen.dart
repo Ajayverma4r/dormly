@@ -95,7 +95,7 @@ class _OwnerManagerDashboard extends ConsumerWidget {
             if (Navigator.of(context).canPop()) {
               Navigator.of(context).pop();
             } else {
-              context.go('/properties'); // only reached when this IS the root (e.g. Manager's direct post-login landing)
+              context.go('/home');
             }
           },
         ),

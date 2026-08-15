@@ -17,4 +17,11 @@ export const env = {
   jwtRefreshTtl: process.env.JWT_REFRESH_TTL ?? '30d',
   otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS ?? 300),
   otpBypass: process.env.OTP_BYPASS === 'true',
+  // Razorpay — obtain from https://dashboard.razorpay.com/app/keys
+  razorpayKeyId: required('RAZORPAY_KEY_ID'),
+  razorpayKeySecret: required('RAZORPAY_KEY_SECRET'),
+  // Set in Razorpay Dashboard → Webhooks → Secret
+  razorpayWebhookSecret: required('RAZORPAY_WEBHOOK_SECRET'),
+  // Grace period (days) granted after a payment failure before downgrading to free
+  subscriptionGracePeriodDays: Number(process.env.SUBSCRIPTION_GRACE_PERIOD_DAYS ?? 3),
 };

@@ -59,14 +59,19 @@ Future<void> routeAfterContextSelection(
     if (!context.mounted) return;
     if (properties.isEmpty) {
       context.go('/onboarding/welcome');
+    } else if (properties.length == 1) {
+      // Single property — skip the picker and open the 5-tab shell immediately.
+      final p = properties.first;
+      context.go('/property/${p['id']}', extra: {'propertyName': p['name']});
     } else {
+      // Multiple properties — show the property picker first.
       context.go('/home');
     }
   } else if (scopedPropertyId != null) {
-    // Manager/Staff — go straight to their one assigned property's dashboard.
+    // Manager/Staff — go straight to their assigned property's 5-tab shell.
     final property = await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
     if (!context.mounted) return;
-    context.go('/dashboard/$scopedPropertyId', extra: {'propertyName': property['name']});
+    context.go('/property/$scopedPropertyId', extra: {'propertyName': property['name']});
   } else {
     context.go('/onboarding/welcome');
   }

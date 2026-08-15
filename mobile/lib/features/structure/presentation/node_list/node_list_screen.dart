@@ -18,6 +18,9 @@ import '../../data/structure_repository.dart';
 import '../../../../core/widgets/dynamic_icon.dart';
 import '../../../../core/widgets/dormly_empty_state.dart';
 import '../../../tenancies/presentation/node_detail_screen.dart';
+import '../../../subscription/presentation/subscription_provider.dart';
+import '../../../subscription/presentation/paywall_screen.dart';
+import '../../../subscription/presentation/widgets/quota_warning_banner.dart';
 final nodeListProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String levelId, String? parentNodeId)>(
   (ref, args) async {
@@ -216,42 +219,70 @@ if (children.isEmpty) {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
         data: (nodes) {
-          if (nodes.isEmpty) {
-            return DormlyEmptyState(
-              title: 'No ${level.displayName.toLowerCase()} yet',
-              subtitle: 'Tap the + button to add your first one.',
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: nodes.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final node = nodes[index];
-              return Card(
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  side: BorderSide(color: Theme.of(context).dividerColor),
+          // Leaf levels are the actual room/unit/bed level (no child levels).
+          // We only show a room quota warning and gate creation at that level.
+          final isLeafLevel = _childLevels.isEmpty;
+          return Column(
+            children: [
+              if (isLeafLevel)
+                QuotaWarningBanner(
+                  quotaKey: 'max_rooms',
+                  currentCount: nodes.length,
+                  resourceName: '${level.displayName.toLowerCase()}s',
                 ),
-                child: ListTile(
-                  leading: DynamicIcon(name: level.icon, colorHex: level.color),
-                  title: Text(node['name'] ?? ''),
-                  trailing: _childLevels.isEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.more_vert),
-                          onPressed: () => _openNodeActions(context, ref, node),
-                        )
-                      : const Icon(Icons.chevron_right),
-                  onTap: () => _onNodeTap(context, ref, node),
-                ),
-              );
-            },
+              Expanded(
+                child: nodes.isEmpty
+                    ? DormlyEmptyState(
+                        title: 'No ${level.displayName.toLowerCase()} yet',
+                        subtitle: 'Tap the + button to add your first one.',
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: nodes.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final node = nodes[index];
+                          return Card(
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(color: Theme.of(context).dividerColor),
+                            ),
+                            child: ListTile(
+                              leading: DynamicIcon(name: level.icon, colorHex: level.color),
+                              title: Text(node['name'] ?? ''),
+                              trailing: _childLevels.isEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.more_vert),
+                                      onPressed: () => _openNodeActions(context, ref, node),
+                                    )
+                                  : const Icon(Icons.chevron_right),
+                              onTap: () => _onNodeTap(context, ref, node),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
           );
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _addNode(context, ref),
+        onPressed: () {
+          // Only gate creation at the leaf level (actual rooms/units/beds).
+          if (_childLevels.isEmpty) {
+            final nodes = ref
+                .read(nodeListProvider((propertyId, level.id, parentNodeId)))
+                .valueOrNull ?? [];
+            final entitlements = ref.read(entitlementsProvider);
+            if (!entitlements.hasQuota('max_rooms', nodes.length)) {
+              Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+              return;
+            }
+          }
+          _addNode(context, ref);
+        },
         icon: const Icon(Icons.add),
         label: Text('Add ${level.displayName}'),
       ),

@@ -22,15 +22,9 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: Icon(Navigator.of(context).canPop() ? Icons.arrow_back : Icons.apps),
-          tooltip: 'Back',
-          onPressed: () {
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            } else {
-              context.go('/properties');
-            }
-          },
+          icon: const Icon(Icons.apps),
+          tooltip: 'Switch property',
+          onPressed: () => context.go('/home'),
         ),
         title: Text(propertyName),
       ),

@@ -9,6 +9,9 @@ import 'package:go_router/go_router.dart';
 import '../data/properties_repository.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../../core/widgets/property_illustration.dart';
+import '../../subscription/presentation/subscription_provider.dart';
+import '../../subscription/presentation/paywall_screen.dart';
+import '../../subscription/presentation/widgets/quota_warning_banner.dart';
 
 final myPropertiesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
   final authRepo = ref.watch(authRepositoryProvider);
@@ -52,64 +55,91 @@ class PropertiesListScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
         data: (properties) {
-          if (properties.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const PropertyIllustration(),
-                    const SizedBox(height: 20),
-                    const Text('No Properties Yet', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Create your first property to start managing\nhostels, apartments, offices, or any other property.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2B5CFF)),
-                      onPressed: () => context.push('/onboarding/create-property'),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        child: Text('Create Property', style: TextStyle(color: Colors.white)),
-                      ),
-                    ),
-                  ],
-                ),
+          return Column(
+            children: [
+              // Quota banner — hidden automatically under 80% of limit or on unlimited plans.
+              QuotaWarningBanner(
+                quotaKey: 'max_properties',
+                currentCount: properties.length,
+                resourceName: 'properties',
               ),
-            );
-          }
-
-          return ListView.separated(
-            padding: const EdgeInsets.all(20),
-            itemCount: properties.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final p = properties[index];
-              return Container(
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  leading: const CircleAvatar(
-                    backgroundColor: Color(0xFFEFF2FF),
-                    child: Icon(Icons.apartment, color: Color(0xFF2B5CFF)),
-                  ),
-                  title: Text(p['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text(p['city'] ?? p['property_type_key'] ?? '', style: TextStyle(color: Colors.grey.shade600)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/dashboard/${p['id']}', extra: {'propertyName': p['name']}),
-                ),
-              );
-            },
+              Expanded(
+                child: properties.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const PropertyIllustration(),
+                              const SizedBox(height: 20),
+                              const Text('No Properties Yet',
+                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Create your first property to start managing\nhostels, apartments, offices, or any other property.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                              const SizedBox(height: 20),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2B5CFF)),
+                                onPressed: () => context.push('/onboarding/create-property'),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                  child: Text('Create Property', style: TextStyle(color: Colors.white)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(20),
+                        itemCount: properties.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final p = properties[index];
+                          return Container(
+                            decoration: BoxDecoration(
+                                color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                            child: ListTile(
+                              contentPadding:
+                                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              leading: const CircleAvatar(
+                                backgroundColor: Color(0xFFEFF2FF),
+                                child: Icon(Icons.apartment, color: Color(0xFF2B5CFF)),
+                              ),
+                              title: Text(p['name'] ?? '',
+                                  style: const TextStyle(fontWeight: FontWeight.w700)),
+                              subtitle: Text(p['city'] ?? p['property_type_key'] ?? '',
+                                  style: TextStyle(color: Colors.grey.shade600)),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => context.go('/property/${p['id']}',
+                                  extra: {'propertyName': p['name']}),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
           );
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: const Color(0xFF2B5CFF),
-        onPressed: () => context.push('/onboarding/create-property'),
+        onPressed: () {
+          // Quota gate: redirect to paywall if the org is at its property limit.
+          final entitlements = ref.read(entitlementsProvider);
+          final currentCount =
+              ref.read(myPropertiesProvider).valueOrNull?.length ?? 0;
+          if (!entitlements.hasQuota('max_properties', currentCount)) {
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+            return;
+          }
+          context.push('/onboarding/create-property');
+        },
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text('Add Property', style: TextStyle(color: Colors.white)),
       ),

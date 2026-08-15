@@ -6,6 +6,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../analytics/data/analytics_repository.dart';
 import '../../properties/data/properties_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 
 final orgIdProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getOrganizationId(),
@@ -122,12 +123,17 @@ class HomeDashboardScreen extends ConsumerWidget {
                           title: Text(p['name'] ?? '', style: theme.textTheme.titleMedium),
                           subtitle: Text(p['city'] ?? '', style: theme.textTheme.bodyMedium),
                           trailing: const Icon(Icons.chevron_right),
-                          onTap: () => context.push('/dashboard/${p['id']}', extra: {'propertyName': p['name']}),
+                          onTap: () => context.go('/property/${p['id']}', extra: {'propertyName': p['name']}),
                         ),
                       )).toList(),
                 );
               },
             ),
+            // Ad banner — only rendered when ads_enabled == true in org entitlements.
+            // Pro/Enterprise orgs have ads_enabled = false and see nothing here.
+            const SizedBox(height: 12),
+            const AdBannerGate(),
+            const SizedBox(height: 8),
           ],
         ),
       ),

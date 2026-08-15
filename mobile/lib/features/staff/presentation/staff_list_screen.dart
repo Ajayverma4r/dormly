@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/staff_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../subscription/presentation/subscription_provider.dart';
+import '../../subscription/presentation/paywall_screen.dart';
+import '../../subscription/presentation/widgets/quota_warning_banner.dart';
 
 final staffListProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
   (ref, propertyId) => ref.watch(staffRepositoryProvider).listForProperty(propertyId),
@@ -118,69 +121,103 @@ class StaffListScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
         data: (staff) {
-          if (staff.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.badge_outlined, size: 48, color: AppColors.slate),
-                    const SizedBox(height: 12),
-                    Text('No team members yet', style: theme.textTheme.bodyLarge),
-                    const SizedBox(height: 4),
-                    Text('Invite a Manager or Staff member to help run this property.',
-                        textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
-                  ],
-                ),
+          return Column(
+            children: [
+              // Quota banner — auto-hidden under 80% of limit or on unlimited plans.
+              QuotaWarningBanner(
+                quotaKey: 'max_staff_members',
+                currentCount: staff.length,
+                resourceName: 'staff members',
               ),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: staff.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, i) {
-              final m = staff[i];
-              return Card(
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  side: BorderSide(color: theme.dividerColor),
-                ),
-                child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: AppColors.canvas,
-                    child: Icon(Icons.person, color: AppColors.blueprint),
-                  ),
-                  title: Text(m['name'] ?? m['phone'], style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text(m['phone']),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.blueprint.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
+              Expanded(
+                child: staff.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.badge_outlined, size: 48, color: AppColors.slate),
+                              const SizedBox(height: 12),
+                              Text('No team members yet', style: theme.textTheme.bodyLarge),
+                              const SizedBox(height: 4),
+                              Text(
+                                  'Invite a Manager or Staff member to help run this property.',
+                                  textAlign: TextAlign.center,
+                                  style: theme.textTheme.bodyMedium),
+                            ],
+                          ),
                         ),
-                        child: Text(m['role'].toString().toUpperCase(),
-                            style: const TextStyle(color: AppColors.blueprint, fontSize: 10, fontWeight: FontWeight.w700)),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: staff.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, i) {
+                          final m = staff[i];
+                          return Card(
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(color: theme.dividerColor),
+                            ),
+                            child: ListTile(
+                              leading: const CircleAvatar(
+                                backgroundColor: AppColors.canvas,
+                                child: Icon(Icons.person, color: AppColors.blueprint),
+                              ),
+                              title: Text(m['name'] ?? m['phone'],
+                                  style: const TextStyle(fontWeight: FontWeight.w700)),
+                              subtitle: Text(m['phone']),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.blueprint.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(m['role'].toString().toUpperCase(),
+                                        style: const TextStyle(
+                                            color: AppColors.blueprint,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700)),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    onPressed: () => _confirmRemove(context, ref, m),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () => _confirmRemove(context, ref, m),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _inviteStaff(context, ref),
+        onPressed: () {
+          // Boolean gate: can_create_staff must be true on the plan.
+          if (!ref.read(canProvider('can_create_staff'))) {
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+            return;
+          }
+          // Quota gate: block invite when at the staff member limit.
+          final entitlements = ref.read(entitlementsProvider);
+          final currentCount =
+              ref.read(staffListProvider(propertyId)).valueOrNull?.length ?? 0;
+          if (!entitlements.hasQuota('max_staff_members', currentCount)) {
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+            return;
+          }
+          _inviteStaff(context, ref);
+        },
         icon: const Icon(Icons.person_add_outlined),
         label: const Text('Invite'),
       ),
