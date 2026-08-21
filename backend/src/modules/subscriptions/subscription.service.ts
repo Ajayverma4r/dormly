@@ -101,6 +101,53 @@ export class SubscriptionService {
     );
   }
 
+  /**
+   * Ensures the org has a subscriptions row. Legacy orgs created before
+   * subscription provisioning get a Free plan row (status=expired).
+   */
+  async ensureSubscriptionRow(organizationId: string): Promise<{
+    id: string;
+    plan_id: string;
+    status: string;
+  }> {
+    const existing = await this.getOrgSubscription(organizationId);
+    if (existing) {
+      return {
+        id: existing.id as string,
+        plan_id: existing.plan_id as string,
+        status: existing.status as string,
+      };
+    }
+
+    const freePlans = await query<{ id: string }>(
+      `SELECT id FROM plans WHERE slug = 'free' AND is_active = true`,
+    );
+    if (!freePlans.length) {
+      throw new Error("'free' plan is missing from the database. Run subscription seeds.");
+    }
+
+    const inserted = await query<{ id: string; plan_id: string; status: string }>(
+      `INSERT INTO subscriptions
+         (organization_id, plan_id, status, current_period_start, current_period_end)
+       VALUES ($1, $2, 'expired', now(), now())
+       ON CONFLICT (organization_id) DO UPDATE
+         SET updated_at = subscriptions.updated_at
+       RETURNING id, plan_id, status`,
+      [organizationId, freePlans[0].id],
+    );
+
+    // ON CONFLICT DO UPDATE RETURNING always returns a row in Postgres.
+    if (inserted.length) return inserted[0];
+
+    const again = await this.getOrgSubscription(organizationId);
+    if (!again) throw new Error('Failed to create subscription record.');
+    return {
+      id: again.id as string,
+      plan_id: again.plan_id as string,
+      status: again.status as string,
+    };
+  }
+
   // ---- Read ---------------------------------------------------------------
 
   async getOrgSubscription(organizationId: string) {
@@ -169,8 +216,7 @@ export class SubscriptionService {
       throw new Error('Cannot create a payment order for a zero-price plan.');
     }
 
-    const sub = await this.getOrgSubscription(organizationId);
-    if (!sub) throw new Error('Organization has no subscription record. Create trial first.');
+    const sub = await this.ensureSubscriptionRow(organizationId);
 
     const periodEnd = new Date();
     if (billingCycle === 'yearly') {
@@ -554,8 +600,8 @@ export class SubscriptionService {
     if (!plans.length) throw new Error(`Plan '${resolvedSlug}' not found in database.`);
     const planId = plans[0].id;
 
-    const sub = await this.getOrgSubscription(organizationId);
-    if (!sub) throw new Error('No subscription record for this organization.');
+    // Legacy orgs may have no subscriptions row — create Free, then upgrade.
+    const sub = await this.ensureSubscriptionRow(organizationId);
 
     const periodEnd = new Date();
     if (resolvedSlug === 'pro_yearly') {
@@ -582,8 +628,8 @@ export class SubscriptionService {
     await query(
       `INSERT INTO subscription_history
          (organization_id, subscription_id, from_plan_id, to_plan_id,
-          from_status, to_status, reason)
-       VALUES ($1, $2, $3, $4, $5, 'active', 'test_activation')`,
+          from_status, to_status, reason, note)
+       VALUES ($1, $2, $3, $4, $5, 'active', 'manual_override', 'test_activation')`,
       [organizationId, sub.id, sub.plan_id, planId, sub.status],
     );
   }
@@ -595,6 +641,7 @@ export class SubscriptionService {
    * Already-trialing / paid orgs, and orgs that already used a trial, are ineligible.
    */
   async canClaimFreeTrial(organizationId: string): Promise<boolean> {
+    await this.ensureSubscriptionRow(organizationId);
     const sub = await this.getOrgSubscription(organizationId);
     if (!sub) return false;
     if (sub.status === 'trialing' || sub.status === 'active' || sub.status === 'past_due') {
@@ -616,6 +663,7 @@ export class SubscriptionService {
    * Org is treated as Premium (pro_trial entitlements) until trial_ends_at.
    */
   async startFreeTrial(organizationId: string, userId: string): Promise<{ trialEndsAt: Date }> {
+    await this.ensureSubscriptionRow(organizationId);
     const eligible = await this.canClaimFreeTrial(organizationId);
     if (!eligible) {
       throw new Error('Free trial is not available for this organization.');
@@ -651,8 +699,8 @@ export class SubscriptionService {
     await query(
       `INSERT INTO subscription_history
          (organization_id, subscription_id, from_plan_id, to_plan_id,
-          from_status, to_status, reason, changed_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, 'trialing', 'trial_claimed', $6)`,
+          from_status, to_status, reason, changed_by_user_id, note)
+       VALUES ($1, $2, $3, $4, $5, 'trialing', 'trial_started', $6, 'trial_claimed')`,
       [organizationId, sub.id, sub.plan_id, trialPlan.id, sub.status, userId],
     );
 

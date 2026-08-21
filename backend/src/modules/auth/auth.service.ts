@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { query } from '@config/db';
 import { env } from '@config/env';
+import { SubscriptionService } from '../subscriptions/subscription.service';
 
 function hashOtp(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex');
@@ -71,6 +72,18 @@ export class AuthService {
         `INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')`,
         [user.id, organizationId],
       );
+
+      // Provision free/trial subscription row so paywall & test-activate always work.
+      try {
+        await new SubscriptionService().createTrialSubscription(
+          organizationId,
+          user.id,
+        );
+      } catch (err) {
+        // Non-fatal at signup — ensureSubscriptionRow will heal later.
+        // eslint-disable-next-line no-console
+        console.error('[auth] createTrialSubscription failed:', err);
+      }
     } else {
       // Existing users don't necessarily have an organization — a tenant-only
       // phone number never gets one. Only owners/admins do.
