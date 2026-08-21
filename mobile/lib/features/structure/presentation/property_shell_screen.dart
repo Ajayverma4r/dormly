@@ -1,4 +1,9 @@
 // features/structure/presentation/property_shell_screen.dart
+//
+// Bottom nav (5 tabs):
+//   0 Dashboard · 1 Tenants · 2 Payments · 3 Rooms · 4 Menu
+// Property switcher = global app-bar dropdown (bottom sheet), not a full screen.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,10 +12,10 @@ import '../../properties/data/properties_repository.dart';
 import '../../properties/domain/property_monetization.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../subscription/presentation/subscription_provider.dart';
+import '../../billing/presentation/invoices_list_screen.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show contextRoleProvider;
 import 'property_dashboard_tab_screen.dart';
 import 'property_structure_tab_screen.dart';
-import 'operations_tab_screen.dart';
 import 'property_more_screen.dart';
 import '../../tenancies/presentation/residents_list_screen.dart';
 
@@ -20,8 +25,6 @@ final propertyDetailProvider =
       ref.watch(propertiesRepositoryProvider).getById(propertyId),
 );
 
-// "Dynamic label based on property configuration" — keyed off the property
-// type chosen in the wizard, defaulting to the universal "Residents".
 String _peopleLabelFor(String? propertyTypeKey) {
   switch (propertyTypeKey) {
     case 'apartment':
@@ -57,6 +60,8 @@ class PropertyShellScreen extends ConsumerStatefulWidget {
 
 class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
   int _index = 0;
+
+  void _goToTab(int i) => setState(() => _index = i);
 
   @override
   Widget build(BuildContext context) {
@@ -155,54 +160,74 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                 _peopleLabelFor(property['property_type_key'] as String?);
 
             final tabs = [
+              // 0 — Dashboard
               PropertyDashboardTabScreen(
-                  propertyId: widget.propertyId,
-                  propertyName: widget.propertyName),
-              PropertyStructureTabScreen(
-                  propertyId: widget.propertyId, canManage: canManage),
+                propertyId: widget.propertyId,
+                propertyName: widget.propertyName,
+                canManage: canManage,
+                onAddTenant: () => _goToTab(1),
+                onCollectRent: () => _goToTab(2),
+              ),
+              // 1 — Tenants
               ResidentsListScreen(
-                  propertyId: widget.propertyId, label: peopleLabel),
-              OperationsTabScreen(
-                  propertyId: widget.propertyId, canManage: canManage),
+                propertyId: widget.propertyId,
+                label: peopleLabel,
+              ),
+              // 2 — Payments (Rent & Billing)
+              InvoicesListScreen(
+                propertyId: widget.propertyId,
+                asTab: true,
+              ),
+              // 3 — Rooms / Units (structure of the active property)
+              PropertyStructureTabScreen(
+                propertyId: widget.propertyId,
+                canManage: canManage,
+              ),
+              // 4 — Menu
               PropertyMoreScreen(
-                  propertyId: widget.propertyId,
-                  propertyName: widget.propertyName,
-                  role: role),
+                propertyId: widget.propertyId,
+                propertyName: widget.propertyName,
+                role: role,
+              ),
             ];
 
             return Scaffold(
+              key: const ValueKey('property-bottom-nav-v2'),
               body: IndexedStack(index: _index, children: tabs),
               bottomNavigationBar: NavigationBar(
+                key: const ValueKey('nav-bar-dashboard-tenants-payments-rooms-menu'),
                 selectedIndex: _index,
-                onDestinationSelected: (i) => setState(() => _index = i),
+                onDestinationSelected: _goToTab,
                 backgroundColor: AppColors.surface,
                 indicatorColor: AppColors.blueprint.withOpacity(0.12),
-                destinations: [
-                  const NavigationDestination(
-                      icon: Icon(Icons.home_outlined),
-                      selectedIcon:
-                          Icon(Icons.home, color: AppColors.blueprint),
-                      label: 'Dashboard'),
-                  const NavigationDestination(
-                      icon: Icon(Icons.apartment_outlined),
-                      selectedIcon:
-                          Icon(Icons.apartment, color: AppColors.blueprint),
-                      label: 'Structure'),
+                destinations: const [
                   NavigationDestination(
-                      icon: const Icon(Icons.people_outline),
-                      selectedIcon: const Icon(Icons.people,
-                          color: AppColors.blueprint),
-                      label: peopleLabel),
-                  const NavigationDestination(
-                      icon: Icon(Icons.build_outlined),
-                      selectedIcon:
-                          Icon(Icons.build, color: AppColors.blueprint),
-                      label: 'Operations'),
-                  const NavigationDestination(
-                      icon: Icon(Icons.more_horiz),
-                      selectedIcon:
-                          Icon(Icons.more_horiz, color: AppColors.blueprint),
-                      label: 'More'),
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home, color: AppColors.blueprint),
+                    label: 'Dashboard',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.people_outline),
+                    selectedIcon: Icon(Icons.people, color: AppColors.blueprint),
+                    label: 'Tenants',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.account_balance_wallet_outlined),
+                    selectedIcon: Icon(Icons.account_balance_wallet,
+                        color: AppColors.blueprint),
+                    label: 'Payments',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.meeting_room_outlined),
+                    selectedIcon:
+                        Icon(Icons.meeting_room, color: AppColors.blueprint),
+                    label: 'Rooms',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.menu),
+                    selectedIcon: Icon(Icons.menu, color: AppColors.blueprint),
+                    label: 'Menu',
+                  ),
                 ],
               ),
             );

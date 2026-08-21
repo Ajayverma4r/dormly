@@ -10,10 +10,16 @@ class PropertiesRepository {
   final ApiClient _client;
   PropertiesRepository(this._client);
 
-  Future<List<dynamic>> list(String organizationId) async {
-    final res = await _client.dio.get('/v1/properties', queryParameters: {
-      'organizationId': organizationId,
-    });
+  /// Lists properties for the caller's organization.
+  /// [organizationId] is optional — backend prefers the JWT organization context.
+  Future<List<dynamic>> list([String? organizationId]) async {
+    final res = await _client.dio.get(
+      '/v1/properties',
+      queryParameters: {
+        if (organizationId != null && organizationId.isNotEmpty)
+          'organizationId': organizationId,
+      },
+    );
     return res.data['data'] as List;
   }
 

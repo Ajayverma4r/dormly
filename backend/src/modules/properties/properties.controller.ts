@@ -8,12 +8,24 @@ const service = new PropertiesService();
 export class PropertiesController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      // organizationId resolution from membership is elided here for brevity —
-      // in the full build this comes from a tenant-resolution middleware.
-      const organizationId = req.query.organizationId as string;
+      // Prefer org from the scoped JWT (SaaS global context). Query param is fallback
+      // for legacy clients — missing/empty query must not break authenticated owners.
+      const organizationId =
+        req.ctxType === 'organization' && req.ctxId
+          ? req.ctxId
+          : (req.query.organizationId as string | undefined);
+
+      if (!organizationId) {
+        return res.status(400).json({
+          error: 'No organization context. Select a workspace and try again.',
+        });
+      }
+
       const properties = await service.listForOrganization(organizationId);
       res.json({ data: properties });
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   };
 
   listTypes = async (_req: AuthedRequest, res: Response, next: NextFunction) => {

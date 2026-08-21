@@ -16,17 +16,20 @@ import '../../subscription/presentation/widgets/quota_warning_banner.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 
 final myPropertiesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
-  final authRepo = ref.watch(authRepositoryProvider);
+  final authRepo = ref.read(authRepositoryProvider);
+  final repo = ref.read(propertiesRepositoryProvider);
   final orgId = await authRepo.getOrganizationId();
-  if (orgId != null) {
-    return ref.watch(propertiesRepositoryProvider).list(orgId);
+  try {
+    // Backend resolves org from JWT context; orgId query is optional.
+    return await repo.list(orgId);
+  } catch (_) {
+    final scopedPropertyId = await authRepo.getScopedPropertyId();
+    if (scopedPropertyId != null) {
+      final property = await repo.getById(scopedPropertyId);
+      return [property];
+    }
+    rethrow;
   }
-  final scopedPropertyId = await authRepo.getScopedPropertyId();
-  if (scopedPropertyId != null) {
-    final property = await ref.watch(propertiesRepositoryProvider).getById(scopedPropertyId);
-    return [property];
-  }
-  return [];
 });
 
 class PropertiesListScreen extends ConsumerWidget {

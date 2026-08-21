@@ -38,10 +38,9 @@ final appRouter = GoRouter(
     GoRoute(path: '/onboarding/create-property', builder: (context, state) => const PropertyWizardScreen()),
     GoRoute(path: '/dashboard/empty', builder: (context, state) => const EmptyDashboardScreen()),
 
-    // Primary property shell — all roles land here after login.
-    // DynamicDashboardScreen handles the role check internally:
-    //   owner/admin/manager → PropertyShellScreen (5-tab nav)
-    //   staff              → ComplaintsListScreen
+    // Primary property shell — ONLY the new 5-tab nav:
+    // Dashboard | Tenants | Payments | Rooms | Menu
+    // DynamicDashboardScreen → PropertyShellScreen (staff → Complaints only).
     GoRoute(
       path: '/property/:propertyId',
       builder: (context, state) => DynamicDashboardScreen(
