@@ -24,4 +24,22 @@ export const env = {
   razorpayWebhookSecret: required('RAZORPAY_WEBHOOK_SECRET'),
   // Grace period (days) granted after a payment failure before downgrading to free
   subscriptionGracePeriodDays: Number(process.env.SUBSCRIPTION_GRACE_PERIOD_DAYS ?? 3),
+
+  /**
+   * Test payment bypass / mock checkout.
+   * Enabled when any of:
+   *   - OTP_BYPASS=true
+   *   - ALLOW_TEST_ACTIVATE=true
+   *   - Razorpay key is test (rzp_test_…) or placeholder
+   * Auto-disables once you switch to live rzp_live_ keys (unless OTP_BYPASS stays on).
+   */
+  get allowTestActivate(): boolean {
+    const key = process.env.RAZORPAY_KEY_ID ?? '';
+    return (
+      process.env.OTP_BYPASS === 'true' ||
+      process.env.ALLOW_TEST_ACTIVATE === 'true' ||
+      key.startsWith('rzp_test_') ||
+      key.includes('placeholder')
+    );
+  },
 };

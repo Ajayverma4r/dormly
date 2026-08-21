@@ -179,11 +179,8 @@ export class SubscriptionService {
       periodEnd.setMonth(periodEnd.getMonth() + 1);
     }
 
-    // Test mode: placeholder Razorpay keys or OTP_BYPASS — skip live Razorpay API.
-    const isTestMode =
-      env.otpBypass ||
-      env.razorpayKeyId.includes('placeholder') ||
-      env.razorpayKeySecret.includes('placeholder');
+    // Test mode: skip live Razorpay API (OTP bypass, test keys, or placeholder).
+    const isTestMode = env.allowTestActivate;
 
     let orderId: string;
     if (isTestMode) {
@@ -532,15 +529,17 @@ export class SubscriptionService {
 
   /**
    * Directly upgrades an org to a paid Pro plan with no Razorpay charge.
-   * Only callable when env.otpBypass is true (test / development mode).
+   * Allowed when OTP_BYPASS / ALLOW_TEST_ACTIVATE / rzp_test_* keys are in use.
    */
   async testActivatePro(
     organizationId: string,
     planSlug: 'pro_monthly' | 'pro_yearly' = 'pro_monthly',
     billingCycle: 'monthly' | 'yearly' = 'monthly',
   ): Promise<void> {
-    if (!env.otpBypass) {
-      throw new Error('Test activation is only available when OTP_BYPASS=true.');
+    if (!env.allowTestActivate) {
+      throw new Error(
+        'Test activation is disabled. Set OTP_BYPASS=true (or use Razorpay rzp_test_ keys) on the server.',
+      );
     }
 
     const resolvedSlug =

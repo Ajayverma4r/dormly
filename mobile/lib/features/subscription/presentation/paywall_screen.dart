@@ -4,6 +4,7 @@
 // Property monetization / free-tier ads are unchanged — trial & paid use
 // existing isPaidPlan / FeatureGate / AdBannerGate paths.
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
@@ -11,6 +12,21 @@ import '../../../core/theme/app_theme.dart';
 import '../data/subscription_repository.dart';
 import '../domain/subscription_plan.dart';
 import 'subscription_provider.dart';
+
+String _apiErrorMessage(Object e, {String fallback = 'Something went wrong'}) {
+  if (e is DioException) {
+    final data = e.response?.data;
+    if (data is Map && data['error'] != null) {
+      return data['error'].toString();
+    }
+    final code = e.response?.statusCode;
+    if (code == 404) {
+      return 'Endpoint not found on server. Redeploy the backend to Render.';
+    }
+    if (code != null) return 'Server error ($code). $fallback';
+  }
+  return e.toString();
+}
 
 const _kComparisonFeatures = [
   ('max_properties', 'Properties', false),
@@ -152,7 +168,9 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
       if (!mounted) return;
       setState(() => _orderLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not start payment: $e')),
+        SnackBar(
+          content: Text(_apiErrorMessage(e, fallback: 'Could not start payment')),
+        ),
       );
     }
   }
@@ -174,7 +192,9 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not start trial: $e')),
+        SnackBar(
+          content: Text(_apiErrorMessage(e, fallback: 'Could not start trial')),
+        ),
       );
     } finally {
       if (mounted) setState(() => _orderLoading = false);
@@ -192,7 +212,12 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Test activate failed: $e')),
+        SnackBar(
+          content: Text(
+            _apiErrorMessage(e, fallback: 'Test activate failed'),
+          ),
+          backgroundColor: AppColors.danger,
+        ),
       );
     } finally {
       if (mounted) setState(() => _orderLoading = false);
