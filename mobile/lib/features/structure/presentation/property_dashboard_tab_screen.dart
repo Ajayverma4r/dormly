@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../analytics/data/analytics_repository.dart';
 import '../../analytics/presentation/analytics_dashboard_screen.dart' show analyticsProvider;
+import '../../subscription/presentation/widgets/ad_banner_gate.dart';
+import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show activityProvider;
+import 'property_shell_screen.dart' show propertyDetailProvider;
 
 class PropertyDashboardTabScreen extends ConsumerWidget {
   final String propertyId;
@@ -17,7 +19,9 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final analyticsAsync = ref.watch(analyticsProvider(propertyId));
     final activityAsync = ref.watch(activityProvider(propertyId));
+    final propertyAsync = ref.watch(propertyDetailProvider(propertyId));
     final theme = Theme.of(context);
+    final propertyTypeKey = propertyAsync.valueOrNull?['property_type_key'] as String?;
 
     return Scaffold(
       appBar: AppBar(
@@ -31,6 +35,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          const ExpiryWarningBanner(),
           Text('Overview', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
           analyticsAsync.when(
@@ -94,6 +99,9 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
               );
             },
           ),
+          const SizedBox(height: 16),
+          Center(child: AdBannerGate(propertyTypeKey: propertyTypeKey)),
+          const SizedBox(height: 8),
         ],
       ),
     );

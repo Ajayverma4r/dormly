@@ -3,9 +3,9 @@
 --
 -- Plans:
 --   free          — permanent free tier
---   pro_trial     — 14-day full Pro access (auto-assigned on org signup)
---   pro_monthly   — ₹499/month, same entitlements as pro_trial
---   pro_yearly    — ₹4,999/year  (≈ ₹416/month, saves ~2 months)
+--   pro_trial     — 30-day full Pro access (auto-assigned on org signup)
+--   pro_monthly   — Early Bird ₹99/month (was ₹199)
+--   pro_yearly    — Early Bird ₹999/year (was ₹1999)
 --   enterprise    — custom pricing, not publicly listed
 --
 -- Quota semantics:  quota_value = -1  →  unlimited
@@ -29,18 +29,18 @@ VALUES
 
     ('pro_trial',
      'Pro Trial',
-     '14-day full Pro access — no credit card required. Auto-assigned on signup.',
-     0, 0, 14, false, true, 1),
+     '30-day full Pro access — no credit card required. Auto-assigned on signup.',
+     0, 0, 30, false, true, 1),
 
     ('pro_monthly',
      'Pro Monthly',
-     'Full access to all Pro features, billed every month.',
-     499, 0, 0, true, true, 2),
+     'Early Bird — full Pro access billed monthly. Limited-time launch price.',
+     99, 0, 0, true, true, 2),
 
     ('pro_yearly',
      'Pro Yearly',
-     'Full Pro access billed annually. Saves you the cost of 2 months.',
-     499, 4999, 0, true, true, 3),
+     'Early Bird — full Pro access billed yearly. Limited-time launch price.',
+     99, 999, 0, true, true, 3),
 
     ('enterprise',
      'Enterprise',
@@ -55,6 +55,20 @@ ON CONFLICT (slug) DO UPDATE SET
     is_public         = EXCLUDED.is_public,
     sort_order        = EXCLUDED.sort_order,
     updated_at        = now();
+
+-- Strike-through / original prices (columns from 010_early_bird_pricing.sql)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'plans' AND column_name = 'original_price_inr_monthly'
+  ) THEN
+    UPDATE plans SET original_price_inr_monthly = 199, original_price_inr_yearly = NULL
+    WHERE slug = 'pro_monthly';
+    UPDATE plans SET original_price_inr_monthly = 199, original_price_inr_yearly = 1999
+    WHERE slug = 'pro_yearly';
+  END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- 2. Feature catalog

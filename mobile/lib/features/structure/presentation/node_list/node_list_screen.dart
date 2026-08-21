@@ -11,6 +11,7 @@
 // no child level, tapping a node opens a simple detail/rename/delete sheet
 // (this is also where tenant-assignment will attach later).
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/hierarchy_level.dart';
@@ -21,6 +22,8 @@ import '../../../tenancies/presentation/node_detail_screen.dart';
 import '../../../subscription/presentation/subscription_provider.dart';
 import '../../../subscription/presentation/paywall_screen.dart';
 import '../../../subscription/presentation/widgets/quota_warning_banner.dart';
+import '../../../properties/domain/property_monetization.dart';
+import '../property_shell_screen.dart' show propertyDetailProvider;
 final nodeListProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String levelId, String? parentNodeId)>(
   (ref, args) async {
@@ -73,6 +76,24 @@ class NodeListScreen extends ConsumerWidget {
             name: name,
           );
       ref.invalidate(nodeListProvider((propertyId, level.id, parentNodeId)));
+    } on DioException catch (e) {
+      if (!context.mounted) return;
+      final data = e.response?.data;
+      final code = data is Map ? data['code'] : null;
+      if (e.response?.statusCode == 403 &&
+          (code == 'SUBSCRIPTION_REQUIRED' || data is Map && data['upgradeRequired'] == true)) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const PaywallScreen(
+              reason: PropertyMonetization.expiredLockMessage,
+            ),
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add: ${data is Map ? data['error'] : e}')),
+      );
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not add: $e')));
@@ -268,19 +289,97 @@ if (children.isEmpty) {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          // Only gate creation at the leaf level (actual rooms/units/beds).
-          if (_childLevels.isEmpty) {
+        onPressed: () async {
+          final propertyTypeKey = ref
+              .read(propertyDetailProvider(propertyId))
+              .valueOrNull?['property_type_key'] as String?;
+          final sub = ref.read(subscriptionProvider).valueOrNull;
+          final isPaid = PropertyMonetization.isPaidPlan(
+            sub?.subscription.planSlug,
+            sub?.subscription.status,
+          );
+
+          // Apartment free caps: 1 building (tower) + 20 rooms/flats.
+          if (!isPaid && PropertyMonetization.isApartment(propertyTypeKey)) {
+            if (PropertyMonetization.isBuildingLevel(level.internalKey)) {
+              final nodes = ref
+                      .read(nodeListProvider((propertyId, level.id, parentNodeId)))
+                      .valueOrNull ??
+                  [];
+              // Also count other building/tower levels if present.
+              var buildingCount = nodes.length;
+              for (final l in allLevels) {
+                if (l.id != level.id &&
+                    PropertyMonetization.isBuildingLevel(l.internalKey)) {
+                  final extra = await ref.read(
+                    nodeListProvider((propertyId, l.id, null)).future,
+                  );
+                  buildingCount += extra.length;
+                }
+              }
+              if (buildingCount >= PropertyMonetization.freeApartmentMaxBuildings) {
+                if (!context.mounted) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+            builder: (_) => const PaywallScreen(
+              reason: PropertyMonetization.expiredLockMessage,
+            ),
+          ),
+                );
+                return;
+              }
+            }
+
+            if (PropertyMonetization.isRoomLevel(
+              level.internalKey,
+              supportsOccupancy: level.supportsOccupancy,
+            )) {
+              var roomCount = 0;
+              for (final l in allLevels) {
+                if (PropertyMonetization.isRoomLevel(
+                  l.internalKey,
+                  supportsOccupancy: l.supportsOccupancy,
+                )) {
+                  final rooms = await ref.read(
+                    structureRepositoryProvider,
+                  ).listNodes(propertyId, l.id);
+                  roomCount += rooms.length;
+                }
+              }
+              if (roomCount >= PropertyMonetization.freeApartmentMaxRooms) {
+                if (!context.mounted) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+            builder: (_) => const PaywallScreen(
+              reason: PropertyMonetization.expiredLockMessage,
+            ),
+          ),
+                );
+                return;
+              }
+            }
+          }
+
+          // Generic leaf-level room quota for other property types.
+          if (_childLevels.isEmpty &&
+              !PropertyMonetization.isApartment(propertyTypeKey)) {
             final nodes = ref
-                .read(nodeListProvider((propertyId, level.id, parentNodeId)))
-                .valueOrNull ?? [];
+                    .read(nodeListProvider((propertyId, level.id, parentNodeId)))
+                    .valueOrNull ??
+                [];
             final entitlements = ref.read(entitlementsProvider);
             if (!entitlements.hasQuota('max_rooms', nodes.length)) {
-              Navigator.of(context)
-                  .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+              Navigator.of(context).push(
+                MaterialPageRoute(
+            builder: (_) => const PaywallScreen(
+              reason: PropertyMonetization.expiredLockMessage,
+            ),
+          ),
+              );
               return;
             }
           }
+          if (!context.mounted) return;
           _addNode(context, ref);
         },
         icon: const Icon(Icons.add),

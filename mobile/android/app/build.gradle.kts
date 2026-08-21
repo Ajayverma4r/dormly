@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -14,22 +16,46 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    signingConfigs {
+        create("release") {
+            // Values are read from local.properties so the keystore password
+            // is never committed to Git. See instructions below.
+            val props = Properties()
+            val localPropsFile = rootProject.file("local.properties")
+            if (localPropsFile.exists()) props.load(localPropsFile.inputStream())
+
+            storeFile     = file(props.getProperty("KEY_STORE_FILE", "app/dormly-release.jks"))
+            storePassword = props.getProperty("KEY_STORE_PASSWORD", "")
+            keyAlias      = props.getProperty("KEY_ALIAS", "dormly")
+            keyPassword   = props.getProperty("KEY_PASSWORD", "")
+        }
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.dormly"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            // Explicitly include both ARM ABIs for physical Android devices.
+            // arm64-v8a  → all phones since 2015 (64-bit)
+            // armeabi-v7a → older 32-bit phones (fallback)
+            // x86/x86_64 are emulator-only and add ~15MB to the APK for no benefit.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Using debug key for now — fine for sideloading & external testing.
+            // Switch to signingConfigs.getByName("release") before Play Store upload.
             signingConfig = signingConfigs.getByName("debug")
+            // Minification disabled — R8 was stripping JNI/plugin classes at runtime
+            // causing "Can't open" on physical devices. Re-enable only after confirming
+            // a working ProGuard rule set. APK size ~10MB larger but 100% stable.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

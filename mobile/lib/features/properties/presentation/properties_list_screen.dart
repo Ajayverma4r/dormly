@@ -7,11 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../data/properties_repository.dart';
+import '../domain/property_monetization.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../../core/widgets/property_illustration.dart';
 import '../../subscription/presentation/subscription_provider.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../subscription/presentation/widgets/quota_warning_banner.dart';
+import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 
 final myPropertiesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
   final authRepo = ref.watch(authRepositoryProvider);
@@ -55,14 +57,68 @@ class PropertiesListScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
         data: (properties) {
+          final commercialCount = properties
+              .where((p) =>
+                  PropertyMonetization.isCommercial(p['property_type_key'] as String?))
+              .length;
+          final sub = ref.watch(subscriptionProvider).valueOrNull;
+          final isPaid = PropertyMonetization.isPaidPlan(
+            sub?.subscription.planSlug,
+            sub?.subscription.status,
+          );
+          // Banner when free tier already has a commercial property, or surplus
+          // commercials are frozen after expiry.
+          final lockedCount = properties.where((raw) {
+            final p = Map<String, dynamic>.from(raw as Map);
+            return PropertyMonetization.isPropertyLocked(
+              property: p,
+              allProperties: properties
+                  .map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList(),
+              isPaid: isPaid,
+            );
+          }).length;
+          final showCommercialHint =
+              !isPaid && (commercialCount >= 1 || lockedCount > 0);
+
           return Column(
             children: [
-              // Quota banner — hidden automatically under 80% of limit or on unlimited plans.
-              QuotaWarningBanner(
-                quotaKey: 'max_properties',
-                currentCount: properties.length,
-                resourceName: 'properties',
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
+                child: ExpiryWarningBanner(),
               ),
+              if (showCommercialHint)
+                Material(
+                  color: const Color(0xFFFFF7ED),
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.info_outline, color: Color(0xFFB45309)),
+                    title: Text(
+                      lockedCount > 0
+                          ? 'Some commercial properties are locked after plan expiry. Your data is safe — upgrade to manage them again.'
+                          : 'Free plan includes 1 commercial property. Residential types stay free forever.',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PaywallScreen(
+                            reason: lockedCount > 0
+                                ? PropertyMonetization.expiredLockMessage
+                                : null,
+                          ),
+                        ),
+                      ),
+                      child: const Text('Upgrade'),
+                    ),
+                  ),
+                )
+              else
+                QuotaWarningBanner(
+                  quotaKey: 'max_properties',
+                  currentCount: commercialCount,
+                  resourceName: 'commercial properties',
+                ),
               Expanded(
                 child: properties.isEmpty
                     ? Center(
@@ -99,24 +155,65 @@ class PropertiesListScreen extends ConsumerWidget {
                         itemCount: properties.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final p = properties[index];
+                          final p = Map<String, dynamic>.from(properties[index] as Map);
+                          final allMaps = properties
+                              .map((e) => Map<String, dynamic>.from(e as Map))
+                              .toList();
+                          final locked = PropertyMonetization.isPropertyLocked(
+                            property: p,
+                            allProperties: allMaps,
+                            isPaid: isPaid,
+                          );
                           return Container(
                             decoration: BoxDecoration(
-                                color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: locked
+                                    ? Border.all(color: const Color(0xFFFDBA74))
+                                    : null),
                             child: ListTile(
                               contentPadding:
                                   const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              leading: const CircleAvatar(
-                                backgroundColor: Color(0xFFEFF2FF),
-                                child: Icon(Icons.apartment, color: Color(0xFF2B5CFF)),
+                              leading: CircleAvatar(
+                                backgroundColor: locked
+                                    ? const Color(0xFFFFF7ED)
+                                    : const Color(0xFFEFF2FF),
+                                child: Icon(
+                                  locked ? Icons.lock_outline : Icons.apartment,
+                                  color: locked
+                                      ? const Color(0xFFB45309)
+                                      : const Color(0xFF2B5CFF),
+                                ),
                               ),
                               title: Text(p['name'] ?? '',
                                   style: const TextStyle(fontWeight: FontWeight.w700)),
-                              subtitle: Text(p['city'] ?? p['property_type_key'] ?? '',
-                                  style: TextStyle(color: Colors.grey.shade600)),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () => context.go('/property/${p['id']}',
-                                  extra: {'propertyName': p['name']}),
+                              subtitle: Text(
+                                  locked
+                                      ? 'Locked — upgrade to manage'
+                                      : (p['city'] ?? p['property_type_key'] ?? ''),
+                                  style: TextStyle(
+                                      color: locked
+                                          ? const Color(0xFFB45309)
+                                          : Colors.grey.shade600)),
+                              trailing: Icon(
+                                locked ? Icons.lock : Icons.chevron_right,
+                                color: locked ? const Color(0xFFB45309) : null,
+                              ),
+                              onTap: () {
+                                if (locked) {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => const PaywallScreen(
+                                        reason: PropertyMonetization
+                                            .expiredLockMessage,
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                context.go('/property/${p['id']}',
+                                    extra: {'propertyName': p['name']});
+                              },
                             ),
                           );
                         },
@@ -129,15 +226,8 @@ class PropertiesListScreen extends ConsumerWidget {
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: const Color(0xFF2B5CFF),
         onPressed: () {
-          // Quota gate: redirect to paywall if the org is at its property limit.
-          final entitlements = ref.read(entitlementsProvider);
-          final currentCount =
-              ref.read(myPropertiesProvider).valueOrNull?.length ?? 0;
-          if (!entitlements.hasQuota('max_properties', currentCount)) {
-            Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const PaywallScreen()));
-            return;
-          }
+          // Residential types are unlimited; commercial types are gated in the
+          // wizard (and on the backend). Always open the create flow.
           context.push('/onboarding/create-property');
         },
         icon: const Icon(Icons.add, color: Colors.white),

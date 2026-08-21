@@ -26,8 +26,14 @@ subscriptionRouter.get('/me',      requireRole('owner', 'admin'), controller.get
 subscriptionRouter.get('/history', requireRole('owner', 'admin'), controller.getHistory);
 
 // Only the org owner can initiate payments or cancellations
-subscriptionRouter.post('/create-order', requireRole('owner'), controller.createOrder);
-subscriptionRouter.post('/cancel',       requireRole('owner'), controller.cancelSubscription);
+subscriptionRouter.post('/create-order',   requireRole('owner'), controller.createOrder);
+subscriptionRouter.post('/cancel',         requireRole('owner'), controller.cancelSubscription);
+
+// 30-day free trial (no payment) — once per org
+subscriptionRouter.post('/start-trial',    requireRole('owner'), controller.startFreeTrial);
+
+// Test-only: activate Pro without Razorpay (only works when OTP_BYPASS=true)
+subscriptionRouter.post('/test-activate',  requireRole('owner'), controller.testActivatePro);
 
 // ---------------------------------------------------------------------------
 // Webhook router (no auth — signature verified inside the handler)

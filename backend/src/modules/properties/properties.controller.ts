@@ -38,7 +38,23 @@ export class PropertiesController {
 
   create = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      const property = await service.create(req.body);
+      // Prefer scoped org context over client-supplied organizationId.
+      const organizationId =
+        req.ctxType === 'organization' && req.ctxId
+          ? req.ctxId
+          : (req.body.organizationId as string | undefined);
+
+      if (!organizationId) {
+        return res.status(400).json({ error: 'organizationId is required.' });
+      }
+      if (!req.body.propertyTypeKey) {
+        return res.status(400).json({ error: 'propertyTypeKey is required.' });
+      }
+
+      const property = await service.create({
+        ...req.body,
+        organizationId,
+      });
       res.status(201).json({ data: property });
     } catch (err) { next(err); }
   };

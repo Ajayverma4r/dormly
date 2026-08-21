@@ -4,6 +4,11 @@
 // downgrades them to the free plan. Call scheduleSubscriptionDowngradeJob()
 // once at server startup.
 //
+// CRITICAL: This job NEVER deletes properties, rooms, tenants, invoices, or
+// any operational data. It only flips plan_id → free and status → expired.
+// Over-quota commercial properties remain visible but become write-locked
+// via requireWritableProperty / assertCanManageProperty.
+//
 // Production note: replace setInterval with a proper job queue (BullMQ,
 // Agenda, pg-boss) or a cloud scheduler (AWS EventBridge, GCP Cloud Scheduler)
 // for guaranteed execution and horizontal-scale safety.

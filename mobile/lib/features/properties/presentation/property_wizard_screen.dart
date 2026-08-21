@@ -8,10 +8,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:dio/dio.dart';
 import '../data/properties_repository.dart';
+import '../domain/property_monetization.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../subscription/presentation/subscription_provider.dart';
+import '../../subscription/presentation/paywall_screen.dart';
 import '../../../core/widgets/dynamic_icon.dart';
 import '../../../core/widgets/step_indicator.dart';
+import '../../../core/theme/app_theme.dart';
 
 const _levelDescriptions = {
   'building': 'For multiple buildings or blocks',
@@ -73,6 +78,16 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
       setState(() => _error = 'Enter a property name and choose a property type.');
       return;
     }
+
+    // Client-side commercial limit check before loading the template.
+    if (await _shouldOpenPaywallForType(_selectedTypeKey!)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+      );
+      return;
+    }
+
     setState(() { _loadingTemplate = true; _error = null; });
     try {
       final template = await ref.read(propertiesRepositoryProvider).previewTemplate(_selectedTypeKey!);
@@ -88,6 +103,34 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
     }
   }
 
+  Future<bool> _shouldOpenPaywallForType(String typeKey) async {
+    if (PropertyMonetization.isFreeResidential(typeKey)) return false;
+
+    final sub = ref.read(subscriptionProvider).valueOrNull;
+    final isPaid = PropertyMonetization.isPaidPlan(
+      sub?.subscription.planSlug,
+      sub?.subscription.status,
+    );
+    if (isPaid) return false;
+
+    final orgId = await ref.read(authRepositoryProvider).getOrganizationId();
+    if (orgId == null) return false;
+
+    try {
+      final properties = await ref.read(propertiesRepositoryProvider).list(orgId);
+      final commercialCount = properties
+          .where((p) => PropertyMonetization.isCommercial(p['property_type_key'] as String?))
+          .length;
+      return PropertyMonetization.requiresUpgradeForCreate(
+        typeKey: typeKey,
+        commercialCount: commercialCount,
+        isPaid: false,
+      );
+    } catch (_) {
+      return false; // let backend enforce if list fails
+    }
+  }
+
   List<Map<String, dynamic>> get _enabledLevelsInOrder =>
       _template.where((row) => _enabled[row['internal_key']] == true).toList();
 
@@ -96,6 +139,14 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
   setState(() => _error = 'Enable at least one level.');
   return;
 }
+    if (_selectedTypeKey != null && await _shouldOpenPaywallForType(_selectedTypeKey!)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+      );
+      return;
+    }
+
     setState(() { _creating = true; _error = null; });
     try {
       final orgId = await ref.read(authRepositoryProvider).getOrganizationId();
@@ -120,6 +171,19 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
       });
 
       setState(() { _createdProperty = property; _step = 3; });
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final code = data is Map ? data['code'] : null;
+      if (e.response?.statusCode == 403 && code == 'SUBSCRIPTION_REQUIRED') {
+        if (mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const PaywallScreen()),
+          );
+        }
+        setState(() => _error = null);
+      } else {
+        setState(() => _error = 'Could not create property: ${data is Map ? data['error'] : e}');
+      }
     } catch (e) {
       setState(() => _error = 'Could not create property: $e');
     } finally {
@@ -193,16 +257,103 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         ),
         const SizedBox(height: 20),
         const Text('Property Type *', style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text(
+          'Rental, House & Villa stay free forever. Apartment is limited to 1 building + 20 rooms on Free.',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
         const SizedBox(height: 8),
         _loadingTypes
             ? const Center(child: CircularProgressIndicator())
-            : DropdownButtonFormField<String>(
-                value: _selectedTypeKey,
-                decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
-                items: _propertyTypes
-                    .map((t) => DropdownMenuItem<String>(value: t['key'], child: Text(t['display_name'])))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedTypeKey = v),
+            : Column(
+                children: _propertyTypes.map((t) {
+                  final key = t['key'] as String;
+                  final selected = _selectedTypeKey == key;
+                  final freeForever = PropertyMonetization.isFreeResidential(key);
+                  final badge = (t['monetization'] is Map
+                          ? t['monetization']['badge'] as String?
+                          : null) ??
+                      PropertyMonetization.badgeFor(key);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => setState(() => _selectedTypeKey = key),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: selected ? AppColors.blueprint : Colors.grey.shade300,
+                            width: selected ? 2 : 1,
+                          ),
+                          color: selected
+                              ? AppColors.blueprint.withOpacity(0.04)
+                              : Colors.white,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selected
+                                  ? Icons.radio_button_checked
+                                  : Icons.radio_button_off,
+                              color: selected ? AppColors.blueprint : Colors.grey,
+                              size: 22,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    t['display_name'] ?? key,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  if (t['description'] != null)
+                                    Text(
+                                      t['description'],
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: freeForever
+                                    ? AppColors.positive.withOpacity(0.12)
+                                    : PropertyMonetization.isApartment(key)
+                                        ? AppColors.blueprint.withOpacity(0.12)
+                                        : AppColors.caution.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                badge,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: freeForever
+                                      ? AppColors.positive
+                                      : PropertyMonetization.isApartment(key)
+                                          ? AppColors.blueprint
+                                          : AppColors.caution,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
         if (_error != null) ...[
           const SizedBox(height: 12),

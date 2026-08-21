@@ -30,8 +30,11 @@ import '../domain/subscription_status.dart';
 // Core subscription record  (NOT autoDispose — cached for the whole session)
 // ---------------------------------------------------------------------------
 
-typedef SubscriptionRecord
-    = ({SubscriptionStatus subscription, EntitlementSnapshot entitlements})?;
+typedef SubscriptionRecord = ({
+  SubscriptionStatus subscription,
+  EntitlementSnapshot entitlements,
+  bool trialEligible,
+})?;
 
 /// Fetches and caches the organization's subscription and entitlements.
 /// Returns null when the user is not an org owner/admin (staff get 403).

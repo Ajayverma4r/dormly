@@ -7,9 +7,12 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(apiClientProvider));
 });
 
+// Must match the options used in ApiClient so both read/write the same store.
+const _androidOptions = AndroidOptions(encryptedSharedPreferences: true);
+
 class AuthRepository {
   final ApiClient _client;
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(aOptions: _androidOptions);
 
   AuthRepository(this._client);
 

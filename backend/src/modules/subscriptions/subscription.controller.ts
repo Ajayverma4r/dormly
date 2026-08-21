@@ -14,6 +14,11 @@ const createOrderSchema = z.object({
   billingCycle: z.enum(['monthly', 'yearly']),
 });
 
+const testActivateSchema = z.object({
+  planSlug: z.enum(['pro_monthly', 'pro_yearly']).optional().default('pro_monthly'),
+  billingCycle: z.enum(['monthly', 'yearly']).optional().default('monthly'),
+});
+
 export class SubscriptionController {
   /**
    * GET /v1/subscriptions/me
@@ -23,11 +28,12 @@ export class SubscriptionController {
   getMySubscription = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const orgId = req.ctxId!;
-      const [subscription, entitlements] = await Promise.all([
+      const [subscription, entitlements, trialEligible] = await Promise.all([
         subscriptionService.getOrgSubscription(orgId),
         entitlementService.getOrgEntitlements(orgId),
+        subscriptionService.canClaimFreeTrial(orgId),
       ]);
-      res.json({ data: { subscription, entitlements } });
+      res.json({ data: { subscription, entitlements, trialEligible } });
     } catch (err) {
       next(err);
     }
@@ -63,6 +69,38 @@ export class SubscriptionController {
         req.userId!,
       );
       res.status(201).json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /v1/subscriptions/test-activate
+   * DEV / TEST only — only works when OTP_BYPASS=true on the server.
+   * Body: { planSlug?, billingCycle? } — upgrades without Razorpay.
+   */
+  testActivatePro = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const body = testActivateSchema.parse(req.body ?? {});
+      await subscriptionService.testActivatePro(
+        req.ctxId!,
+        body.planSlug,
+        body.billingCycle,
+      );
+      res.json({ data: { activated: true } });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /v1/subscriptions/start-trial
+   * Claims a 30-day Pro trial (no payment). Once per organization.
+   */
+  startFreeTrial = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await subscriptionService.startFreeTrial(req.ctxId!, req.userId!);
+      res.json({ data: { activated: true, trialEndsAt: result.trialEndsAt } });
     } catch (err) {
       next(err);
     }

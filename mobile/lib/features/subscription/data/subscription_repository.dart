@@ -32,9 +32,13 @@ class SubscriptionRepository {
 
   // ---- Org subscription (auth required) ----
 
-  /// Returns the active subscription state + full entitlement snapshot.
-  /// Returns null for non-owner contexts (staff/manager tokens get 403).
-  Future<({SubscriptionStatus subscription, EntitlementSnapshot entitlements})?> fetchMySubscription() async {
+  /// Returns the active subscription state + entitlement snapshot + trial flag.
+  Future<
+      ({
+        SubscriptionStatus subscription,
+        EntitlementSnapshot entitlements,
+        bool trialEligible,
+      })?> fetchMySubscription() async {
     final res = await _client.dio.get('/v1/subscriptions/me');
     final data = res.data['data'] as Map<String, dynamic>;
 
@@ -42,12 +46,18 @@ class SubscriptionRepository {
         data['subscription'] as Map<String, dynamic>);
     final ent = EntitlementSnapshot.fromJson(
         data['entitlements'] as Map<String, dynamic>);
+    final trialEligible = data['trialEligible'] as bool? ?? false;
 
-    return (subscription: sub, entitlements: ent);
+    return (
+      subscription: sub,
+      entitlements: ent,
+      trialEligible: trialEligible,
+    );
   }
 
   /// Creates a Razorpay order for the given plan and billing cycle.
-  /// Returns raw JSON with: orderId, amount (₹), amountPaise, currency, keyId.
+  /// Returns raw JSON with: orderId, amount, amountPaise, currency, keyId,
+  /// and optionally testMode=true (skip Razorpay SDK, call testActivate).
   Future<Map<String, dynamic>> createOrder({
     required String planSlug,
     required String billingCycle, // 'monthly' | 'yearly'
@@ -62,6 +72,23 @@ class SubscriptionRepository {
   /// Cancels the subscription at the end of the current billing period.
   Future<void> cancelSubscription() async {
     await _client.dio.post('/v1/subscriptions/cancel');
+  }
+
+  /// Claims the one-time 30-day free Pro trial (no payment).
+  Future<void> startFreeTrial() async {
+    await _client.dio.post('/v1/subscriptions/start-trial');
+  }
+
+  /// DEV / TEST ONLY — activates paid Pro without Razorpay.
+  /// Only succeeds when the backend is running with OTP_BYPASS=true.
+  Future<void> testActivate({
+    String planSlug = 'pro_monthly',
+    String billingCycle = 'monthly',
+  }) async {
+    await _client.dio.post('/v1/subscriptions/test-activate', data: {
+      'planSlug': planSlug,
+      'billingCycle': billingCycle,
+    });
   }
 
   /// Fetches the last 50 subscription change events for audit display.

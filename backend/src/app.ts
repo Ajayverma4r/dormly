@@ -13,6 +13,7 @@ import { notificationsRouter } from '@modules/notifications/notifications.routes
 import { invitationsRouter } from '@modules/staff/invitations.routes';
 import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscriptions/subscription.routes';
 import { scheduleSubscriptionDowngradeJob } from '@shared/jobs/subscription-downgrade.job';
+import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-expiry-warning.job';
 
 export function createApp() {
   const app = express();
@@ -48,8 +49,9 @@ export function createApp() {
   app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
   app.use(errorHandler);
 
-  // Start the subscription expiry job (runs every hour)
-  scheduleSubscriptionDowngradeJob();
+  // Subscription maintenance jobs
+  scheduleSubscriptionDowngradeJob();       // hourly: expire → free (no data delete)
+  scheduleSubscriptionExpiryWarningJob();   // daily: 7-day in-app renew reminders
 
   return app;
 }

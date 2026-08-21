@@ -10,6 +10,8 @@ class SubscriptionPlan {
   final String? description;
   final double priceInrMonthly;
   final double priceInrYearly;
+  final double? originalPriceInrMonthly;
+  final double? originalPriceInrYearly;
   final int trialDays;
   final int sortOrder;
 
@@ -25,12 +27,19 @@ class SubscriptionPlan {
     this.description,
     required this.priceInrMonthly,
     required this.priceInrYearly,
+    this.originalPriceInrMonthly,
+    this.originalPriceInrYearly,
     required this.trialDays,
     required this.sortOrder,
     required this.features,
   });
 
   factory SubscriptionPlan.fromJson(Map<String, dynamic> json) {
+    double? parseOptional(dynamic v) {
+      if (v == null) return null;
+      return double.tryParse(v.toString());
+    }
+
     return SubscriptionPlan(
       id: json['id'] as String,
       slug: json['slug'] as String,
@@ -48,6 +57,10 @@ class SubscriptionPlan {
                   json['price_inr_yearly']?.toString() ??
                   '0') ??
           0,
+      originalPriceInrMonthly: parseOptional(
+          json['originalPriceInrMonthly'] ?? json['original_price_inr_monthly']),
+      originalPriceInrYearly: parseOptional(
+          json['originalPriceInrYearly'] ?? json['original_price_inr_yearly']),
       trialDays: (json['trialDays'] ?? json['trial_days'] ?? 0) as int,
       sortOrder: (json['sortOrder'] ?? json['sort_order'] ?? 0) as int,
       features: Map<String, dynamic>.from(
@@ -56,6 +69,13 @@ class SubscriptionPlan {
   }
 
   bool get isFree => priceInrMonthly == 0 && priceInrYearly == 0;
+
+  /// Early Bird strike-through fallbacks when API has not migrated yet.
+  double get strikeMonthly =>
+      originalPriceInrMonthly ?? (slug == 'pro_monthly' ? 199 : 199);
+
+  double get strikeYearly =>
+      originalPriceInrYearly ?? (slug == 'pro_yearly' ? 1999 : 1999);
 
   bool featureBool(String key) => features[key] == true;
 

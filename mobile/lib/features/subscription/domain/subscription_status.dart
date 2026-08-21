@@ -18,6 +18,12 @@ class SubscriptionStatus {
   final DateTime? gracePeriodEndsAt;
   final bool cancelAtPeriodEnd;
 
+  /// Razorpay AutoPay / eMandate will charge at period end.
+  final bool autoRenew;
+
+  /// Mandate token is linked (future AutoPay readiness).
+  final bool mandateActive;
+
   const SubscriptionStatus({
     required this.planSlug,
     required this.planName,
@@ -28,6 +34,8 @@ class SubscriptionStatus {
     this.currentPeriodEnd,
     this.gracePeriodEndsAt,
     this.cancelAtPeriodEnd = false,
+    this.autoRenew = false,
+    this.mandateActive = false,
   });
 
   factory SubscriptionStatus.fromJson(Map<String, dynamic> json) {
@@ -49,6 +57,8 @@ class SubscriptionStatus {
           ? DateTime.tryParse(json['grace_period_ends_at'] as String)
           : null,
       cancelAtPeriodEnd: json['cancel_at_period_end'] as bool? ?? false,
+      autoRenew: json['auto_renew'] as bool? ?? false,
+      mandateActive: json['mandate_active'] as bool? ?? false,
     );
   }
 
@@ -61,10 +71,31 @@ class SubscriptionStatus {
   bool get isExpired => status == 'expired';
   bool get isPro => isActive || isTrial || isPastDue || isCancelled;
 
+  /// Effective AutoPay: mandate on and user has not cancelled at period end.
+  bool get willAutoRenew =>
+      (autoRenew || mandateActive) && !cancelAtPeriodEnd && isPro;
+
+  /// Expiry used for countdown (trial end or paid period end).
+  DateTime? get expiresAt {
+    if (isTrial) return trialEndsAt ?? currentPeriodEnd;
+    if (isActive || isCancelled || isPastDue) return currentPeriodEnd;
+    return null;
+  }
+
+  /// Whole days remaining until [expiresAt]. Null when not applicable.
+  int? get daysLeftUntilExpiry {
+    final end = expiresAt;
+    if (end == null || !isPro) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final endDay = DateTime(end.year, end.month, end.day);
+    return endDay.difference(today).inDays;
+  }
+
   /// Days remaining in the trial. 0 when not trialing or already expired.
   int get trialDaysLeft {
     if (!isTrial || trialEndsAt == null) return 0;
-    return trialEndsAt!.difference(DateTime.now()).inDays.clamp(0, 14);
+    return trialEndsAt!.difference(DateTime.now()).inDays.clamp(0, 30);
   }
 
   /// The next renewal date (null when on free or expired).
@@ -93,5 +124,13 @@ class SubscriptionStatus {
       default:
         return status;
     }
+  }
+
+  static String formatExpiryDate(DateTime date) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 }

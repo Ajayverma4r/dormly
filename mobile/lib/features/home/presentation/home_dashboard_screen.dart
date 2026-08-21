@@ -5,8 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../analytics/data/analytics_repository.dart';
 import '../../properties/data/properties_repository.dart';
+import '../../properties/domain/property_monetization.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
+import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
+import '../../subscription/presentation/subscription_provider.dart';
+import '../../subscription/presentation/paywall_screen.dart';
 
 final orgIdProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getOrganizationId(),
@@ -58,6 +62,7 @@ class HomeDashboardScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            const ExpiryWarningBanner(),
             Text('Overview', style: theme.textTheme.titleLarge),
             const SizedBox(height: 12),
             analyticsAsync.when(
@@ -111,21 +116,74 @@ class HomeDashboardScreen extends ConsumerWidget {
                     ),
                   );
                 }
+                final sub = ref.watch(subscriptionProvider).valueOrNull;
+                final isPaid = PropertyMonetization.isPaidPlan(
+                  sub?.subscription.planSlug,
+                  sub?.subscription.status,
+                );
+                final allMaps = properties
+                    .map((e) => Map<String, dynamic>.from(e as Map))
+                    .toList();
                 return Column(
-                  children: properties.take(3).map((p) => Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: AppColors.canvas,
-                            child: const Icon(Icons.apartment, color: AppColors.blueprint),
+                  children: properties.take(3).map((raw) {
+                    final p = Map<String, dynamic>.from(raw as Map);
+                    final locked = PropertyMonetization.isPropertyLocked(
+                      property: p,
+                      allProperties: allMaps,
+                      isPaid: isPaid,
+                    );
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: locked
+                            ? Border.all(color: const Color(0xFFFDBA74))
+                            : null,
+                      ),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: locked
+                              ? const Color(0xFFFFF7ED)
+                              : AppColors.canvas,
+                          child: Icon(
+                            locked ? Icons.lock_outline : Icons.apartment,
+                            color: locked
+                                ? const Color(0xFFB45309)
+                                : AppColors.blueprint,
                           ),
-                          title: Text(p['name'] ?? '', style: theme.textTheme.titleMedium),
-                          subtitle: Text(p['city'] ?? '', style: theme.textTheme.bodyMedium),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => context.go('/property/${p['id']}', extra: {'propertyName': p['name']}),
                         ),
-                      )).toList(),
+                        title: Text(p['name'] ?? '', style: theme.textTheme.titleMedium),
+                        subtitle: Text(
+                          locked
+                              ? 'Locked — upgrade to manage'
+                              : (p['city'] ?? ''),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: locked ? const Color(0xFFB45309) : null,
+                          ),
+                        ),
+                        trailing: Icon(
+                          locked ? Icons.lock : Icons.chevron_right,
+                          color: locked ? const Color(0xFFB45309) : null,
+                        ),
+                        onTap: () {
+                          if (locked) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const PaywallScreen(
+                                  reason:
+                                      PropertyMonetization.expiredLockMessage,
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          context.go('/property/${p['id']}',
+                              extra: {'propertyName': p['name']});
+                        },
+                      ),
+                    );
+                  }).toList(),
                 );
               },
             ),

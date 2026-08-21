@@ -9,6 +9,15 @@
 // doesn't orphan its children.
 
 import { query } from '@config/db';
+import { EntitlementService } from '@modules/subscriptions/entitlement.service';
+import {
+  FREE_RESIDENTIAL_TYPES,
+  isFreeResidentialType,
+  isPaidSubscription,
+  monetizationMetaForType,
+  SubscriptionRequiredError,
+} from '@shared/property-monetization';
+import { annotatePropertyManageability } from './property-manageability';
 
 interface LevelOverride {
   displayName?: string;
@@ -29,13 +38,33 @@ interface CreatePropertyInput {
   levelOverrides?: Record<string, LevelOverride>;
 }
 
+const entitlementService = new EntitlementService();
+
 export class PropertiesService {
   async listForOrganization(organizationId: string) {
-    return query(`SELECT * FROM properties WHERE organization_id = $1 ORDER BY created_at DESC`, [organizationId]);
+    const rows = await query(
+      `SELECT * FROM properties WHERE organization_id = $1 ORDER BY created_at DESC`,
+      [organizationId],
+    );
+    return annotatePropertyManageability(
+      organizationId,
+      rows as Array<Record<string, unknown>>,
+    );
   }
 
   async listPropertyTypes() {
-    return query(`SELECT * FROM property_types ORDER BY display_name`);
+    const rows = await query<{
+      key: string;
+      display_name: string;
+      description: string | null;
+      icon: string | null;
+    }>(`SELECT * FROM property_types ORDER BY display_name`);
+
+    // Annotate monetization metadata for the Flutter wizard badges.
+    return rows.map((t) => ({
+      ...t,
+      monetization: monetizationMetaForType(t.key),
+    }));
   }
 
   async previewTemplate(propertyTypeKey: string) {
@@ -46,11 +75,63 @@ export class PropertiesService {
   }
 
   async getById(propertyId: string) {
-    const rows = await query(`SELECT * FROM properties WHERE id = $1`, [propertyId]);
-    return rows[0] ?? null;
+    const rows = await query(
+      `SELECT * FROM properties WHERE id = $1`,
+      [propertyId],
+    );
+    const property = rows[0] as Record<string, unknown> | undefined;
+    if (!property) return null;
+
+    const organizationId = String(property.organization_id);
+    const [annotated] = await annotatePropertyManageability(organizationId, [
+      property,
+    ]);
+    return annotated;
+  }
+
+  /**
+   * Counts subscription-limited properties (everything except free-forever residential).
+   * Includes apartment + hostel/PG/commercial types.
+   */
+  async countCommercialProperties(organizationId: string): Promise<number> {
+    const rows = await query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM   properties
+       WHERE  organization_id = $1
+         AND  property_type_key <> ALL($2::text[])`,
+      [organizationId, [...FREE_RESIDENTIAL_TYPES]],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /**
+   * Enforces monetization before insert:
+   *  - rental / house / villa → always allowed
+   *  - apartment + commercial → 1 free; 2nd+ requires paid plan
+   */
+  async assertCanCreateProperty(organizationId: string, propertyTypeKey: string): Promise<void> {
+    if (isFreeResidentialType(propertyTypeKey)) return;
+
+    const limitedCount = await this.countCommercialProperties(organizationId);
+    if (limitedCount < 1) return; // first apartment/commercial property is free
+
+    const entitlements = await entitlementService.getOrgEntitlements(organizationId);
+    const paid = isPaidSubscription(
+      entitlements?.planSlug,
+      entitlements?.subscriptionStatus,
+    );
+    if (!paid) {
+      throw new SubscriptionRequiredError(
+        propertyTypeKey === 'apartment'
+          ? 'Free plan includes 1 Apartment (1 building + 20 rooms). Upgrade to Pro for more.'
+          : 'Your free plan includes 1 commercial property (Hostel, PG, Hotel, etc.). Upgrade to Pro to add more.',
+      );
+    }
   }
 
   async create(input: CreatePropertyInput) {
+    await this.assertCanCreateProperty(input.organizationId, input.propertyTypeKey);
+
     const [property] = await query<{ id: string }>(
       `INSERT INTO properties
         (organization_id, name, property_type_key, address, city, state, country, timezone, currency, language)

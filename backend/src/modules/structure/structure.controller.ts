@@ -1,6 +1,7 @@
 // modules/structure/structure.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import { StructureService } from '@core/structure-engine/services/structure.service';
+import { assertApartmentNodeQuota } from './apartment-quota';
 
 export class StructureController {
   constructor(private readonly service: StructureService) {}
@@ -65,6 +66,7 @@ export class StructureController {
 
   createNode = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await assertApartmentNodeQuota(req.params.propertyId, req.body.levelId);
       const node = await this.service.createNode({
         propertyId: req.params.propertyId,
         ...req.body,

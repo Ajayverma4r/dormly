@@ -36,6 +36,8 @@ export interface RazorpayOrderResult {
   amountPaise: number; // for passing directly to Razorpay JS SDK
   currency: string;
   keyId: string;       // frontend needs this to open the checkout
+  /** When true, Flutter should skip Razorpay SDK and call test-activate. */
+  testMode?: boolean;
 }
 
 interface PaymentRow {
@@ -170,19 +172,30 @@ export class SubscriptionService {
     const sub = await this.getOrgSubscription(organizationId);
     if (!sub) throw new Error('Organization has no subscription record. Create trial first.');
 
-    // Create the Razorpay order (amount must be in paise)
-    const rzpOrder = await getRazorpay().orders.create({
-      amount: amountInr * 100,
-      currency: 'INR',
-      receipt: `dormly_${organizationId.slice(0, 8)}_${Date.now()}`,
-      notes: { organizationId, planSlug, billingCycle, userId },
-    });
-
     const periodEnd = new Date();
     if (billingCycle === 'yearly') {
       periodEnd.setFullYear(periodEnd.getFullYear() + 1);
     } else {
       periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+
+    // Test mode: placeholder Razorpay keys or OTP_BYPASS — skip live Razorpay API.
+    const isTestMode =
+      env.otpBypass ||
+      env.razorpayKeyId.includes('placeholder') ||
+      env.razorpayKeySecret.includes('placeholder');
+
+    let orderId: string;
+    if (isTestMode) {
+      orderId = `order_test_${organizationId.slice(0, 8)}_${Date.now()}`;
+    } else {
+      const rzpOrder = await getRazorpay().orders.create({
+        amount: amountInr * 100,
+        currency: 'INR',
+        receipt: `dormly_${organizationId.slice(0, 8)}_${Date.now()}`,
+        notes: { organizationId, planSlug, billingCycle, userId },
+      });
+      orderId = rzpOrder.id;
     }
 
     await query(
@@ -193,19 +206,20 @@ export class SubscriptionService {
       [
         sub.id,
         organizationId,
-        rzpOrder.id,
+        orderId,
         amountInr,
         periodEnd,
-        JSON.stringify({ planSlug, billingCycle, userId }),
+        JSON.stringify({ planSlug, billingCycle, userId, testMode: isTestMode }),
       ],
     );
 
     return {
-      orderId: rzpOrder.id,
+      orderId,
       amount: amountInr,
       amountPaise: amountInr * 100,
       currency: 'INR',
       keyId: env.razorpayKeyId,
+      testMode: isTestMode,
     };
   }
 
@@ -235,6 +249,10 @@ export class SubscriptionService {
         break;
       case 'refund.created':
         await this._handleRefund(event.payload.refund.entity);
+        break;
+      // Razorpay Subscriptions / AutoPay — extend period when a mandate charge succeeds
+      case 'subscription.charged':
+        await this._handleSubscriptionCharged(event.payload);
         break;
       default:
         // Silently ack unknown events — return 200 so Razorpay stops retrying
@@ -324,6 +342,79 @@ export class SubscriptionService {
           from_status, to_status, reason)
        VALUES ($1, $2, $3, $4, $5, 'active', 'payment_succeeded')`,
       [pmt.organization_id, pmt.subscription_id, sub.plan_id, newPlanId, sub.status],
+    );
+  }
+
+  /**
+   * Razorpay AutoPay / subscription.charged — extend current_period_end and
+   * keep the org on Premium. Banner disappears once days_left > 7 again.
+   */
+  private async _handleSubscriptionCharged(payload: Record<string, any>): Promise<void> {
+    const subscriptionEntity = payload.subscription?.entity ?? payload.subscription;
+    const paymentEntity = payload.payment?.entity ?? payload.payment;
+    if (!subscriptionEntity?.id) return;
+
+    const rzpSubId: string = subscriptionEntity.id;
+    const subs = await query<{
+      id: string;
+      organization_id: string;
+      plan_id: string;
+      status: string;
+      current_period_end: Date;
+    }>(
+      `SELECT id, organization_id, plan_id, status, current_period_end
+       FROM   subscriptions
+       WHERE  razorpay_subscription_id = $1`,
+      [rzpSubId],
+    );
+    if (!subs.length) return;
+    const sub = subs[0];
+
+    // Prefer period from Razorpay; otherwise +1 month from current end.
+    let periodStart = new Date(sub.current_period_end);
+    let periodEnd = new Date(sub.current_period_end);
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+    const chargeAt = paymentEntity?.created_at
+      ? new Date(Number(paymentEntity.created_at) * 1000)
+      : null;
+    if (subscriptionEntity.current_end) {
+      periodEnd = new Date(Number(subscriptionEntity.current_end) * 1000);
+    }
+    if (subscriptionEntity.current_start) {
+      periodStart = new Date(Number(subscriptionEntity.current_start) * 1000);
+    } else if (chargeAt) {
+      periodStart = chargeAt;
+    }
+
+    await query(
+      `UPDATE subscriptions
+       SET status               = 'active',
+           current_period_start = $1,
+           current_period_end   = $2,
+           auto_renew           = true,
+           mandate_active       = true,
+           cancel_at_period_end = false,
+           cancelled_at         = NULL,
+           grace_period_ends_at = NULL,
+           trial_ends_at        = NULL,
+           updated_at           = now()
+       WHERE id = $3`,
+      [periodStart, periodEnd, sub.id],
+    );
+
+    await query(
+      `INSERT INTO subscription_history
+         (organization_id, subscription_id, from_plan_id, to_plan_id,
+          from_status, to_status, reason, note)
+       VALUES ($1, $2, $3, $3, $4, 'active', 'payment_succeeded', $5)`,
+      [
+        sub.organization_id,
+        sub.id,
+        sub.plan_id,
+        sub.status,
+        `auto_renew:${paymentEntity?.id ?? rzpSubId}`,
+      ],
     );
   }
 
@@ -422,6 +513,7 @@ export class SubscriptionService {
        SET cancel_at_period_end = true,
            cancelled_at         = now(),
            status               = 'cancelled',
+           auto_renew           = false,
            updated_at           = now()
        WHERE id = $1`,
       [sub.id],
@@ -436,6 +528,138 @@ export class SubscriptionService {
     );
   }
 
+  // ---- Test: Activate Pro without payment ---------------------------------
+
+  /**
+   * Directly upgrades an org to a paid Pro plan with no Razorpay charge.
+   * Only callable when env.otpBypass is true (test / development mode).
+   */
+  async testActivatePro(
+    organizationId: string,
+    planSlug: 'pro_monthly' | 'pro_yearly' = 'pro_monthly',
+    billingCycle: 'monthly' | 'yearly' = 'monthly',
+  ): Promise<void> {
+    if (!env.otpBypass) {
+      throw new Error('Test activation is only available when OTP_BYPASS=true.');
+    }
+
+    const resolvedSlug =
+      billingCycle === 'yearly' || planSlug === 'pro_yearly'
+        ? 'pro_yearly'
+        : 'pro_monthly';
+
+    const plans = await query<{ id: string }>(
+      `SELECT id FROM plans WHERE slug = $1 AND is_active = true`,
+      [resolvedSlug],
+    );
+    if (!plans.length) throw new Error(`Plan '${resolvedSlug}' not found in database.`);
+    const planId = plans[0].id;
+
+    const sub = await this.getOrgSubscription(organizationId);
+    if (!sub) throw new Error('No subscription record for this organization.');
+
+    const periodEnd = new Date();
+    if (resolvedSlug === 'pro_yearly') {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+
+    await query(
+      `UPDATE subscriptions
+       SET plan_id              = $1,
+           status               = 'active',
+           current_period_start = now(),
+           current_period_end   = $2,
+           trial_ends_at        = NULL,
+           cancel_at_period_end = false,
+           cancelled_at         = NULL,
+           grace_period_ends_at = NULL,
+           updated_at           = now()
+       WHERE id = $3`,
+      [planId, periodEnd, sub.id],
+    );
+
+    await query(
+      `INSERT INTO subscription_history
+         (organization_id, subscription_id, from_plan_id, to_plan_id,
+          from_status, to_status, reason)
+       VALUES ($1, $2, $3, $4, $5, 'active', 'test_activation')`,
+      [organizationId, sub.id, sub.plan_id, planId, sub.status],
+    );
+  }
+
+  // ---- 30-day free trial (no payment) -------------------------------------
+
+  /**
+   * True when the org can still claim a 30-day Pro trial from the paywall.
+   * Already-trialing / paid orgs, and orgs that already used a trial, are ineligible.
+   */
+  async canClaimFreeTrial(organizationId: string): Promise<boolean> {
+    const sub = await this.getOrgSubscription(organizationId);
+    if (!sub) return false;
+    if (sub.status === 'trialing' || sub.status === 'active' || sub.status === 'past_due') {
+      return false;
+    }
+
+    const claimed = await query<{ id: string }>(
+      `SELECT id FROM subscription_history
+       WHERE organization_id = $1
+         AND reason IN ('trial_started', 'trial_claimed')
+       LIMIT 1`,
+      [organizationId],
+    );
+    return claimed.length === 0;
+  }
+
+  /**
+   * Activates a 30-day Pro trial without payment.
+   * Org is treated as Premium (pro_trial entitlements) until trial_ends_at.
+   */
+  async startFreeTrial(organizationId: string, userId: string): Promise<{ trialEndsAt: Date }> {
+    const eligible = await this.canClaimFreeTrial(organizationId);
+    if (!eligible) {
+      throw new Error('Free trial is not available for this organization.');
+    }
+
+    const plans = await query<{ id: string; trial_days: number }>(
+      `SELECT id, trial_days FROM plans WHERE slug = 'pro_trial' AND is_active = true`,
+    );
+    if (!plans.length) throw new Error("'pro_trial' plan is missing from the database.");
+    const trialPlan = plans[0];
+    const trialDays = trialPlan.trial_days > 0 ? trialPlan.trial_days : 30;
+
+    const sub = await this.getOrgSubscription(organizationId);
+    if (!sub) throw new Error('No subscription record for this organization.');
+
+    const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
+    await query(
+      `UPDATE subscriptions
+       SET plan_id              = $1,
+           status               = 'trialing',
+           trial_ends_at        = $2,
+           current_period_start = now(),
+           current_period_end   = $2,
+           cancel_at_period_end = false,
+           cancelled_at         = NULL,
+           grace_period_ends_at = NULL,
+           updated_at           = now()
+       WHERE id = $3`,
+      [trialPlan.id, trialEndsAt, sub.id],
+    );
+
+    await query(
+      `INSERT INTO subscription_history
+         (organization_id, subscription_id, from_plan_id, to_plan_id,
+          from_status, to_status, reason, changed_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, 'trialing', 'trial_claimed', $6)`,
+      [organizationId, sub.id, sub.plan_id, trialPlan.id, sub.status, userId],
+    );
+
+    return { trialEndsAt };
+  }
+
   // ---- Public Plans Catalog -----------------------------------------------
 
   /**
@@ -443,29 +667,60 @@ export class SubscriptionService {
    * Used by the mobile paywall screen. No auth required on the route.
    */
   async getPublicPlans() {
-    return query(
-      `SELECT p.id,
-              p.slug,
-              p.display_name       AS "displayName",
-              p.description,
-              p.price_inr_monthly  AS "priceInrMonthly",
-              p.price_inr_yearly   AS "priceInrYearly",
-              p.trial_days         AS "trialDays",
-              p.sort_order         AS "sortOrder",
-              json_object_agg(
-                f.key,
-                CASE WHEN pf.bool_value IS NOT NULL
-                     THEN to_json(pf.bool_value)
-                     ELSE to_json(pf.quota_value)
-                END
-              ) AS features
-       FROM   plans         p
-       JOIN   plan_features pf ON pf.plan_id  = p.id
-       JOIN   features      f  ON f.id        = pf.feature_id
-       WHERE  p.is_public = true AND p.is_active = true
-       GROUP  BY p.id
-       ORDER  BY p.sort_order`,
-    );
+    const withOriginals = `
+      SELECT p.id,
+             p.slug,
+             p.display_name       AS "displayName",
+             p.description,
+             p.price_inr_monthly  AS "priceInrMonthly",
+             p.price_inr_yearly   AS "priceInrYearly",
+             p.original_price_inr_monthly AS "originalPriceInrMonthly",
+             p.original_price_inr_yearly  AS "originalPriceInrYearly",
+             p.trial_days         AS "trialDays",
+             p.sort_order         AS "sortOrder",
+             json_object_agg(
+               f.key,
+               CASE WHEN pf.bool_value IS NOT NULL
+                    THEN to_json(pf.bool_value)
+                    ELSE to_json(pf.quota_value)
+               END
+             ) AS features
+      FROM   plans         p
+      JOIN   plan_features pf ON pf.plan_id  = p.id
+      JOIN   features      f  ON f.id        = pf.feature_id
+      WHERE  p.is_public = true AND p.is_active = true
+      GROUP  BY p.id
+      ORDER  BY p.sort_order`;
+
+    const withoutOriginals = `
+      SELECT p.id,
+             p.slug,
+             p.display_name       AS "displayName",
+             p.description,
+             p.price_inr_monthly  AS "priceInrMonthly",
+             p.price_inr_yearly   AS "priceInrYearly",
+             p.trial_days         AS "trialDays",
+             p.sort_order         AS "sortOrder",
+             json_object_agg(
+               f.key,
+               CASE WHEN pf.bool_value IS NOT NULL
+                    THEN to_json(pf.bool_value)
+                    ELSE to_json(pf.quota_value)
+               END
+             ) AS features
+      FROM   plans         p
+      JOIN   plan_features pf ON pf.plan_id  = p.id
+      JOIN   features      f  ON f.id        = pf.feature_id
+      WHERE  p.is_public = true AND p.is_active = true
+      GROUP  BY p.id
+      ORDER  BY p.sort_order`;
+
+    try {
+      return await query(withOriginals);
+    } catch {
+      // Migration 010 not applied yet — Flutter falls back to hardcoded strike prices.
+      return query(withoutOriginals);
+    }
   }
 
   // ---- Background Job: Downgrade Expired Subscriptions -------------------
