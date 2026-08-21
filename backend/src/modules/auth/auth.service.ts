@@ -13,6 +13,20 @@ function generateOtp(): string {
   return String(crypto.randomInt(100000, 999999));
 }
 
+export type UserProfile = {
+  id: string;
+  phone: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  profileComplete: boolean;
+  propertyCount: number;
+  organizationId: string | null;
+  planSlug: string | null;
+  planName: string | null;
+  subscriptionStatus: string | null;
+};
+
 export class AuthService {
   async requestOtp(phone: string): Promise<void> {
     const code = generateOtp();
@@ -35,7 +49,13 @@ export class AuthService {
   async verifyOtp(
     phone: string,
     code: string,
-  ): Promise<{ accessToken: string; refreshToken: string; userId: string; organizationId?: string }> {
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    userId: string;
+    organizationId?: string;
+    user: UserProfile;
+  }> {
     if (!env.otpBypass) {
       const codeHash = hashOtp(code);
       const rows = await query<{ id: string }>(
@@ -49,7 +69,6 @@ export class AuthService {
       }
       await query(`UPDATE otp_codes SET consumed_at = now() WHERE id = $1`, [rows[0].id]);
     } else if (!/^\d{6}$/.test(code)) {
-      // Even in bypass mode, require a 6-digit shape so the UI flow still makes sense.
       throw new Error('Enter any 6-digit code');
     }
 
@@ -73,26 +92,23 @@ export class AuthService {
         [user.id, organizationId],
       );
 
-      // Provision free/trial subscription row so paywall & test-activate always work.
       try {
         await new SubscriptionService().createTrialSubscription(
           organizationId,
           user.id,
         );
       } catch (err) {
-        // Non-fatal at signup — ensureSubscriptionRow will heal later.
         // eslint-disable-next-line no-console
         console.error('[auth] createTrialSubscription failed:', err);
       }
     } else {
-      // Existing users don't necessarily have an organization — a tenant-only
-      // phone number never gets one. Only owners/admins do.
       const membership = (await query<{ organization_id: string }>(
         `SELECT organization_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1`,
         [user.id],
       ))[0];
       organizationId = membership?.organization_id;
     }
+
     const accessToken = jwt.sign({ sub: user.id }, env.jwtAccessSecret, {
       expiresIn: env.jwtAccessTtl,
     } as jwt.SignOptions);
@@ -100,7 +116,15 @@ export class AuthService {
       expiresIn: env.jwtRefreshTtl,
     } as jwt.SignOptions);
 
-    return { accessToken, refreshToken, userId: user.id, organizationId };
+    const profile = await this.getProfile(user.id);
+
+    return {
+      accessToken,
+      refreshToken,
+      userId: user.id,
+      organizationId,
+      user: profile,
+    };
   }
 
   async refresh(refreshToken: string): Promise<{ accessToken: string }> {
@@ -109,5 +133,143 @@ export class AuthService {
       expiresIn: env.jwtAccessTtl,
     } as jwt.SignOptions);
     return { accessToken };
+  }
+
+  async getProfile(userId: string): Promise<UserProfile> {
+    // email / avatar_url require migration 012 — fall back gracefully if missing.
+    let u: {
+      id: string;
+      phone: string;
+      name: string | null;
+      email: string | null;
+      avatar_url: string | null;
+    };
+
+    try {
+      const rows = await query<{
+        id: string;
+        phone: string;
+        name: string | null;
+        email: string | null;
+        avatar_url: string | null;
+      }>(
+        `SELECT id, phone, name, email, avatar_url FROM users WHERE id = $1`,
+        [userId],
+      );
+      if (!rows[0]) throw new Error('User not found');
+      u = rows[0];
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes('email') && !msg.includes('avatar_url') && !msg.includes('column')) {
+        throw err;
+      }
+      const rows = await query<{ id: string; phone: string; name: string | null }>(
+        `SELECT id, phone, name FROM users WHERE id = $1`,
+        [userId],
+      );
+      if (!rows[0]) throw new Error('User not found');
+      u = { ...rows[0], email: null, avatar_url: null };
+    }
+
+    const membership = (await query<{ organization_id: string }>(
+      `SELECT organization_id FROM memberships
+       WHERE  user_id = $1 AND role IN ('owner', 'admin')
+       ORDER BY created_at LIMIT 1`,
+      [userId],
+    ))[0];
+
+    let propertyCount = 0;
+    let planSlug: string | null = null;
+    let planName: string | null = null;
+    let subscriptionStatus: string | null = null;
+
+    if (membership?.organization_id) {
+      const countRows = await query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM properties WHERE organization_id = $1`,
+        [membership.organization_id],
+      );
+      propertyCount = Number(countRows[0]?.count ?? 0);
+
+      try {
+        const sub = await new SubscriptionService().getOrgSubscription(
+          membership.organization_id,
+        );
+        if (sub) {
+          planSlug = (sub.plan_slug as string) ?? null;
+          planName = (sub.plan_name as string) ?? null;
+          subscriptionStatus = (sub.status as string) ?? null;
+        }
+      } catch {
+        // ignore — subscription optional for profile read
+      }
+    }
+
+    const name = u.name?.trim() ? u.name.trim() : null;
+
+    return {
+      id: u.id,
+      phone: u.phone,
+      name,
+      email: u.email,
+      avatarUrl: u.avatar_url,
+      profileComplete: Boolean(name),
+      propertyCount,
+      organizationId: membership?.organization_id ?? null,
+      planSlug,
+      planName,
+      subscriptionStatus,
+    };
+  }
+
+  async updateProfile(
+    userId: string,
+    input: { name?: string; email?: string | null; avatarUrl?: string | null },
+  ): Promise<UserProfile> {
+    const name = input.name?.trim();
+    if (input.name !== undefined && (!name || name.length < 2)) {
+      throw new Error('Full name is required (at least 2 characters).');
+    }
+
+    const email =
+      input.email === undefined
+        ? undefined
+        : input.email?.trim()
+          ? input.email.trim()
+          : null;
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('Enter a valid email address.');
+    }
+
+    try {
+      await query(
+        `UPDATE users
+         SET name       = COALESCE($2, name),
+             email      = CASE WHEN $3::boolean THEN $4 ELSE email END,
+             avatar_url = CASE WHEN $5::boolean THEN $6 ELSE avatar_url END,
+             updated_at = now()
+         WHERE id = $1`,
+        [
+          userId,
+          name ?? null,
+          input.email !== undefined,
+          email ?? null,
+          input.avatarUrl !== undefined,
+          input.avatarUrl ?? null,
+        ],
+      );
+    } catch (err) {
+      // Migration 012 not applied — update name only.
+      if (name) {
+        await query(
+          `UPDATE users SET name = $2, updated_at = now() WHERE id = $1`,
+          [userId, name],
+        );
+      } else {
+        throw err;
+      }
+    }
+
+    return this.getProfile(userId);
   }
 }

@@ -1,9 +1,7 @@
 // features/auth/presentation/login_flow.dart
 //
-// Shared post-login routing logic. Order matters: pending invitations are
-// checked BEFORE contexts, so a newly-invited manager/staff sees the
-// accept/decline prompt even if they already have another context
-// (e.g. they're also a tenant elsewhere).
+// Post-login routing:
+//   invitations → context → profile (if incomplete) → properties → home/shell
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,6 +34,36 @@ Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
   }
 }
 
+/// Called after profile is saved during onboarding when user already has properties.
+Future<void> continueAfterProfileComplete(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final authRepo = ref.read(authRepositoryProvider);
+  final orgId = await authRepo.getOrganizationId();
+  final scopedPropertyId = await authRepo.getScopedPropertyId();
+  if (!context.mounted) return;
+
+  if (orgId != null) {
+    final properties =
+        await ref.read(propertiesRepositoryProvider).list(orgId);
+    if (!context.mounted) return;
+    _goByPropertyCount(context, properties);
+    return;
+  }
+
+  if (scopedPropertyId != null) {
+    final property =
+        await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
+    if (!context.mounted) return;
+    context.go('/property/$scopedPropertyId',
+        extra: {'propertyName': property['name']});
+    return;
+  }
+
+  context.go('/onboarding/welcome');
+}
+
 Future<void> routeAfterContextSelection(
   BuildContext context,
   WidgetRef ref,
@@ -49,30 +77,50 @@ Future<void> routeAfterContextSelection(
   }
 
   final authRepo = ref.read(authRepositoryProvider);
+
+  // Owners/admins must complete profile before property flows.
+  if (role == 'owner' || role == 'admin') {
+    try {
+      final me = await authRepo.fetchMe();
+      if (!me.profileComplete) {
+        if (context.mounted) {
+          context.go('/onboarding/profile');
+        }
+        return;
+      }
+    } catch (_) {
+      // If /me fails (old backend), fall through to property routing.
+    }
+  }
+
   final orgId = await authRepo.getOrganizationId();
   final scopedPropertyId = await authRepo.getScopedPropertyId();
 
   if (!context.mounted) return;
 
   if (orgId != null) {
-    final properties = await ref.read(propertiesRepositoryProvider).list(orgId);
+    final properties =
+        await ref.read(propertiesRepositoryProvider).list(orgId);
     if (!context.mounted) return;
-    if (properties.isEmpty) {
-      context.go('/onboarding/welcome');
-    } else if (properties.length == 1) {
-      // Single property — skip the picker and open the 5-tab shell immediately.
-      final p = properties.first;
-      context.go('/property/${p['id']}', extra: {'propertyName': p['name']});
-    } else {
-      // Multiple properties — show the property picker first.
-      context.go('/home');
-    }
+    _goByPropertyCount(context, properties);
   } else if (scopedPropertyId != null) {
-    // Manager/Staff — go straight to their assigned property's 5-tab shell.
-    final property = await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
+    final property =
+        await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
     if (!context.mounted) return;
-    context.go('/property/$scopedPropertyId', extra: {'propertyName': property['name']});
+    context.go('/property/$scopedPropertyId',
+        extra: {'propertyName': property['name']});
   } else {
     context.go('/onboarding/welcome');
+  }
+}
+
+void _goByPropertyCount(BuildContext context, List<dynamic> properties) {
+  if (properties.isEmpty) {
+    context.go('/onboarding/welcome');
+  } else if (properties.length == 1) {
+    final p = properties.first;
+    context.go('/property/${p['id']}', extra: {'propertyName': p['name']});
+  } else {
+    context.go('/home');
   }
 }

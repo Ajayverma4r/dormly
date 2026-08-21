@@ -15,9 +15,11 @@ import '../../features/properties/presentation/welcome_screen.dart';
 import '../../features/structure/presentation/structure_editor/structure_editor_screen.dart';
 import '../../features/properties/presentation/properties_list_screen.dart';
 import '../../features/auth/presentation/context_picker_screen.dart';
+import '../../features/auth/presentation/profile_creation_screen.dart';
 import '../../features/tenant_portal/presentation/tenant_dashboard_screen.dart';
 import '../../features/staff/presentation/invitations_screen.dart';
 import '../../features/notifications/presentation/notifications_screen.dart';
+import '../../features/home/presentation/profile_screen.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/splash',
@@ -27,6 +29,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/otp',
       builder: (context, state) => OtpVerifyScreen(phone: state.extra as String? ?? ''),
+    ),
+    GoRoute(
+      path: '/onboarding/profile',
+      builder: (context, state) => const ProfileCreationScreen(fromOnboarding: true),
     ),
     GoRoute(path: '/onboarding/welcome', builder: (context, state) => const WelcomeScreen()),
     GoRoute(path: '/onboarding/create-property', builder: (context, state) => const PropertyWizardScreen()),
@@ -62,6 +68,7 @@ final appRouter = GoRouter(
     ),
 
     GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
+    GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
 
     // /home is the property picker for owners with multiple properties.
     GoRoute(path: '/home', builder: (context, state) => const PropertiesListScreen()),
