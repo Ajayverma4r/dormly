@@ -1,19 +1,16 @@
 // features/auth/data/auth_repository.dart
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/storage/auth_storage.dart';
 import '../domain/user_profile.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.watch(apiClientProvider));
 });
 
-const _androidOptions = AndroidOptions(encryptedSharedPreferences: true);
-
 class AuthRepository {
   final ApiClient _client;
-  final _storage = const FlutterSecureStorage(aOptions: _androidOptions);
 
   AuthRepository(this._client);
 
@@ -27,11 +24,14 @@ class AuthRepository {
       'code': code,
     });
     final data = res.data['data'] as Map<String, dynamic>;
-    await _storage.write(key: 'access_token', value: data['accessToken']);
-    await _storage.write(key: 'refresh_token', value: data['refreshToken']);
+    await AuthStorage.writeAccessToken(data['accessToken'] as String);
+    await AuthStorage.writeRefreshToken(data['refreshToken'] as String);
+    if (data['userId'] != null) {
+      await AuthStorage.writeUserId(data['userId'] as String);
+    }
     if (data['organizationId'] != null) {
-      await _storage.write(
-          key: 'organization_id', value: data['organizationId'] as String);
+      await AuthStorage.write(AuthStorage.organizationIdKey,
+          data['organizationId'] as String);
     }
     if (data['user'] is Map) {
       return UserProfile.fromJson(
@@ -80,30 +80,83 @@ class AuthRepository {
       'contextType': contextType,
       'contextId': contextId,
     });
-    final data = res.data['data'];
-    final context = data['context'];
+    final data = res.data['data'] as Map<String, dynamic>;
+    final context = Map<String, dynamic>.from(data['context'] as Map);
 
-    await _storage.write(key: 'access_token', value: data['accessToken']);
-    await _storage.write(key: 'context_type', value: context['type']);
-    await _storage.write(key: 'context_role', value: context['role']);
-
-    if (context['role'] == 'owner' || context['role'] == 'admin') {
-      await _storage.write(key: 'organization_id', value: context['id']);
-    }
-    if (context['propertyId'] != null) {
-      await _storage.write(
-          key: 'scoped_property_id', value: context['propertyId']);
-    }
-    return Map<String, dynamic>.from(context as Map);
+    await AuthStorage.writeAccessToken(data['accessToken'] as String);
+    await AuthStorage.writeContext(
+      type: context['type'] as String,
+      id: context['id'] as String,
+      role: context['role'] as String,
+      organizationId: context['role'] == 'owner' || context['role'] == 'admin'
+          ? context['id'] as String
+          : null,
+      scopedPropertyId: context['propertyId'] as String?,
+    );
+    return context;
   }
 
-  Future<String?> getOrganizationId() => _storage.read(key: 'organization_id');
-  Future<String?> getAccessToken() => _storage.read(key: 'access_token');
-  Future<String?> getContextRole() => _storage.read(key: 'context_role');
-  Future<String?> getScopedPropertyId() =>
-      _storage.read(key: 'scoped_property_id');
+  Future<String?> getOrganizationId() => AuthStorage.organizationId();
+  Future<String?> getAccessToken() => AuthStorage.accessToken();
+  Future<String?> getRefreshToken() => AuthStorage.refreshToken();
+  Future<String?> getContextRole() => AuthStorage.contextRole();
+  Future<String?> getScopedPropertyId() => AuthStorage.scopedPropertyId();
+  Future<String?> getContextType() => AuthStorage.contextType();
+  Future<String?> getContextId() async {
+    final id = await AuthStorage.contextId();
+    return id ?? await AuthStorage.organizationId();
+  }
+
+  Future<bool> hasPersistedSession() => AuthStorage.hasPersistedSession();
+
+  Future<bool> hasStoredContext() async {
+    final type = await AuthStorage.contextType();
+    final id = await getContextId();
+    return type != null && id != null;
+  }
+
+  /// Validates the current access token; refreshes via refresh_token when expired.
+  Future<bool> ensureValidSession() async {
+    if (!await hasPersistedSession()) return false;
+
+    try {
+      await _client.dio.get('/v1/auth/me');
+      return true;
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 401) rethrow;
+    }
+
+    final refresh = await getRefreshToken();
+    if (refresh == null || refresh.isEmpty) return false;
+
+    try {
+      final res = await _client.dio.post('/v1/auth/refresh', data: {
+        'refreshToken': refresh,
+      });
+      final newAccess = res.data['data']['accessToken'] as String?;
+      if (newAccess == null || newAccess.isEmpty) return false;
+      await AuthStorage.writeAccessToken(newAccess);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Re-selects the last workspace so the JWT includes ctxType/ctxRole claims.
+  Future<bool> restoreContextIfNeeded() async {
+    final type = await AuthStorage.contextType();
+    final id = await getContextId();
+    if (type == null || id == null) return false;
+
+    try {
+      await selectContext(type, id);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   Future<void> logout() async {
-    await _storage.deleteAll();
+    await AuthStorage.clearAll();
   }
 }

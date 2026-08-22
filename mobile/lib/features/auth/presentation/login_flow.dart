@@ -2,6 +2,9 @@
 //
 // Post-login routing:
 //   invitations → context → profile (if incomplete) → properties → home/shell
+//
+// Session restore (app restart):
+//   refresh token → restore context → route to dashboard / wizard
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +13,7 @@ import '../data/auth_repository.dart';
 import '../../staff/data/staff_repository.dart';
 import '../../properties/data/properties_repository.dart';
 
+/// Fresh login after OTP — always resolves context from the server.
 Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
   final authRepo = ref.read(authRepositoryProvider);
   final staffRepo = ref.read(staffRepositoryProvider);
@@ -32,6 +36,66 @@ Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
   } else {
     if (context.mounted) context.go('/select-context', extra: contexts);
   }
+}
+
+/// Cold start — reuse persisted refresh token + last workspace context.
+Future<void> restoreSession(BuildContext context, WidgetRef ref) async {
+  final authRepo = ref.read(authRepositoryProvider);
+
+  final ok = await authRepo.ensureValidSession();
+  if (!ok) {
+    await authRepo.logout();
+    throw Exception('Session expired');
+  }
+
+  if (await authRepo.hasStoredContext()) {
+    final restored = await authRepo.restoreContextIfNeeded();
+    if (!restored) {
+      // Stored context invalid — fall back to full login resolution.
+      if (context.mounted) await completeLogin(context, ref);
+      return;
+    }
+  } else {
+    if (context.mounted) await completeLogin(context, ref);
+    return;
+  }
+
+  final staffRepo = ref.read(staffRepositoryProvider);
+  final invitations = await staffRepo.listMyInvitations();
+  if (invitations.isNotEmpty) {
+    if (context.mounted) context.go('/invitations', extra: invitations);
+    return;
+  }
+
+  if (context.mounted) await routeAuthenticatedUser(context, ref);
+}
+
+/// Route an already-authenticated user (restore or post-context-select).
+Future<void> routeAuthenticatedUser(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final authRepo = ref.read(authRepositoryProvider);
+  final role = await authRepo.getContextRole();
+
+  if (role == 'tenant') {
+    if (context.mounted) context.go('/tenant/dashboard');
+    return;
+  }
+
+  if (role == 'owner' || role == 'admin') {
+    try {
+      final me = await authRepo.fetchMe();
+      if (!me.profileComplete) {
+        if (context.mounted) context.go('/onboarding/profile');
+        return;
+      }
+    } catch (_) {
+      // If /me fails (old backend), fall through to property routing.
+    }
+  }
+
+  if (context.mounted) await continueAfterProfileComplete(context, ref);
 }
 
 /// Called after profile is saved during onboarding when user already has properties.

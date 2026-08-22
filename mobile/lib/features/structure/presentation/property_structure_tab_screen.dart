@@ -11,6 +11,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/dormly_empty_state.dart';
 import '../../../core/widgets/dynamic_icon.dart';
 import '../../tenancies/data/tenancy_repository.dart';
+import '../../tenancies/domain/assignable_unit.dart';
 import '../../tenancies/presentation/node_detail_screen.dart';
 import '../data/structure_repository.dart';
 import '../domain/hierarchy_level.dart';
@@ -22,18 +23,19 @@ class _TreeNode {
   final HierarchyLevel level;
   final List<_TreeNode> children;
   final bool occupied;
+  final bool isAssignable;
 
   const _TreeNode({
     required this.node,
     required this.level,
     required this.children,
     required this.occupied,
+    required this.isAssignable,
   });
 
   String get id => node['id']?.toString() ?? '';
   String get name => node['name']?.toString() ?? 'Untitled';
 
-  /// True when there are no child nodes under this one (rentable unit / bed / shop…).
   bool get isLeaf => children.isEmpty;
 }
 
@@ -43,9 +45,9 @@ class _RoomsTree {
 
   const _RoomsTree({required this.roots, required this.levels});
 
-  /// True when the property has no nesting — only terminal units (villa, etc.).
+  /// True when the property has no nesting — only terminal assignable units.
   bool get isFlatLeafForest =>
-      roots.isNotEmpty && roots.every((r) => r.isLeaf);
+      roots.isNotEmpty && roots.every((r) => r.isAssignable);
 }
 
 /// Drop empty intermediate nodes (e.g. a Floor with no Rooms/Beds under it)
@@ -64,13 +66,14 @@ List<_TreeNode> _pruneEmptyBranches(List<_TreeNode> nodes) {
     // were empty intermediates, we skip it above. If prune emptied kids of a
     // node that still should show… only keep if original was leaf OR kids remain.
     if (n.children.isEmpty) {
-      out.add(n); // true leaf
+      out.add(n);
     } else if (kids.isNotEmpty) {
       out.add(_TreeNode(
         node: n.node,
         level: n.level,
         children: kids,
         occupied: n.occupied,
+        isAssignable: n.isAssignable,
       ));
     }
   }
@@ -128,6 +131,7 @@ final roomsTreeProvider =
           level: childLevel,
           children: kids,
           occupied: occupiedIds.contains(id),
+          isAssignable: isAssignableLevel(childLevel.id, levels),
         ));
       }
     }
@@ -147,6 +151,7 @@ final roomsTreeProvider =
         level: rootLevel,
         children: await loadUnder(rootLevel, id),
         occupied: occupiedIds.contains(id),
+        isAssignable: isAssignableLevel(rootLevel.id, levels),
       ));
     }
   }
@@ -184,7 +189,7 @@ class _PropertyStructureTabScreenState
     _didAutoExpand = true;
 
     void expandChain(_TreeNode node) {
-      if (node.isLeaf) return;
+      if (node.isAssignable) return;
       _expanded.add(node.id);
       if (node.children.length == 1) {
         expandChain(node.children.first);
@@ -376,20 +381,19 @@ class _HierarchyBranch extends StatelessWidget {
       );
     }
 
-    // All terminals at this layer → grid (Beds, Flats, Shops, Rooms…).
-    if (nodes.every((n) => n.isLeaf)) {
+    // All assignable units at this layer → grid (Beds, Flats, Shops…).
+    if (nodes.every((n) => n.isAssignable)) {
       return leafGridBuilder(nodes);
     }
 
-    // Mixed: leaves as cards + nested expanders for containers.
-    final leaves = nodes.where((n) => n.isLeaf).toList();
-    final containers = nodes.where((n) => !n.isLeaf).toList();
+    final units = nodes.where((n) => n.isAssignable).toList();
+    final containers = nodes.where((n) => !n.isAssignable).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (leaves.isNotEmpty) ...[
-          leafGridBuilder(leaves),
+        if (units.isNotEmpty) ...[
+          leafGridBuilder(units),
           if (containers.isNotEmpty) const SizedBox(height: 10),
         ],
         ...containers.map((node) {

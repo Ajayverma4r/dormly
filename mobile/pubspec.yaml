@@ -30,7 +30,28 @@ dev_dependencies:
   freezed: ^2.5.7
   json_serializable: ^6.8.0
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.4
 
+# Generate app icons: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/images/logo.png
+  adaptive_icon_background: "#2451B4"
+  adaptive_icon_foreground: assets/images/logo.png
+  remove_alpha_ios: true
+
+# Generate native splash: dart run flutter_native_splash:create
+flutter_native_splash:
+  color: "#2451B4"
+  image: assets/images/logo.png
+  android: true
+  ios: true
+  android_12:
+    color: "#2451B4"
+    image: assets/images/logo.png
+  web: false
 
 flutter:
   uses-material-design: true

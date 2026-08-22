@@ -49,13 +49,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
   Future<void> _bootstrap() async {
     final started = DateTime.now();
+    final authRepo = ref.read(authRepositoryProvider);
     var hasSession = false;
 
     try {
-      final token = await ref.read(authRepositoryProvider).getAccessToken();
-      hasSession = token != null && token.isNotEmpty;
+      hasSession = await authRepo.hasPersistedSession();
     } catch (e) {
-      debugPrint('Splash token read failed (non-fatal): $e');
+      debugPrint('Splash session read failed (non-fatal): $e');
     }
 
     final remaining = _minDisplay - DateTime.now().difference(started);
@@ -66,10 +66,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     if (hasSession) {
       try {
-        await completeLogin(context, ref);
+        await restoreSession(context, ref);
         return;
       } catch (e) {
         debugPrint('Splash session restore failed: $e');
+        await authRepo.logout();
         if (mounted) context.go('/login');
         return;
       }

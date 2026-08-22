@@ -59,6 +59,8 @@ export class TenancyService {
   }
 
   async create(input: CreateTenancyInput) {
+    await this.assertNodeAssignable(input.propertyId, input.nodeId);
+
     let user = (await query<{ id: string }>(`SELECT id FROM users WHERE phone = $1`, [input.phone]))[0];
     if (!user) {
       user = (await query<{ id: string }>(
@@ -80,6 +82,54 @@ export class TenancyService {
       ],
     );
     return tenancy;
+  }
+
+  /** Ensures the node exists, belongs to the property, is a rentable unit, and is vacant. */
+  private async assertNodeAssignable(propertyId: string, nodeId: string): Promise<void> {
+    const rows = await query<{
+      property_id: string;
+      level_id: string;
+      level_name: string;
+      supports_occupancy: boolean;
+    }>(
+      `SELECT n.property_id, n.level_id, l.display_name AS level_name, l.supports_occupancy
+       FROM hierarchy_nodes n
+       JOIN hierarchy_levels l ON l.id = n.level_id
+       WHERE n.id = $1`,
+      [nodeId],
+    );
+    const node = rows[0];
+    if (!node || node.property_id !== propertyId) {
+      throw new Error('The selected unit was not found in this property.');
+    }
+
+    if (!node.supports_occupancy) {
+      const deeper = await query<{ display_name: string }>(
+        `WITH RECURSIVE descendants AS (
+           SELECT id, supports_occupancy, display_name, parent_level_id
+           FROM hierarchy_levels WHERE parent_level_id = $1
+           UNION ALL
+           SELECT hl.id, hl.supports_occupancy, hl.display_name, hl.parent_level_id
+           FROM hierarchy_levels hl
+           JOIN descendants d ON hl.parent_level_id = d.id
+         )
+         SELECT display_name FROM descendants WHERE supports_occupancy = true LIMIT 1`,
+        [node.level_id],
+      );
+      if (deeper[0]) {
+        throw new Error(
+          `Assign the tenant to a specific ${deeper[0].display_name}, not the ${node.level_name}.`,
+        );
+      }
+    }
+
+    const occupied = await query<{ id: string }>(
+      `SELECT id FROM tenancies WHERE node_id = $1 AND status = 'active' LIMIT 1`,
+      [nodeId],
+    );
+    if (occupied[0]) {
+      throw new Error('This unit already has an active tenant. End the current tenancy first.');
+    }
   }
 
   async update(tenancyId: string, input: UpdateTenancyInput) {

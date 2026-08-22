@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/tenancy_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import 'add_tenant_screen.dart';
 import 'resident_detail_screen.dart';
 
 final propertyResidentsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
@@ -22,6 +23,20 @@ class ResidentsListScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: Text(label)),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          final created = await Navigator.of(context).push<bool>(
+            MaterialPageRoute(
+              builder: (_) => AddTenantScreen(propertyId: propertyId),
+            ),
+          );
+          if (created == true) {
+            ref.invalidate(propertyResidentsProvider(propertyId));
+          }
+        },
+        icon: const Icon(Icons.person_add_outlined),
+        label: Text('Add $label'),
+      ),
       body: residentsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
@@ -37,13 +52,19 @@ class ResidentsListScreen extends ConsumerWidget {
                     const Icon(Icons.people_outline, size: 48, color: AppColors.slate),
                     const SizedBox(height: 12),
                     Text('No $label yet', style: theme.textTheme.bodyLarge),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tap Add $label to assign someone to a bed, flat, or shop.',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium,
+                    ),
                   ],
                 ),
               ),
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
             itemCount: active.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (context, i) {

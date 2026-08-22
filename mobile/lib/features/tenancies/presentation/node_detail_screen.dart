@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/tenancy_repository.dart';
 import '../../structure/data/structure_repository.dart';
+import '../domain/assignable_unit.dart';
+import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
+    show hierarchyLevelsProvider;
 import 'add_tenant_screen.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -108,6 +111,7 @@ class NodeDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tenanciesAsync = ref.watch(tenanciesForNodeProvider((propertyId, nodeId)));
+    final levelsAsync = ref.watch(hierarchyLevelsProvider(propertyId));
 
     return Scaffold(
       appBar: AppBar(
@@ -125,50 +129,111 @@ class NodeDetailScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: tenanciesAsync.when(
+      body: levelsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
-        data: (tenancies) {
-          final active = tenancies.where((t) => t['status'] == 'active').toList();
+        data: (levels) {
+          final level = levels.where((l) => l.displayName == levelName).firstOrNull;
+          final assignable =
+              level != null && isAssignableLevel(level.id, levels);
 
-          if (active.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.person_outline, size: 56, color: Colors.grey),
-                    const SizedBox(height: 16),
-                    Text('No tenant assigned to this $levelName',
-                        textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 20),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2B5CFF)),
-                      onPressed: () async {
-                        final created = await Navigator.of(context).push<bool>(
-                          MaterialPageRoute(
-                            builder: (context) => AddTenantScreen(propertyId: propertyId, nodeId: nodeId),
+          return tenanciesAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (err, _) => Center(child: Text('Something went wrong: $err')),
+            data: (tenancies) {
+              final active =
+                  tenancies.where((t) => t['status'] == 'active').toList();
+
+              if (active.isEmpty) {
+                if (!assignable && level != null) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.info_outline,
+                              size: 56, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          Text(
+                            nonAssignableReason(level.id, levels) ??
+                                'Tenants are assigned to a more specific unit under this $levelName.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
-                        );
-                        if (created == true) {
-                          ref.invalidate(tenanciesForNodeProvider((propertyId, nodeId)));
-                        }
-                      },
-                      icon: const Icon(Icons.person_add_outlined, color: Colors.white),
-                      label: const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Add Tenant', style: TextStyle(color: Colors.white)),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Open the Rooms tab, expand this section, and pick a bed or unit.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            );
-          }
+                  );
+                }
 
-          final tenant = active.first;
-          return ListView(
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.person_outline,
+                            size: 56, color: Colors.grey),
+                        const SizedBox(height: 16),
+                        Text('No tenant assigned to this $levelName',
+                            textAlign: TextAlign.center,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 20),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2B5CFF)),
+                          onPressed: () async {
+                            final created =
+                                await Navigator.of(context).push<bool>(
+                              MaterialPageRoute(
+                                builder: (context) => AddTenantScreen(
+                                  propertyId: propertyId,
+                                  nodeId: nodeId,
+                                ),
+                              ),
+                            );
+                            if (created == true) {
+                              ref.invalidate(
+                                  tenanciesForNodeProvider((propertyId, nodeId)));
+                            }
+                          },
+                          icon: const Icon(Icons.person_add_outlined,
+                              color: Colors.white),
+                          label: const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Text('Add Tenant',
+                                style: TextStyle(color: Colors.white)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              final tenant = active.first;
+              return _tenantDetails(context, ref, tenant);
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _tenantDetails(
+    BuildContext context,
+    WidgetRef ref,
+    Map<String, dynamic> tenant,
+  ) {
+    return ListView(
             padding: const EdgeInsets.all(20),
             children: [
               Container(
@@ -233,9 +298,6 @@ class NodeDetailScreen extends ConsumerWidget {
               ),
             ],
           );
-        },
-      ),
-    );
   }
 
   Widget _detailRow(String label, String value) {
@@ -271,5 +333,12 @@ class NodeDetailScreen extends ConsumerWidget {
     final baseUrl = ref.read(tenancyRepositoryProvider).baseUrl;
     final uri = Uri.parse('$baseUrl$relativeUrl');
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+extension _FirstOrNull<E> on Iterable<E> {
+  E? get firstOrNull {
+    final it = iterator;
+    return it.moveNext() ? it.current : null;
   }
 }
