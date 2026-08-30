@@ -165,8 +165,10 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                 propertyId: widget.propertyId,
                 propertyName: widget.propertyName,
                 canManage: canManage,
-                onAddTenant: () => _goToTab(1),
-                onCollectRent: () => _goToTab(2),
+                onGoToTenantsTab: () => _goToTab(1),
+                onGoToPaymentsTab: () => _goToTab(2),
+                onGoToRoomsTab: () => _goToTab(3),
+                onGoToMenuTab: () => _goToTab(4),
               ),
               // 1 — Tenants
               ResidentsListScreen(
