@@ -7,7 +7,7 @@ final tenancyRepositoryProvider = Provider<TenancyRepository>((ref) {
   return TenancyRepository(ref.watch(apiClientProvider));
 });
 
-/// Thrown when a tenancy PATCH succeeds but the updated row cannot be loaded.
+/// Thrown when a tenancy update fails or the updated row cannot be verified.
 class TenancyUpdateException implements Exception {
   final String message;
   TenancyUpdateException(this.message);
@@ -20,11 +20,42 @@ class TenancyRepository {
   final ApiClient _client;
   TenancyRepository(this._client);
 
+  static void _requireNonEmptyId(String value, String label) {
+    if (value.trim().isEmpty) {
+      throw TenancyUpdateException('$label is missing. Cannot update tenancy.');
+    }
+  }
+
+  String _tenancyPatchPath(String propertyId, String tenancyId) {
+    _requireNonEmptyId(propertyId, 'Property ID');
+    _requireNonEmptyId(tenancyId, 'Tenancy ID');
+    return '/v1/properties/${propertyId.trim()}/tenancies/${tenancyId.trim()}';
+  }
+
   Map<String, dynamic> _parseRow(dynamic data) {
     if (data == null || data is! Map) {
       throw TenancyUpdateException('Server returned an empty tenancy response.');
     }
     return Map<String, dynamic>.from(data);
+  }
+
+  String _dioFriendlyMessage(DioException e, {String? action}) {
+    final status = e.response?.statusCode;
+    if (status == 404) {
+      return 'Endpoint not found (404). Please ensure the backend is fully deployed.';
+    }
+    if (status == 403) {
+      return 'You do not have permission to update this tenancy.';
+    }
+    if (status == 401) {
+      return 'Session expired. Please log in again.';
+    }
+    final body = e.response?.data;
+    if (body is Map && body['error'] != null) {
+      return body['error'].toString();
+    }
+    final verb = action ?? 'complete this request';
+    return 'Network error while trying to $verb.';
   }
 
   double? readAmount(Map<String, dynamic> data, List<String> keys) {
@@ -39,9 +70,11 @@ class TenancyRepository {
 
   Future<List<Map<String, dynamic>>> listByNode(
       String propertyId, String nodeId) async {
+    _requireNonEmptyId(propertyId, 'Property ID');
+    _requireNonEmptyId(nodeId, 'Node ID');
     final res = await _client.dio.get(
-      '/v1/properties/$propertyId/tenancies',
-      queryParameters: {'nodeId': nodeId},
+      '/v1/properties/${propertyId.trim()}/tenancies',
+      queryParameters: {'nodeId': nodeId.trim()},
     );
     return (res.data['data'] as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
@@ -49,18 +82,39 @@ class TenancyRepository {
   }
 
   Future<List<Map<String, dynamic>>> listByProperty(String propertyId) async {
-    final res = await _client.dio.get('/v1/properties/$propertyId/tenancies');
+    _requireNonEmptyId(propertyId, 'Property ID');
+    final res =
+        await _client.dio.get('/v1/properties/${propertyId.trim()}/tenancies');
     return (res.data['data'] as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
   }
 
-  Future<Map<String, dynamic>> getById(
-      String propertyId, String tenancyId) async {
-    final res = await _client.dio.get(
-      '/v1/properties/$propertyId/tenancies/$tenancyId',
+  /// Reload a tenancy using list endpoints (compatible with all deployed backends).
+  Future<Map<String, dynamic>> _reloadTenancy({
+    required String propertyId,
+    required String tenancyId,
+    String? nodeId,
+  }) async {
+    if (nodeId != null && nodeId.trim().isNotEmpty) {
+      try {
+        final rows = await listByNode(propertyId, nodeId);
+        for (final row in rows) {
+          if (row['id']?.toString() == tenancyId) return row;
+        }
+      } on DioException {
+        // Fall through to property-wide list.
+      }
+    }
+
+    final rows = await listByProperty(propertyId);
+    for (final row in rows) {
+      if (row['id']?.toString() == tenancyId) return row;
+    }
+
+    throw TenancyUpdateException(
+      'Updated tenancy could not be reloaded. Pull down to refresh the screen.',
     );
-    return _parseRow(res.data['data']);
   }
 
   Future<Map<String, dynamic>> create(
@@ -89,20 +143,22 @@ class TenancyRepository {
     if (securityDeposit != null) body['securityDeposit'] = securityDeposit;
     if (notes != null) body['notes'] = notes;
 
-    final res =
-        await _client.dio.post('/v1/properties/$propertyId/tenancies', data: body);
+    final res = await _client.dio.post(
+      '/v1/properties/${propertyId.trim()}/tenancies',
+      data: body,
+    );
     return _parseRow(res.data['data']);
   }
 
   Future<void> endTenancy(String propertyId, String tenancyId) async {
-    await _client.dio.post(
-        '/v1/properties/$propertyId/tenancies/$tenancyId/end');
+    await _client.dio.post('${_tenancyPatchPath(propertyId, tenancyId)}/end');
   }
 
-  /// PATCH tenancy and re-fetch the full row (API equivalent of `.select().single()`).
+  /// PATCH tenancy at `/v1/properties/:propertyId/tenancies/:tenancyId`.
   Future<Map<String, dynamic>> update(
     String propertyId,
     String tenancyId, {
+    String? nodeId,
     double? monthlyRent,
     double? securityDeposit,
     String? fullName,
@@ -126,29 +182,32 @@ class TenancyRepository {
       throw TenancyUpdateException('No fields provided to update.');
     }
 
+    final path = _tenancyPatchPath(propertyId, tenancyId);
+
     try {
-      final res = await _client.dio.patch(
-        '/v1/properties/$propertyId/tenancies/$tenancyId',
-        data: body,
-      );
+      final res = await _client.dio.patch(path, data: body);
       var row = _parseRow(res.data['data']);
 
-      // Ensure financial columns are present — refetch if PATCH body omitted them.
-      if (monthlyRent != null &&
-          readAmount(row, ['monthly_rent', 'monthlyRent']) == null) {
-        row = await getById(propertyId, tenancyId);
-      }
-      if (securityDeposit != null &&
-          readAmount(row, ['security_deposit', 'securityDeposit']) == null) {
-        row = await getById(propertyId, tenancyId);
+      // Re-load via list API if PATCH response omits financial columns.
+      final needsRentCheck = monthlyRent != null &&
+          readAmount(row, ['monthly_rent', 'monthlyRent']) == null;
+      final needsDepositCheck = securityDeposit != null &&
+          readAmount(row, ['security_deposit', 'securityDeposit']) == null;
+
+      if (needsRentCheck || needsDepositCheck) {
+        row = await _reloadTenancy(
+          propertyId: propertyId,
+          tenancyId: tenancyId,
+          nodeId: nodeId,
+        );
       }
 
       if (monthlyRent != null) {
         final saved = readAmount(row, ['monthly_rent', 'monthlyRent']);
         if (saved == null || (saved - monthlyRent).abs() > 0.009) {
           throw TenancyUpdateException(
-            'Monthly rent was not saved. The database may be missing the '
-            'monthly_rent column — run migration 013 and redeploy the backend.',
+            'Monthly rent was not saved. Deploy the latest backend and run '
+            'migration 013 (monthly_rent column).',
           );
         }
       }
@@ -164,11 +223,8 @@ class TenancyRepository {
 
       return row;
     } on DioException catch (e) {
-      final msg = e.response?.data is Map
-          ? (e.response!.data as Map)['error']?.toString()
-          : null;
       throw TenancyUpdateException(
-        msg ?? e.message ?? 'Network error while updating tenancy.',
+        _dioFriendlyMessage(e, action: 'update tenancy'),
       );
     } on TenancyUpdateException {
       rethrow;
@@ -184,7 +240,7 @@ class TenancyRepository {
           await MultipartFile.fromFile(filePath, filename: 'agreement.pdf'),
     });
     await _client.dio.post(
-      '/v1/properties/$propertyId/tenancies/$tenancyId/agreement',
+      '${_tenancyPatchPath(propertyId, tenancyId)}/agreement',
       data: formData,
     );
   }

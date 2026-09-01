@@ -1079,11 +1079,11 @@ class _FinancialOverviewCard extends ConsumerWidget {
           ),
         );
       }
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not update $title: $e'),
+          const SnackBar(
+            content: Text('Something went wrong. Please try again.'),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -1439,7 +1439,12 @@ class _FinancialOverviewCard extends ConsumerWidget {
               currentValue: rent,
               onSave: (amount) => ref
                   .read(tenancyRepositoryProvider)
-                  .update(propertyId, tenancyId, monthlyRent: amount),
+                  .update(
+                    propertyId,
+                    tenancyId,
+                    nodeId: nodeId,
+                    monthlyRent: amount,
+                  ),
             ),
           ),
           const Divider(height: 20),
@@ -1453,7 +1458,12 @@ class _FinancialOverviewCard extends ConsumerWidget {
               currentValue: deposit,
               onSave: (amount) => ref
                   .read(tenancyRepositoryProvider)
-                  .update(propertyId, tenancyId, securityDeposit: amount),
+                  .update(
+                    propertyId,
+                    tenancyId,
+                    nodeId: nodeId,
+                    securityDeposit: amount,
+                  ),
             ),
           ),
           const Divider(height: 20),

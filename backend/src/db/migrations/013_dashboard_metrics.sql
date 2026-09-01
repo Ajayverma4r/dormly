@@ -9,12 +9,17 @@
 --
 -- NOTE: Open complaints and active-tenant counts are already supported by
 --       005_tenancy_and_roles.sql + 007_complaints.sql — only indexes added here.
+-- Safe to re-run: enums/tables/indexes use idempotent guards.
 
 -- ---------------------------------------------------------------------------
 -- 1. Tenancy: monthly rent + KYC + vacancy planning
 -- ---------------------------------------------------------------------------
 
-CREATE TYPE kyc_status AS ENUM ('pending', 'submitted', 'verified', 'rejected');
+DO $$ BEGIN
+  CREATE TYPE kyc_status AS ENUM ('pending', 'submitted', 'verified', 'rejected');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 ALTER TABLE tenancies
   ADD COLUMN IF NOT EXISTS monthly_rent        NUMERIC(12,2),
@@ -45,11 +50,15 @@ WHERE kyc_status = 'pending'
   AND TRIM(profile_photo_url) <> '';
 
 -- Optional per-document store (Aadhaar, PAN, agreement, etc.)
-CREATE TYPE tenant_document_type AS ENUM (
-  'aadhaar', 'pan', 'photo', 'agreement', 'address_proof', 'other'
-);
+DO $$ BEGIN
+  CREATE TYPE tenant_document_type AS ENUM (
+    'aadhaar', 'pan', 'photo', 'agreement', 'address_proof', 'other'
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TABLE tenant_documents (
+CREATE TABLE IF NOT EXISTS tenant_documents (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenancy_id      UUID NOT NULL REFERENCES tenancies(id) ON DELETE CASCADE,
   doc_type        tenant_document_type NOT NULL,
@@ -62,17 +71,21 @@ CREATE TABLE tenant_documents (
   UNIQUE (tenancy_id, doc_type)
 );
 
-CREATE INDEX idx_tenant_documents_tenancy ON tenant_documents(tenancy_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_documents_tenancy ON tenant_documents(tenancy_id);
 
 -- ---------------------------------------------------------------------------
 -- 2. Expenses (NEW — no prior table existed)
 -- ---------------------------------------------------------------------------
 
-CREATE TYPE expense_category AS ENUM (
-  'maintenance', 'utilities', 'salaries', 'supplies', 'taxes', 'other'
-);
+DO $$ BEGIN
+  CREATE TYPE expense_category AS ENUM (
+    'maintenance', 'utilities', 'salaries', 'supplies', 'taxes', 'other'
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TABLE expenses (
+CREATE TABLE IF NOT EXISTS expenses (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   property_id     UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   node_id         UUID REFERENCES hierarchy_nodes(id) ON DELETE SET NULL,
@@ -87,8 +100,8 @@ CREATE TABLE expenses (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_expenses_property_date ON expenses(property_id, expense_date DESC);
-CREATE INDEX idx_expenses_property_category ON expenses(property_id, category);
+CREATE INDEX IF NOT EXISTS idx_expenses_property_date ON expenses(property_id, expense_date DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_property_category ON expenses(property_id, category);
 
 -- ---------------------------------------------------------------------------
 -- 3. Billing: reminder audit + dashboard query indexes
