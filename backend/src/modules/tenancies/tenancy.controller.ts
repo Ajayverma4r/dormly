@@ -41,6 +41,36 @@ const createSchema = z.object({
   notes: z.string().optional(),
 });
 
+const updateSchema = z
+  .object({
+    fullName: z.string().min(1).optional(),
+    email: z.string().email().optional(),
+    address: z.string().optional(),
+    companyName: z.string().optional(),
+    aadhaarNumber: z.string().optional(),
+    moveInAt: z.string().optional(),
+    moveOutAt: z.string().optional(),
+    monthlyRent: z.number().min(0).optional(),
+    monthly_rent: z.number().min(0).optional(),
+    securityDeposit: z.number().min(0).optional(),
+    security_deposit: z.number().min(0).optional(),
+    notes: z.string().optional(),
+    status: z.enum(['active', 'ended', 'pending']).optional(),
+  })
+  .transform((data) => ({
+    fullName: data.fullName,
+    email: data.email,
+    address: data.address,
+    companyName: data.companyName,
+    aadhaarNumber: data.aadhaarNumber,
+    moveInAt: data.moveInAt,
+    moveOutAt: data.moveOutAt,
+    notes: data.notes,
+    status: data.status,
+    monthlyRent: data.monthlyRent ?? data.monthly_rent,
+    securityDeposit: data.securityDeposit ?? data.security_deposit,
+  }));
+
 export class TenancyController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
@@ -59,9 +89,18 @@ export class TenancyController {
     } catch (err) { next(err); }
   };
 
+  getById = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const tenancy = await service.getById(req.params.tenancyId);
+      if (!tenancy) return res.status(404).json({ error: 'Tenancy not found' });
+      res.json({ data: tenancy });
+    } catch (err) { next(err); }
+  };
+
   update = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      const tenancy = await service.update(req.params.tenancyId, req.body);
+      const body = updateSchema.parse(req.body);
+      const tenancy = await service.update(req.params.tenancyId, body);
       res.json({ data: tenancy });
     } catch (err) { next(err); }
   };

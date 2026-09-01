@@ -7,6 +7,7 @@ const controller = new TenancyController();
 export const tenancyRouter = Router({ mergeParams: true });
 
 tenancyRouter.get('/', controller.list);
+tenancyRouter.get('/:tenancyId', controller.getById);
 tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.create);
 tenancyRouter.patch('/:tenancyId', requireRole('owner', 'admin', 'manager'), controller.update);
 tenancyRouter.post('/:tenancyId/end', requireRole('owner', 'admin', 'manager'), controller.endTenancy);

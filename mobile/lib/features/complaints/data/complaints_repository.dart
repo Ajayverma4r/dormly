@@ -12,7 +12,25 @@ class ComplaintsRepository {
 
   Future<List<Map<String, dynamic>>> listForProperty(String propertyId) async {
     final res = await _client.dio.get('/v1/properties/$propertyId/complaints');
-    return List<Map<String, dynamic>>.from(res.data['data']);
+    return (res.data['data'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createForProperty(
+    String propertyId, {
+    required String nodeId,
+    required String category,
+    required String description,
+    String priority = 'medium',
+  }) async {
+    final res = await _client.dio.post('/v1/properties/$propertyId/complaints', data: {
+      'nodeId': nodeId,
+      'category': category,
+      'description': description,
+      'priority': priority,
+    });
+    return Map<String, dynamic>.from(res.data['data']);
   }
 
   Future<void> updateStatus(String propertyId, String complaintId, String status, {String? resolutionNote}) async {

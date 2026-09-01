@@ -87,12 +87,14 @@ class StructureRepository {
     String? parentNodeId,
     required String name,
     String? code,
+    Map<String, dynamic>? metadata,
   }) async {
     final res = await _client.dio.post('/v1/properties/$propertyId/structure/nodes', data: {
       'levelId': levelId,
       'parentNodeId': parentNodeId,
       'name': name,
       'code': code,
+      if (metadata != null) 'metadata': metadata,
     });
     return Map<String, dynamic>.from(res.data['data']);
   }
