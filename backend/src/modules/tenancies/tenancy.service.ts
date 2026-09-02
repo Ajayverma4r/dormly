@@ -240,4 +240,25 @@ export class TenancyService {
     );
     return tenancy;
   }
+
+  async setProfilePhotoUrl(tenancyId: string, url: string) {
+    const [tenancy] = await query(
+      `UPDATE tenancies SET profile_photo_url = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+      [url, tenancyId],
+    );
+    if (!tenancy) throw new Error('Tenancy not found.');
+    return tenancy;
+  }
+
+  async upsertDocument(tenancyId: string, docType: string, fileUrl: string) {
+    const rows = await query(
+      `INSERT INTO tenant_documents (tenancy_id, doc_type, file_url, status)
+       VALUES ($1, $2::tenant_document_type, $3, 'submitted')
+       ON CONFLICT (tenancy_id, doc_type)
+       DO UPDATE SET file_url = EXCLUDED.file_url, status = 'submitted', uploaded_at = now()
+       RETURNING *`,
+      [tenancyId, docType, fileUrl],
+    );
+    return rows[0];
+  }
 }

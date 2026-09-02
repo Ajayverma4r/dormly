@@ -1,7 +1,7 @@
 // modules/tenancies/tenancy.routes.ts
 import { Router } from 'express';
 import { TenancyController } from './tenancy.controller';
-import { uploadAgreementMiddleware } from './tenancy.controller';
+import { uploadAgreementMiddleware, uploadProfilePhotoMiddleware, uploadTenantDocumentMiddleware } from './tenancy.controller';
 import { requireRole } from '@shared/middleware/auth-guard';
 const controller = new TenancyController();
 export const tenancyRouter = Router({ mergeParams: true });
@@ -13,3 +13,5 @@ tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.cre
 tenancyRouter.patch('/:tenancyId', requireRole('owner', 'admin', 'manager'), controller.update);
 tenancyRouter.post('/:tenancyId/end', requireRole('owner', 'admin', 'manager'), controller.endTenancy);
 tenancyRouter.post('/:tenancyId/agreement', requireRole('owner', 'admin', 'manager'), uploadAgreementMiddleware, controller.uploadAgreement);
+tenancyRouter.post('/:tenancyId/profile-photo', requireRole('owner', 'admin', 'manager'), uploadProfilePhotoMiddleware, controller.uploadProfilePhoto);
+tenancyRouter.post('/:tenancyId/documents', requireRole('owner', 'admin', 'manager'), uploadTenantDocumentMiddleware, controller.uploadDocument);

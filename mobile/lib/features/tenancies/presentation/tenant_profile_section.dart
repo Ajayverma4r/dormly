@@ -1,11 +1,17 @@
 // features/tenancies/presentation/tenant_profile_section.dart
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/image_compress.dart';
 import '../data/tenancy_repository.dart';
 import 'node_detail_screen.dart' show tenanciesForNodeProvider;
+import 'utils/aadhaar_validation.dart';
 
 final tenancyDocumentsProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String tenancyId)>(
@@ -63,6 +69,7 @@ class TenantProfileSection extends ConsumerWidget {
         nodeId: nodeId,
         tenancyId: tenancyId,
         tenant: tenant,
+        baseUrl: baseUrl,
       ),
     );
   }
@@ -390,6 +397,7 @@ class TenantProfileEditSheet extends ConsumerStatefulWidget {
   final String nodeId;
   final String tenancyId;
   final Map<String, dynamic> tenant;
+  final String baseUrl;
 
   const TenantProfileEditSheet({
     super.key,
@@ -397,6 +405,7 @@ class TenantProfileEditSheet extends ConsumerStatefulWidget {
     required this.nodeId,
     required this.tenancyId,
     required this.tenant,
+    required this.baseUrl,
   });
 
   @override
@@ -405,6 +414,9 @@ class TenantProfileEditSheet extends ConsumerStatefulWidget {
 }
 
 class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _picker = ImagePicker();
+
   late final TextEditingController _emailController;
   late final TextEditingController _addressController;
   late final TextEditingController _ecNameController;
@@ -417,6 +429,9 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
   String _kycStatus = 'pending';
   bool _policeVerification = false;
   bool _saving = false;
+  bool _processingImage = false;
+  String? _localProfilePreview;
+  String? _localDocPreview;
 
   @override
   void initState() {
@@ -475,7 +490,94 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
     super.dispose();
   }
 
+  Future<void> _pickAndUploadImage({required bool isProfilePhoto}) async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _processingImage = true);
+    try {
+      final compressed = await compressImage(File(picked.path));
+      if (!compressed.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                compressed.errorMessage ??
+                    'Please select a smaller or less complex image.',
+              ),
+              backgroundColor: AppColors.danger,
+            ),
+          );
+        }
+        return;
+      }
+
+      final repo = ref.read(tenancyRepositoryProvider);
+      if (isProfilePhoto) {
+        await repo.uploadProfilePhoto(
+          widget.propertyId,
+          widget.tenancyId,
+          compressed.file!.path,
+        );
+        setState(() => _localProfilePreview = compressed.file!.path);
+      } else {
+        await repo.uploadDocument(
+          widget.propertyId,
+          widget.tenancyId,
+          compressed.file!.path,
+          docType: mapDocumentType(_idType),
+        );
+        setState(() => _localDocPreview = compressed.file!.path);
+      }
+
+      ref.invalidate(tenanciesForNodeProvider(
+          (widget.propertyId, widget.nodeId)));
+      ref.invalidate(tenancyDocumentsProvider(
+          (widget.propertyId, widget.tenancyId)));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isProfilePhoto ? 'Profile photo updated' : 'Document uploaded'),
+            backgroundColor: AppColors.positive,
+          ),
+        );
+      }
+    } on TenancyUpdateException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: AppColors.danger),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not upload image. Please try again.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _processingImage = false);
+    }
+  }
+
+  String? _validateIdNumber(String? value) {
+    if (_idType == 'aadhaar') {
+      return validateAadhaarNumber(value, required: false);
+    }
+    return null;
+  }
+
   Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+
     setState(() => _saving = true);
     try {
       await ref.read(tenancyRepositoryProvider).update(
@@ -528,6 +630,13 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
 
   @override
   Widget build(BuildContext context) {
+    final remotePhoto = resolveFileUrl(
+      tenantField(widget.tenant, ['profile_photo_url', 'profilePhotoUrl']),
+      widget.baseUrl,
+    );
+    final profilePreview = _localProfilePreview ?? remotePhoto;
+    final isBusy = _saving || _processingImage;
+
     return Padding(
       padding: EdgeInsets.only(
         left: 20,
@@ -535,146 +644,255 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
         top: 16,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Edit Profile', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: 'Email Address',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _addressController,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Permanent Address',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _occupation,
-              decoration: const InputDecoration(
-                labelText: 'Occupation',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'student', child: Text('Student')),
-                DropdownMenuItem(value: 'working', child: Text('Working')),
-              ],
-              onChanged: (v) => setState(() => _occupation = v ?? 'student'),
-            ),
-            const SizedBox(height: 16),
-            Text('Emergency Contact',
-                style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _ecNameController,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _ecRelationController,
-              decoration: const InputDecoration(
-                labelText: 'Relation',
-                hintText: 'e.g. Parent, Spouse',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _ecPhoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Phone',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('KYC & Identity',
-                style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _idType,
-              decoration: const InputDecoration(
-                labelText: 'ID Type',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'aadhaar', child: Text('Aadhaar')),
-                DropdownMenuItem(value: 'pan', child: Text('PAN')),
-                DropdownMenuItem(value: 'passport', child: Text('Passport')),
-                DropdownMenuItem(value: 'other', child: Text('Other')),
-              ],
-              onChanged: (v) => setState(() => _idType = v ?? 'aadhaar'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _idNumberController,
-              decoration: const InputDecoration(
-                labelText: 'ID Number',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _kycStatus,
-              decoration: const InputDecoration(
-                labelText: 'KYC Status',
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'pending', child: Text('Pending')),
-                DropdownMenuItem(
-                    value: 'submitted', child: Text('Submitted')),
-                DropdownMenuItem(value: 'verified', child: Text('Verified')),
-                DropdownMenuItem(value: 'rejected', child: Text('Rejected')),
-              ],
-              onChanged: (v) => setState(() => _kycStatus = v ?? 'pending'),
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Police Verification Done'),
-              value: _policeVerification,
-              onChanged: (v) => setState(() => _policeVerification = v),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Edit Profile',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 44,
+                          backgroundColor: AppColors.hairline,
+                          backgroundImage: _profileImageProvider(profilePreview),
+                          child: profilePreview == null
+                              ? const Icon(Icons.person_outline, size: 40)
+                              : null,
                         ),
-                      )
-                    : const Text('Save Profile'),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: isBusy
+                              ? null
+                              : () => _pickAndUploadImage(isProfilePhoto: true),
+                          icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                          label: const Text('Change Profile Photo'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email Address',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _addressController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Permanent Address',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _occupation,
+                    decoration: const InputDecoration(
+                      labelText: 'Occupation',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'student', child: Text('Student')),
+                      DropdownMenuItem(value: 'working', child: Text('Working')),
+                    ],
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _occupation = v ?? 'student'),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Emergency Contact',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _ecNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _ecRelationController,
+                    decoration: const InputDecoration(
+                      labelText: 'Relation',
+                      hintText: 'e.g. Parent, Spouse',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _ecPhoneController,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('KYC & Identity',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: _idType,
+                    decoration: const InputDecoration(
+                      labelText: 'ID Type',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'aadhaar', child: Text('Aadhaar')),
+                      DropdownMenuItem(value: 'pan', child: Text('PAN')),
+                      DropdownMenuItem(
+                          value: 'passport', child: Text('Passport')),
+                      DropdownMenuItem(value: 'other', child: Text('Other')),
+                    ],
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _idType = v ?? 'aadhaar'),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_idType == 'aadhaar')
+                    TextFormField(
+                      controller: _idNumberController,
+                      keyboardType: TextInputType.number,
+                      maxLength: 12,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      validator: _validateIdNumber,
+                      decoration: const InputDecoration(
+                        labelText: 'Aadhaar Number',
+                        border: OutlineInputBorder(),
+                        counterText: '',
+                      ),
+                    )
+                  else
+                    TextFormField(
+                      controller: _idNumberController,
+                      decoration: InputDecoration(
+                        labelText: '${formatIdType(_idType)} Number',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: isBusy
+                        ? null
+                        : () => _pickAndUploadImage(isProfilePhoto: false),
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: Text(_localDocPreview != null
+                        ? 'ID Document Selected'
+                        : 'Upload ID Document Photo'),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    initialValue: _kycStatus,
+                    decoration: const InputDecoration(
+                      labelText: 'KYC Status',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'pending', child: Text('Pending')),
+                      DropdownMenuItem(
+                          value: 'submitted', child: Text('Submitted')),
+                      DropdownMenuItem(
+                          value: 'verified', child: Text('Verified')),
+                      DropdownMenuItem(
+                          value: 'rejected', child: Text('Rejected')),
+                    ],
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _kycStatus = v ?? 'pending'),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Police Verification Done'),
+                    value: _policeVerification,
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _policeVerification = v),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: isBusy ? null : _save,
+                      child: _saving
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Save Profile'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+          if (_processingImage)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black26,
+                child: Center(
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Compressing and uploading…',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
 
 // ---- Shared helpers ----
+
+ImageProvider? _profileImageProvider(String? path) {
+  if (path == null) return null;
+  if (path.startsWith('http')) return NetworkImage(path);
+  return FileImage(File(path));
+}
+
+String mapDocumentType(String idType) {
+  const allowed = {
+    'aadhaar',
+    'pan',
+    'photo',
+    'agreement',
+    'address_proof',
+    'other',
+  };
+  if (allowed.contains(idType)) return idType;
+  return 'other';
+}
 
 String? tenantField(Map<String, dynamic> data, List<String> keys) {
   for (final key in keys) {

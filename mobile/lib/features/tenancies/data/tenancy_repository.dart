@@ -281,6 +281,51 @@ class TenancyRepository {
         .toList();
   }
 
+  Future<Map<String, dynamic>> uploadProfilePhoto(
+    String propertyId,
+    String tenancyId,
+    String filePath,
+  ) async {
+    try {
+      final formData = FormData.fromMap({
+        'photo': await MultipartFile.fromFile(filePath, filename: 'photo.jpg'),
+      });
+      final res = await _client.dio.post(
+        '${_tenancyPatchPath(propertyId, tenancyId)}/profile-photo',
+        data: formData,
+      );
+      return _parseRow(res.data['data']);
+    } on DioException catch (e) {
+      throw TenancyUpdateException(
+        _dioFriendlyMessage(e, action: 'upload profile photo'),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> uploadDocument(
+    String propertyId,
+    String tenancyId,
+    String filePath, {
+    required String docType,
+  }) async {
+    try {
+      final formData = FormData.fromMap({
+        'document':
+            await MultipartFile.fromFile(filePath, filename: '$docType.jpg'),
+        'docType': docType,
+      });
+      final res = await _client.dio.post(
+        '${_tenancyPatchPath(propertyId, tenancyId)}/documents',
+        data: formData,
+      );
+      return _parseRow(res.data['data']);
+    } on DioException catch (e) {
+      throw TenancyUpdateException(
+        _dioFriendlyMessage(e, action: 'upload document'),
+      );
+    }
+  }
+
   Future<void> uploadAgreement(
       String propertyId, String tenancyId, String filePath) async {
     final formData = FormData.fromMap({

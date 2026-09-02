@@ -8,7 +8,11 @@ import path from 'path';
 import fs from 'fs';
 
 const uploadDir = path.join(__dirname, '../../../uploads/agreements');
+const profilePhotoDir = path.join(__dirname, '../../../uploads/tenant-photos');
+const tenantDocDir = path.join(__dirname, '../../../uploads/tenant-documents');
 fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(profilePhotoDir, { recursive: true });
+fs.mkdirSync(tenantDocDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadDir),
@@ -25,6 +29,40 @@ export const uploadAgreementMiddleware = multer({
   },
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 }).single('agreement');
+
+const profilePhotoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, profilePhotoDir),
+  filename: (req, _file, cb) =>
+    cb(null, `${req.params.tenancyId}-photo-${Date.now()}.jpg`),
+});
+
+export const uploadProfilePhotoMiddleware = multer({
+  storage: profilePhotoStorage,
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image uploads are allowed'));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 150 * 1024 }, // 150KB server cap (client targets 100KB)
+}).single('photo');
+
+const tenantDocStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, tenantDocDir),
+  filename: (req, _file, cb) =>
+    cb(null, `${req.params.tenancyId}-doc-${Date.now()}.jpg`),
+});
+
+export const uploadTenantDocumentMiddleware = multer({
+  storage: tenantDocStorage,
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image uploads are allowed'));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 150 * 1024 },
+}).single('document');
 
 const service = new TenancyService();
 
@@ -138,6 +176,29 @@ export class TenancyController {
       const url = `/uploads/agreements/${req.file.filename}`;
       const tenancy = await service.setAgreementUrl(req.params.tenancyId, url);
       res.json({ data: tenancy });
+    } catch (err) { next(err); }
+  };
+
+  uploadProfilePhoto = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
+      const url = `/uploads/tenant-photos/${req.file.filename}`;
+      const tenancy = await service.setProfilePhotoUrl(req.params.tenancyId, url);
+      res.json({ data: tenancy });
+    } catch (err) { next(err); }
+  };
+
+  uploadDocument = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No document uploaded' });
+      const docType = (req.body.docType ?? req.body.doc_type ?? 'aadhaar') as string;
+      const allowed = ['aadhaar', 'pan', 'photo', 'agreement', 'address_proof', 'other'];
+      if (!allowed.includes(docType)) {
+        return res.status(400).json({ error: 'Invalid document type' });
+      }
+      const url = `/uploads/tenant-documents/${req.file.filename}`;
+      const doc = await service.upsertDocument(req.params.tenancyId, docType, url);
+      res.json({ data: doc });
     } catch (err) { next(err); }
   };
 

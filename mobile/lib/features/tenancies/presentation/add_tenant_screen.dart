@@ -1,5 +1,6 @@
 // features/tenancies/presentation/add_tenant_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
@@ -7,6 +8,7 @@ import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.
 import '../data/tenancy_repository.dart';
 import '../domain/assignable_unit.dart';
 import 'assignable_units_provider.dart';
+import 'utils/aadhaar_validation.dart';
 import 'utils/tenancy_errors.dart';
 import 'widgets/assignable_unit_search_field.dart';
 import 'widgets/unit_selection_cascade.dart';
@@ -28,6 +30,7 @@ class AddTenantScreen extends ConsumerStatefulWidget {
 }
 
 class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
+  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
@@ -72,11 +75,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
           _error = 'Select a unit (bed, flat, shop, room…) before saving.');
       return;
     }
-    if (_nameController.text.trim().isEmpty ||
-        _phoneController.text.trim().isEmpty) {
-      setState(() => _error = 'Name and phone number are required.');
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
     setState(() {
       _saving = true;
@@ -127,13 +126,23 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   }
 
   Widget _field(String label, TextEditingController controller,
-      {TextInputType? type, bool required = false, int? maxLength}) {
+      {TextInputType? type,
+      bool required = false,
+      int? maxLength,
+      String? Function(String?)? validator,
+      List<TextInputFormatter>? inputFormatters}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: TextField(
+      child: TextFormField(
         controller: controller,
         keyboardType: type,
         maxLength: maxLength,
+        inputFormatters: inputFormatters,
+        validator: validator ??
+            (required
+                ? (v) =>
+                    (v == null || v.trim().isEmpty) ? '$label is required' : null
+                : null),
         onChanged: (_) => setState(() {}),
         decoration: InputDecoration(
           labelText: required ? '$label *' : label,
@@ -235,7 +244,9 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
         data: (levels) => unitsAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('Could not load units: $e')),
-          data: (units) => ListView(
+          data: (units) => Form(
+            key: _formKey,
+            child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
               if (widget.nodeId != null)
@@ -257,7 +268,11 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                   type: TextInputType.emailAddress),
               _field('Address', _addressController),
               _field('Company Name (Optional)', _companyController),
-              _field('Aadhaar Number', _aadhaarController),
+              _field('Aadhaar Number', _aadhaarController,
+                  type: TextInputType.number,
+                  maxLength: 12,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  validator: (v) => validateAadhaarNumber(v, required: false)),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(_moveInDate == null
@@ -295,6 +310,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),
