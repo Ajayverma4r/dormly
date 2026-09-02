@@ -229,7 +229,7 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  padding: EdgeInsets.symmetric(horizontal: 12),
                   child: _TableHeaderRow(),
                 ),
                 Expanded(
@@ -242,8 +242,8 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
                             height: 1,
                             thickness: 1,
                             color: AppColors.hairline,
-                            indent: 20,
-                            endIndent: 20,
+                            indent: 12,
+                            endIndent: 12,
                           ),
                           itemBuilder: (context, i) {
                             final r = pageItems[i];
@@ -525,10 +525,10 @@ class _TableHeaderRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: const [
-          Expanded(flex: 2, child: Text('Guest', style: style)),
-          Expanded(flex: 1, child: Text('Room', style: style)),
-          Expanded(flex: 1, child: Text('Floor', style: style)),
-          Expanded(flex: 1, child: Text('Status', style: style)),
+          Expanded(flex: 4, child: Text('Guest', style: style)),
+          Expanded(flex: 2, child: Text('Room', style: style)),
+          Expanded(flex: 3, child: Text('Floor', style: style)),
+          Expanded(flex: 3, child: Text('Status', style: style)),
         ],
       ),
     );
@@ -563,15 +563,15 @@ class _GuestListRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
               Expanded(
-                flex: 2,
+                flex: 4,
                 child: Row(
                   children: [
                     CircleAvatar(
-                      radius: 18,
+                      radius: 16,
                       backgroundColor: AppColors.canvas,
                       backgroundImage:
                           photoUrl != null ? NetworkImage(photoUrl) : null,
@@ -579,14 +579,14 @@ class _GuestListRow extends StatelessWidget {
                           ? Text(
                               initials,
                               style: const TextStyle(
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: _accent,
                               ),
                             )
                           : null,
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,9 +606,10 @@ class _GuestListRow extends StatelessWidget {
                             phone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  fontSize: 12,
-                                ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(fontSize: 12),
                           ),
                         ],
                       ),
@@ -617,19 +618,19 @@ class _GuestListRow extends StatelessWidget {
                 ),
               ),
               Expanded(
-                flex: 1,
+                flex: 2,
                 child: Row(
                   children: [
                     const Icon(Icons.door_front_door_outlined,
-                        size: 14, color: _accent),
-                    const SizedBox(width: 4),
-                    Flexible(
+                        size: 13, color: _accent),
+                    const SizedBox(width: 3),
+                    Expanded(
                       child: Text(
                         room,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           color: AppColors.ink,
                         ),
@@ -639,7 +640,7 @@ class _GuestListRow extends StatelessWidget {
                 ),
               ),
               Expanded(
-                flex: 1,
+                flex: 3,
                 child: Text(
                   floor,
                   maxLines: 1,
@@ -650,12 +651,22 @@ class _GuestListRow extends StatelessWidget {
                 ),
               ),
               Expanded(
-                flex: 1,
+                flex: 3,
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Flexible(child: _StatusBadge(status: status)),
-                    const Icon(Icons.chevron_right,
-                        size: 18, color: AppColors.slate),
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: _StatusBadge(status: status),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: AppColors.slate,
+                    ),
                   ],
                 ),
               ),
@@ -698,7 +709,7 @@ class _StatusBadge extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(20),
@@ -707,17 +718,21 @@ class _StatusBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 5,
+            height: 5,
             decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: fg,
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: fg,
+              ),
             ),
           ),
         ],
