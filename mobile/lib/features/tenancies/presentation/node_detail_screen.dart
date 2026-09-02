@@ -12,6 +12,7 @@ import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.
 import '../data/tenancy_repository.dart';
 import '../domain/assignable_unit.dart';
 import 'add_tenant_screen.dart';
+import 'tenant_profile_section.dart';
 
 final tenanciesForNodeProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String nodeId)>(
@@ -347,6 +348,13 @@ class _TenantDetailBody extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       children: [
         _TenantHeroSection(tenant: tenant, baseUrl: baseUrl),
+        const SizedBox(height: 16),
+        TenantProfileSection(
+          propertyId: propertyId,
+          nodeId: nodeId,
+          tenancyId: tenancyId,
+          baseUrl: baseUrl,
+        ),
         const SizedBox(height: 16),
         _ComplaintsSection(propertyId: propertyId, nodeId: nodeId),
         const SizedBox(height: 16),

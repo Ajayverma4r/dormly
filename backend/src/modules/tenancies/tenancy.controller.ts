@@ -44,7 +44,7 @@ const createSchema = z.object({
 const updateSchema = z
   .object({
     fullName: z.string().min(1).optional(),
-    email: z.string().email().optional(),
+    email: z.string().optional(),
     address: z.string().optional(),
     companyName: z.string().optional(),
     aadhaarNumber: z.string().optional(),
@@ -56,10 +56,23 @@ const updateSchema = z
     security_deposit: z.number().min(0).optional(),
     notes: z.string().optional(),
     status: z.enum(['active', 'ended', 'pending']).optional(),
+    occupation: z.string().optional(),
+    emergencyContactName: z.string().optional(),
+    emergency_contact_name: z.string().optional(),
+    emergencyContactRelation: z.string().optional(),
+    emergency_contact_relation: z.string().optional(),
+    emergencyContactPhone: z.string().optional(),
+    emergency_contact_phone: z.string().optional(),
+    idType: z.string().optional(),
+    id_type: z.string().optional(),
+    policeVerificationDone: z.boolean().optional(),
+    police_verification_done: z.boolean().optional(),
+    kycStatus: z.enum(['pending', 'submitted', 'verified', 'rejected']).optional(),
+    kyc_status: z.enum(['pending', 'submitted', 'verified', 'rejected']).optional(),
   })
   .transform((data) => ({
     fullName: data.fullName,
-    email: data.email,
+    email: data.email?.trim() === '' ? undefined : data.email,
     address: data.address,
     companyName: data.companyName,
     aadhaarNumber: data.aadhaarNumber,
@@ -69,6 +82,13 @@ const updateSchema = z
     status: data.status,
     monthlyRent: data.monthlyRent ?? data.monthly_rent,
     securityDeposit: data.securityDeposit ?? data.security_deposit,
+    occupation: data.occupation,
+    emergencyContactName: data.emergencyContactName ?? data.emergency_contact_name,
+    emergencyContactRelation: data.emergencyContactRelation ?? data.emergency_contact_relation,
+    emergencyContactPhone: data.emergencyContactPhone ?? data.emergency_contact_phone,
+    idType: data.idType ?? data.id_type,
+    policeVerificationDone: data.policeVerificationDone ?? data.police_verification_done,
+    kycStatus: data.kycStatus ?? data.kyc_status,
   }));
 
 export class TenancyController {
@@ -94,6 +114,13 @@ export class TenancyController {
       const tenancy = await service.getById(req.params.tenancyId);
       if (!tenancy) return res.status(404).json({ error: 'Tenancy not found' });
       res.json({ data: tenancy });
+    } catch (err) { next(err); }
+  };
+
+  listDocuments = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await service.listDocuments(req.params.tenancyId);
+      res.json({ data });
     } catch (err) { next(err); }
   };
 

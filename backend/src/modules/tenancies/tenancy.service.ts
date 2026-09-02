@@ -33,6 +33,13 @@ interface UpdateTenancyInput {
   securityDeposit?: number;
   notes?: string;
   status?: 'active' | 'ended' | 'pending';
+  occupation?: string;
+  emergencyContactName?: string;
+  emergencyContactRelation?: string;
+  emergencyContactPhone?: string;
+  idType?: string;
+  policeVerificationDone?: boolean;
+  kycStatus?: 'pending' | 'submitted' | 'verified' | 'rejected';
 }
 
 export class TenancyService {
@@ -84,7 +91,25 @@ export class TenancyService {
       status: input.status,
       monthlyRent: input.monthlyRent ?? (input.monthly_rent as number | undefined),
       securityDeposit: input.securityDeposit ?? (input.security_deposit as number | undefined),
+      occupation: input.occupation as string | undefined,
+      emergencyContactName:
+          input.emergencyContactName ?? (input.emergency_contact_name as string | undefined),
+      emergencyContactRelation:
+          input.emergencyContactRelation ?? (input.emergency_contact_relation as string | undefined),
+      emergencyContactPhone:
+          input.emergencyContactPhone ?? (input.emergency_contact_phone as string | undefined),
+      idType: input.idType ?? (input.id_type as string | undefined),
+      policeVerificationDone:
+          input.policeVerificationDone ?? (input.police_verification_done as boolean | undefined),
+      kycStatus: input.kycStatus ?? (input.kyc_status as UpdateTenancyInput['kycStatus']),
     };
+  }
+
+  async listDocuments(tenancyId: string) {
+    return query(
+      `SELECT * FROM tenant_documents WHERE tenancy_id = $1 ORDER BY uploaded_at DESC`,
+      [tenancyId],
+    );
   }
 
   async create(input: CreateTenancyInput) {
@@ -167,6 +192,13 @@ export class TenancyService {
       fullName: 'full_name', email: 'email', address: 'address', companyName: 'company_name',
       aadhaarNumber: 'aadhaar_number', moveInAt: 'move_in_at', moveOutAt: 'move_out_at',
       monthlyRent: 'monthly_rent', securityDeposit: 'security_deposit', notes: 'notes', status: 'status',
+      occupation: 'occupation',
+      emergencyContactName: 'emergency_contact_name',
+      emergencyContactRelation: 'emergency_contact_relation',
+      emergencyContactPhone: 'emergency_contact_phone',
+      idType: 'id_type',
+      policeVerificationDone: 'police_verification_done',
+      kycStatus: 'kyc_status',
     };
     const fields: string[] = [];
     const values: any[] = [];

@@ -154,7 +154,7 @@ class TenancyRepository {
     await _client.dio.post('${_tenancyPatchPath(propertyId, tenancyId)}/end');
   }
 
-  /// PATCH tenancy at `/v1/properties/:propertyId/tenancies/:tenancyId`.
+  /// PATCH tenancy profile / financial fields.
   Future<Map<String, dynamic>> update(
     String propertyId,
     String tenancyId, {
@@ -163,7 +163,17 @@ class TenancyRepository {
     double? securityDeposit,
     String? fullName,
     String? email,
+    String? address,
     String? notes,
+    String? occupation,
+    String? emergencyContactName,
+    String? emergencyContactRelation,
+    String? emergencyContactPhone,
+    String? idType,
+    String? aadhaarNumber,
+    bool? policeVerificationDone,
+    String? kycStatus,
+    String? companyName,
   }) async {
     final body = <String, dynamic>{};
     if (monthlyRent != null) {
@@ -176,7 +186,35 @@ class TenancyRepository {
     }
     if (fullName != null) body['fullName'] = fullName;
     if (email != null) body['email'] = email;
+    if (address != null) body['address'] = address;
     if (notes != null) body['notes'] = notes;
+    if (occupation != null) body['occupation'] = occupation;
+    if (emergencyContactName != null) {
+      body['emergencyContactName'] = emergencyContactName;
+      body['emergency_contact_name'] = emergencyContactName;
+    }
+    if (emergencyContactRelation != null) {
+      body['emergencyContactRelation'] = emergencyContactRelation;
+      body['emergency_contact_relation'] = emergencyContactRelation;
+    }
+    if (emergencyContactPhone != null) {
+      body['emergencyContactPhone'] = emergencyContactPhone;
+      body['emergency_contact_phone'] = emergencyContactPhone;
+    }
+    if (idType != null) {
+      body['idType'] = idType;
+      body['id_type'] = idType;
+    }
+    if (aadhaarNumber != null) body['aadhaarNumber'] = aadhaarNumber;
+    if (policeVerificationDone != null) {
+      body['policeVerificationDone'] = policeVerificationDone;
+      body['police_verification_done'] = policeVerificationDone;
+    }
+    if (kycStatus != null) {
+      body['kycStatus'] = kycStatus;
+      body['kyc_status'] = kycStatus;
+    }
+    if (companyName != null) body['companyName'] = companyName;
 
     if (body.isEmpty) {
       throw TenancyUpdateException('No fields provided to update.');
@@ -231,6 +269,16 @@ class TenancyRepository {
     } catch (e) {
       throw TenancyUpdateException('Could not update tenancy: $e');
     }
+  }
+
+  Future<List<Map<String, dynamic>>> listDocuments(
+      String propertyId, String tenancyId) async {
+    final res = await _client.dio.get(
+      '${_tenancyPatchPath(propertyId, tenancyId)}/documents',
+    );
+    return (res.data['data'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
   }
 
   Future<void> uploadAgreement(

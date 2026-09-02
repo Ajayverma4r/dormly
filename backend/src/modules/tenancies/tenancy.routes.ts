@@ -8,6 +8,7 @@ export const tenancyRouter = Router({ mergeParams: true });
 
 tenancyRouter.get('/', controller.list);
 tenancyRouter.get('/:tenancyId', controller.getById);
+tenancyRouter.get('/:tenancyId/documents', controller.listDocuments);
 tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.create);
 tenancyRouter.patch('/:tenancyId', requireRole('owner', 'admin', 'manager'), controller.update);
 tenancyRouter.post('/:tenancyId/end', requireRole('owner', 'admin', 'manager'), controller.endTenancy);
