@@ -56,10 +56,12 @@ export class TenancyService {
 
   async listByProperty(propertyId: string) {
     return query(
-      `SELECT t.*, u.phone, u.name AS user_name, n.name AS node_name
+      `SELECT t.*, u.phone, u.name AS user_name, n.name AS node_name,
+              l.display_name AS level_name
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
+       JOIN hierarchy_levels l ON l.id = n.level_id
        WHERE t.property_id = $1
        ORDER BY t.created_at DESC`,
       [propertyId],

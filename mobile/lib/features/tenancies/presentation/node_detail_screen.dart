@@ -347,7 +347,13 @@ class _TenantDetailBody extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
       children: [
-        _TenantHeroSection(tenant: tenant, baseUrl: baseUrl),
+        _TenantHeroSection(
+          propertyId: propertyId,
+          nodeId: nodeId,
+          tenancyId: tenancyId,
+          tenant: tenant,
+          baseUrl: baseUrl,
+        ),
         const SizedBox(height: 16),
         TenantProfileSection(
           propertyId: propertyId,
@@ -405,17 +411,41 @@ class _TenantDetailBody extends ConsumerWidget {
   }
 }
 
-class _TenantHeroSection extends StatelessWidget {
+class _TenantHeroSection extends ConsumerWidget {
+  final String propertyId;
+  final String nodeId;
+  final String tenancyId;
   final Map<String, dynamic> tenant;
   final String baseUrl;
 
-  const _TenantHeroSection({required this.tenant, required this.baseUrl});
+  const _TenantHeroSection({
+    required this.propertyId,
+    required this.nodeId,
+    required this.tenancyId,
+    required this.tenant,
+    required this.baseUrl,
+  });
+
+  Map<String, dynamic> _liveTenant(WidgetRef ref) {
+    final async = ref.watch(tenanciesForNodeProvider((propertyId, nodeId)));
+    return async.maybeWhen(
+      data: (tenancies) {
+        for (final raw in tenancies) {
+          final t = Map<String, dynamic>.from(raw);
+          if (t['id']?.toString() == tenancyId) return t;
+        }
+        return tenant;
+      },
+      orElse: () => tenant,
+    );
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final name = _tenantName(tenant);
-    final phone = _tenantPhone(tenant);
-    final photoUrl = _profilePhotoUrl(tenant, baseUrl);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final live = _liveTenant(ref);
+    final name = _tenantName(live);
+    final phone = _tenantPhone(live);
+    final photoUrl = _profilePhotoUrl(live, baseUrl);
     final initials = _tenantInitials(name);
 
     return Card(
@@ -428,7 +458,23 @@ class _TenantHeroSection extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            _buildAvatar(photoUrl, initials),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => openTenantProfilePhotoViewer(
+                  context,
+                  propertyId: propertyId,
+                  nodeId: nodeId,
+                  tenancyId: tenancyId,
+                  baseUrl: baseUrl,
+                  tenantName: name,
+                  initials: initials,
+                  photoUrl: photoUrl,
+                ),
+                customBorder: const CircleBorder(),
+                child: _buildAvatar(photoUrl, initials),
+              ),
+            ),
             const SizedBox(height: 14),
             Text(
               name,

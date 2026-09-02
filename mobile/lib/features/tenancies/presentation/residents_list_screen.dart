@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/tenancy_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import 'add_tenant_screen.dart';
-import 'resident_detail_screen.dart';
+import 'node_detail_screen.dart';
 
 final propertyResidentsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
   (ref, propertyId) => ref.watch(tenancyRepositoryProvider).listByProperty(propertyId),
@@ -84,9 +84,35 @@ class ResidentsListScreen extends ConsumerWidget {
                   subtitle: Text('${r['node_name'] ?? ''} · ${r['phone'] ?? ''}'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                      builder: (context) => ResidentDetailScreen(propertyId: propertyId, tenancy: r),
-                    ));
+                    final nodeId =
+                        (r['node_id'] ?? r['nodeId'])?.toString() ?? '';
+                    if (nodeId.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'This tenant is not linked to a unit. Re-assign them from Rooms.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    final nodeName =
+                        (r['node_name'] ?? r['nodeName'])?.toString() ??
+                            'Unit';
+                    final levelName =
+                        (r['level_name'] ?? r['levelName'])?.toString() ??
+                            'Room';
+
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => NodeDetailScreen(
+                          propertyId: propertyId,
+                          nodeId: nodeId,
+                          nodeName: nodeName,
+                          levelName: levelName,
+                        ),
+                      ),
+                    );
                     ref.invalidate(propertyResidentsProvider(propertyId));
                   },
                 ),

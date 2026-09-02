@@ -56,7 +56,7 @@ class TenantProfileSection extends ConsumerWidget {
     );
   }
 
-  void _openEditProfile(BuildContext context, Map<String, dynamic> tenant) {
+  void _openPersonalInfoForm(BuildContext context, Map<String, dynamic> tenant) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -64,12 +64,28 @@ class TenantProfileSection extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => TenantProfileEditSheet(
+      builder: (ctx) => PersonalInfoEditSheet(
         propertyId: propertyId,
         nodeId: nodeId,
         tenancyId: tenancyId,
         tenant: tenant,
-        baseUrl: baseUrl,
+      ),
+    );
+  }
+
+  void _openKycForm(BuildContext context, Map<String, dynamic> tenant) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => KycEditSheet(
+        propertyId: propertyId,
+        nodeId: nodeId,
+        tenancyId: tenancyId,
+        tenant: tenant,
       ),
     );
   }
@@ -85,35 +101,29 @@ class TenantProfileSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text('Tenant 360', style: Theme.of(context).textTheme.titleMedium),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: () => _openEditProfile(context, tenant),
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: const Text('Edit Profile'),
-            ),
-          ],
+        _PersonalInformationCard(
+          tenant: tenant,
+          onEdit: () => _openPersonalInfoForm(context, tenant),
         ),
-        const SizedBox(height: 8),
-        _PersonalInformationCard(tenant: tenant),
         const SizedBox(height: 12),
         docsAsync.when(
           loading: () => _KycDocumentsCard(
             tenant: tenant,
             documents: const [],
             baseUrl: baseUrl,
+            onEdit: () => _openKycForm(context, tenant),
           ),
           error: (_, __) => _KycDocumentsCard(
             tenant: tenant,
             documents: const [],
             baseUrl: baseUrl,
+            onEdit: () => _openKycForm(context, tenant),
           ),
           data: (docs) => _KycDocumentsCard(
             tenant: tenant,
             documents: docs,
             baseUrl: baseUrl,
+            onEdit: () => _openKycForm(context, tenant),
           ),
         ),
       ],
@@ -123,8 +133,12 @@ class TenantProfileSection extends ConsumerWidget {
 
 class _PersonalInformationCard extends StatelessWidget {
   final Map<String, dynamic> tenant;
+  final VoidCallback onEdit;
 
-  const _PersonalInformationCard({required this.tenant});
+  const _PersonalInformationCard({
+    required this.tenant,
+    required this.onEdit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -148,6 +162,7 @@ class _PersonalInformationCard extends StatelessWidget {
 
     return _ProfileCard(
       title: 'Personal Information',
+      onEdit: onEdit,
       child: Column(
         children: [
           _ProfileInfoRow(
@@ -180,11 +195,13 @@ class _KycDocumentsCard extends StatelessWidget {
   final Map<String, dynamic> tenant;
   final List<Map<String, dynamic>> documents;
   final String baseUrl;
+  final VoidCallback onEdit;
 
   const _KycDocumentsCard({
     required this.tenant,
     required this.documents,
     required this.baseUrl,
+    required this.onEdit,
   });
 
   @override
@@ -205,6 +222,7 @@ class _KycDocumentsCard extends StatelessWidget {
     return _ProfileCard(
       title: 'KYC & Documents',
       trailing: kycStatusBadge(kycStatus),
+      onEdit: onEdit,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -260,11 +278,13 @@ class _ProfileCard extends StatelessWidget {
   final String title;
   final Widget child;
   final Widget? trailing;
+  final VoidCallback? onEdit;
 
   const _ProfileCard({
     required this.title,
     required this.child,
     this.trailing,
+    this.onEdit,
   });
 
   @override
@@ -285,7 +305,18 @@ class _ProfileCard extends StatelessWidget {
                 Expanded(
                   child: Text(title, style: Theme.of(context).textTheme.titleMedium),
                 ),
-                if (trailing != null) trailing!,
+                if (trailing != null) ...[
+                  trailing!,
+                  const SizedBox(width: 4),
+                ],
+                if (onEdit != null)
+                  IconButton(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit, size: 20, color: Colors.grey),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -392,57 +423,42 @@ class _EmergencyContactRow extends StatelessWidget {
   }
 }
 
-class TenantProfileEditSheet extends ConsumerStatefulWidget {
+class PersonalInfoEditSheet extends ConsumerStatefulWidget {
   final String propertyId;
   final String nodeId;
   final String tenancyId;
   final Map<String, dynamic> tenant;
-  final String baseUrl;
 
-  const TenantProfileEditSheet({
+  const PersonalInfoEditSheet({
     super.key,
     required this.propertyId,
     required this.nodeId,
     required this.tenancyId,
     required this.tenant,
-    required this.baseUrl,
   });
 
   @override
-  ConsumerState<TenantProfileEditSheet> createState() =>
-      _TenantProfileEditSheetState();
+  ConsumerState<PersonalInfoEditSheet> createState() =>
+      _PersonalInfoEditSheetState();
 }
 
-class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet> {
+class _PersonalInfoEditSheetState extends ConsumerState<PersonalInfoEditSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _picker = ImagePicker();
-
   late final TextEditingController _emailController;
   late final TextEditingController _addressController;
   late final TextEditingController _ecNameController;
   late final TextEditingController _ecRelationController;
   late final TextEditingController _ecPhoneController;
-  late final TextEditingController _idNumberController;
-
   String _occupation = 'student';
-  String _idType = 'aadhaar';
-  String _kycStatus = 'pending';
-  bool _policeVerification = false;
   bool _saving = false;
-  bool _processingImage = false;
-  String? _localProfilePreview;
-  String? _localDocPreview;
 
   @override
   void initState() {
     super.initState();
     final t = widget.tenant;
-    _emailController = TextEditingController(
-      text: tenantField(t, ['email']) ?? '',
-    );
-    _addressController = TextEditingController(
-      text: tenantField(t, ['address']) ?? '',
-    );
+    _emailController = TextEditingController(text: tenantField(t, ['email']) ?? '');
+    _addressController =
+        TextEditingController(text: tenantField(t, ['address']) ?? '');
     _ecNameController = TextEditingController(
       text: tenantField(t, ['emergency_contact_name', 'emergencyContactName']) ??
           '',
@@ -461,22 +477,8 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
           ]) ??
           '',
     );
-    _idNumberController = TextEditingController(
-      text: tenantField(t, ['aadhaar_number', 'aadhaarNumber']) ?? '',
-    );
-
     final occ = tenantField(t, ['occupation'])?.toLowerCase();
-    if (occ == 'working' || occ == 'student') {
-      _occupation = occ!;
-    }
-
-    _idType = resolveIdType(t);
-    _kycStatus =
-        tenantField(t, ['kyc_status', 'kycStatus']) ?? 'pending';
-    _policeVerification = tenantBool(t, [
-      'police_verification_done',
-      'policeVerificationDone',
-    ]);
+    if (occ == 'working' || occ == 'student') _occupation = occ!;
   }
 
   @override
@@ -486,64 +488,31 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
     _ecNameController.dispose();
     _ecRelationController.dispose();
     _ecPhoneController.dispose();
-    _idNumberController.dispose();
     super.dispose();
   }
 
-  Future<void> _pickAndUploadImage({required bool isProfilePhoto}) async {
-    final picked = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1600,
-      maxHeight: 1600,
-      imageQuality: 85,
-    );
-    if (picked == null || !mounted) return;
-
-    setState(() => _processingImage = true);
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
     try {
-      final compressed = await compressImage(File(picked.path));
-      if (!compressed.success) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                compressed.errorMessage ??
-                    'Please select a smaller or less complex image.',
-              ),
-              backgroundColor: AppColors.danger,
-            ),
+      await ref.read(tenancyRepositoryProvider).update(
+            widget.propertyId,
+            widget.tenancyId,
+            nodeId: widget.nodeId,
+            email: _emailController.text.trim(),
+            address: _addressController.text.trim(),
+            occupation: _occupation,
+            emergencyContactName: _ecNameController.text.trim(),
+            emergencyContactRelation: _ecRelationController.text.trim(),
+            emergencyContactPhone: _ecPhoneController.text.trim(),
           );
-        }
-        return;
-      }
-
-      final repo = ref.read(tenancyRepositoryProvider);
-      if (isProfilePhoto) {
-        await repo.uploadProfilePhoto(
-          widget.propertyId,
-          widget.tenancyId,
-          compressed.file!.path,
-        );
-        setState(() => _localProfilePreview = compressed.file!.path);
-      } else {
-        await repo.uploadDocument(
-          widget.propertyId,
-          widget.tenancyId,
-          compressed.file!.path,
-          docType: mapDocumentType(_idType),
-        );
-        setState(() => _localDocPreview = compressed.file!.path);
-      }
-
       ref.invalidate(tenanciesForNodeProvider(
           (widget.propertyId, widget.nodeId)));
-      ref.invalidate(tenancyDocumentsProvider(
-          (widget.propertyId, widget.tenancyId)));
-
       if (mounted) {
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isProfilePhoto ? 'Profile photo updated' : 'Document uploaded'),
+          const SnackBar(
+            content: Text('Personal information updated'),
             backgroundColor: AppColors.positive,
           ),
         );
@@ -558,10 +527,192 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not upload image. Please try again.'),
+            content: Text('Could not save. Please try again.'),
             backgroundColor: AppColors.danger,
           ),
         );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Edit Personal Information',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email Address',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _addressController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Permanent Address',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _occupation,
+                decoration: const InputDecoration(
+                  labelText: 'Occupation',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'student', child: Text('Student')),
+                  DropdownMenuItem(value: 'working', child: Text('Working')),
+                ],
+                onChanged:
+                    _saving ? null : (v) => setState(() => _occupation = v ?? 'student'),
+              ),
+              const SizedBox(height: 16),
+              Text('Emergency Contact',
+                  style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _ecNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _ecRelationController,
+                decoration: const InputDecoration(
+                  labelText: 'Relation',
+                  hintText: 'e.g. Parent, Spouse',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _ecPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _saving ? null : _save,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Save'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class KycEditSheet extends ConsumerStatefulWidget {
+  final String propertyId;
+  final String nodeId;
+  final String tenancyId;
+  final Map<String, dynamic> tenant;
+
+  const KycEditSheet({
+    super.key,
+    required this.propertyId,
+    required this.nodeId,
+    required this.tenancyId,
+    required this.tenant,
+  });
+
+  @override
+  ConsumerState<KycEditSheet> createState() => _KycEditSheetState();
+}
+
+class _KycEditSheetState extends ConsumerState<KycEditSheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _picker = ImagePicker();
+  late final TextEditingController _idNumberController;
+  String _idType = 'aadhaar';
+  String _kycStatus = 'pending';
+  bool _policeVerification = false;
+  bool _saving = false;
+  bool _processingImage = false;
+  String? _localDocPreview;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.tenant;
+    _idNumberController = TextEditingController(
+      text: tenantField(t, ['aadhaar_number', 'aadhaarNumber']) ?? '',
+    );
+    _idType = resolveIdType(t);
+    _kycStatus = tenantField(t, ['kyc_status', 'kycStatus']) ?? 'pending';
+    _policeVerification = tenantBool(t, [
+      'police_verification_done',
+      'policeVerificationDone',
+    ]);
+  }
+
+  @override
+  void dispose() {
+    _idNumberController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickAndUploadDocument() async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _processingImage = true);
+    try {
+      final ok = await pickCompressAndUploadDocument(
+        ref: ref,
+        context: context,
+        propertyId: widget.propertyId,
+        nodeId: widget.nodeId,
+        tenancyId: widget.tenancyId,
+        file: File(picked.path),
+        docType: mapDocumentType(_idType),
+      );
+      if (ok && mounted) {
+        setState(() => _localDocPreview = picked.path);
       }
     } finally {
       if (mounted) setState(() => _processingImage = false);
@@ -577,19 +728,12 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
     setState(() => _saving = true);
     try {
       await ref.read(tenancyRepositoryProvider).update(
             widget.propertyId,
             widget.tenancyId,
             nodeId: widget.nodeId,
-            email: _emailController.text.trim(),
-            address: _addressController.text.trim(),
-            occupation: _occupation,
-            emergencyContactName: _ecNameController.text.trim(),
-            emergencyContactRelation: _ecRelationController.text.trim(),
-            emergencyContactPhone: _ecPhoneController.text.trim(),
             idType: _idType,
             aadhaarNumber: _idNumberController.text.trim(),
             policeVerificationDone: _policeVerification,
@@ -603,7 +747,7 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Profile updated'),
+            content: Text('KYC details updated'),
             backgroundColor: AppColors.positive,
           ),
         );
@@ -618,7 +762,7 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not save profile. Please try again.'),
+            content: Text('Could not save. Please try again.'),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -630,11 +774,6 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
 
   @override
   Widget build(BuildContext context) {
-    final remotePhoto = resolveFileUrl(
-      tenantField(widget.tenant, ['profile_photo_url', 'profilePhotoUrl']),
-      widget.baseUrl,
-    );
-    final profilePreview = _localProfilePreview ?? remotePhoto;
     final isBusy = _saving || _processingImage;
 
     return Padding(
@@ -653,97 +792,9 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('Edit Profile',
+                  Text('Edit KYC & Documents',
                       style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 16),
-                  Center(
-                    child: Column(
-                      children: [
-                        CircleAvatar(
-                          radius: 44,
-                          backgroundColor: AppColors.hairline,
-                          backgroundImage: _profileImageProvider(profilePreview),
-                          child: profilePreview == null
-                              ? const Icon(Icons.person_outline, size: 40)
-                              : null,
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: isBusy
-                              ? null
-                              : () => _pickAndUploadImage(isProfilePhoto: true),
-                          icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                          label: const Text('Change Profile Photo'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email Address',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _addressController,
-                    maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'Permanent Address',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _occupation,
-                    decoration: const InputDecoration(
-                      labelText: 'Occupation',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'student', child: Text('Student')),
-                      DropdownMenuItem(value: 'working', child: Text('Working')),
-                    ],
-                    onChanged: isBusy
-                        ? null
-                        : (v) => setState(() => _occupation = v ?? 'student'),
-                  ),
-                  const SizedBox(height: 16),
-                  Text('Emergency Contact',
-                      style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _ecNameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _ecRelationController,
-                    decoration: const InputDecoration(
-                      labelText: 'Relation',
-                      hintText: 'e.g. Parent, Spouse',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _ecPhoneController,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Phone',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text('KYC & Identity',
-                      style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     initialValue: _idType,
                     decoration: const InputDecoration(
@@ -785,9 +836,7 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
                     ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
-                    onPressed: isBusy
-                        ? null
-                        : () => _pickAndUploadImage(isProfilePhoto: false),
+                    onPressed: isBusy ? null : _pickAndUploadDocument,
                     icon: const Icon(Icons.upload_file_outlined),
                     label: Text(_localDocPreview != null
                         ? 'ID Document Selected'
@@ -836,50 +885,326 @@ class _TenantProfileEditSheetState extends ConsumerState<TenantProfileEditSheet>
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Save Profile'),
+                          : const Text('Save'),
                     ),
                   ),
                 ],
               ),
             ),
           ),
-          if (_processingImage)
-            Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black26,
-                child: Center(
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Compressing and uploading…',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          if (_processingImage) _buildProcessingOverlay(context),
         ],
       ),
     );
   }
 }
 
-// ---- Shared helpers ----
+/// Full-screen WhatsApp-style profile photo viewer with change-photo action.
+class TenantProfilePhotoViewerScreen extends ConsumerStatefulWidget {
+  final String propertyId;
+  final String nodeId;
+  final String tenancyId;
+  final String baseUrl;
+  final String tenantName;
+  final String initials;
+  final String? photoUrl;
 
-ImageProvider? _profileImageProvider(String? path) {
-  if (path == null) return null;
-  if (path.startsWith('http')) return NetworkImage(path);
-  return FileImage(File(path));
+  const TenantProfilePhotoViewerScreen({
+    super.key,
+    required this.propertyId,
+    required this.nodeId,
+    required this.tenancyId,
+    required this.baseUrl,
+    required this.tenantName,
+    required this.initials,
+    this.photoUrl,
+  });
+
+  @override
+  ConsumerState<TenantProfilePhotoViewerScreen> createState() =>
+      _TenantProfilePhotoViewerScreenState();
 }
+
+class _TenantProfilePhotoViewerScreenState
+    extends ConsumerState<TenantProfilePhotoViewerScreen> {
+  final _picker = ImagePicker();
+  bool _processingImage = false;
+  String? _localPreview;
+
+  String? get _displayPhotoUrl {
+    if (_localPreview != null) return _localPreview;
+    return widget.photoUrl;
+  }
+
+  Future<void> _changePhoto() async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _processingImage = true);
+    try {
+      final ok = await pickCompressAndUploadProfilePhoto(
+        ref: ref,
+        context: context,
+        propertyId: widget.propertyId,
+        nodeId: widget.nodeId,
+        tenancyId: widget.tenancyId,
+        file: File(picked.path),
+      );
+      if (ok && mounted) {
+        setState(() => _localPreview = picked.path);
+      }
+    } finally {
+      if (mounted) setState(() => _processingImage = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = _displayPhotoUrl;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(widget.tenantName, style: const TextStyle(fontSize: 17)),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: photo != null && photo.isNotEmpty
+                  ? (photo.startsWith('http')
+                      ? Image.network(photo, fit: BoxFit.contain)
+                      : Image.file(File(photo), fit: BoxFit.contain))
+                  : _LargeInitialsAvatar(initials: widget.initials),
+            ),
+          ),
+          if (_processingImage) _buildProcessingOverlay(context),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _processingImage ? null : _changePhoto,
+        backgroundColor: AppColors.blueprint,
+        icon: const Icon(Icons.camera_alt, color: Colors.white),
+        label: const Text(
+          'Change Profile Photo',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+}
+
+class _LargeInitialsAvatar extends StatelessWidget {
+  final String initials;
+
+  const _LargeInitialsAvatar({required this.initials});
+
+  @override
+  Widget build(BuildContext context) {
+    return CircleAvatar(
+      radius: 80,
+      backgroundColor: Colors.white.withValues(alpha: 0.12),
+      child: Text(
+        initials,
+        style: const TextStyle(
+          fontSize: 56,
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+void openTenantProfilePhotoViewer(
+  BuildContext context, {
+  required String propertyId,
+  required String nodeId,
+  required String tenancyId,
+  required String baseUrl,
+  required String tenantName,
+  required String initials,
+  String? photoUrl,
+}) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => TenantProfilePhotoViewerScreen(
+        propertyId: propertyId,
+        nodeId: nodeId,
+        tenancyId: tenancyId,
+        baseUrl: baseUrl,
+        tenantName: tenantName,
+        initials: initials,
+        photoUrl: photoUrl,
+      ),
+    ),
+  );
+}
+
+Widget _buildProcessingOverlay(BuildContext context) {
+  return Positioned.fill(
+    child: ColoredBox(
+      color: Colors.black54,
+      child: Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Compressing and uploading…',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<bool> pickCompressAndUploadProfilePhoto({
+  required WidgetRef ref,
+  required BuildContext context,
+  required String propertyId,
+  required String nodeId,
+  required String tenancyId,
+  required File file,
+}) async {
+  try {
+    final compressed = await compressImage(file);
+    if (!compressed.success) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              compressed.errorMessage ??
+                  'Please select a smaller or less complex image.',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+      return false;
+    }
+
+    await ref.read(tenancyRepositoryProvider).uploadProfilePhoto(
+          propertyId,
+          tenancyId,
+          compressed.file!.path,
+        );
+    ref.invalidate(tenanciesForNodeProvider((propertyId, nodeId)));
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile photo updated'),
+          backgroundColor: AppColors.positive,
+        ),
+      );
+    }
+    return true;
+  } on TenancyUpdateException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: AppColors.danger),
+      );
+    }
+    return false;
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not upload image. Please try again.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+    }
+    return false;
+  }
+}
+
+Future<bool> pickCompressAndUploadDocument({
+  required WidgetRef ref,
+  required BuildContext context,
+  required String propertyId,
+  required String nodeId,
+  required String tenancyId,
+  required File file,
+  required String docType,
+}) async {
+  try {
+    final compressed = await compressImage(file);
+    if (!compressed.success) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              compressed.errorMessage ??
+                  'Please select a smaller or less complex image.',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+      return false;
+    }
+
+    await ref.read(tenancyRepositoryProvider).uploadDocument(
+          propertyId,
+          tenancyId,
+          compressed.file!.path,
+          docType: docType,
+        );
+    ref.invalidate(tenanciesForNodeProvider((propertyId, nodeId)));
+    ref.invalidate(tenancyDocumentsProvider((propertyId, tenancyId)));
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Document uploaded'),
+          backgroundColor: AppColors.positive,
+        ),
+      );
+    }
+    return true;
+  } on TenancyUpdateException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: AppColors.danger),
+      );
+    }
+    return false;
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not upload image. Please try again.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+    }
+    return false;
+  }
+}
+
+// ---- Shared helpers ----
 
 String mapDocumentType(String idType) {
   const allowed = {
