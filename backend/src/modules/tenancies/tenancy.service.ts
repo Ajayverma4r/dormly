@@ -57,13 +57,35 @@ export class TenancyService {
   async listByProperty(propertyId: string) {
     return query(
       `SELECT t.*, u.phone, u.name AS user_name, n.name AS node_name,
-              l.display_name AS level_name
+              l.display_name AS level_name,
+              floor_node.name AS floor_name,
+              EXISTS (
+                SELECT 1 FROM invoices i
+                WHERE i.tenancy_id = t.id
+                  AND i.status IN ('pending', 'overdue', 'partial')
+              ) AS has_due
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
        JOIN hierarchy_levels l ON l.id = n.level_id
+       LEFT JOIN LATERAL (
+         WITH RECURSIVE ancestors AS (
+           SELECT hn.id, hn.name, hn.parent_node_id, hn.level_id
+           FROM hierarchy_nodes hn
+           WHERE hn.id = n.id
+           UNION ALL
+           SELECT p.id, p.name, p.parent_node_id, p.level_id
+           FROM hierarchy_nodes p
+           INNER JOIN ancestors a ON p.id = a.parent_node_id
+         )
+         SELECT a.name
+         FROM ancestors a
+         JOIN hierarchy_levels hl ON hl.id = a.level_id
+         WHERE lower(hl.display_name) LIKE '%floor%'
+         LIMIT 1
+       ) floor_node ON true
        WHERE t.property_id = $1
-       ORDER BY t.created_at DESC`,
+       ORDER BY t.full_name ASC NULLS LAST, t.created_at DESC`,
       [propertyId],
     );
   }
