@@ -1256,6 +1256,7 @@ class _FinancialOverviewCard extends ConsumerWidget {
       tenancyId: tenancyId,
       tenantName: tenantName.isEmpty ? 'Tenant' : tenantName,
       roomLabel: roomLabel,
+      phone: _tenantPhone(tenant),
       allInvoices: allInvoices,
     );
 

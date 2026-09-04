@@ -11,6 +11,7 @@ import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
+import '../../expenses/presentation/add_expense_sheet.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
 import '../../notifications/data/notifications_repository.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
@@ -124,6 +125,22 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Coming Soon: $featureName')),
     );
+  }
+
+  Future<void> _openAddExpense(BuildContext context, WidgetRef ref) async {
+    final saved = await showAddExpenseSheet(
+      context: context,
+      ref: ref,
+      propertyId: propertyId,
+    );
+    if (saved && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Expense saved'),
+          backgroundColor: AppColors.positive,
+        ),
+      );
+    }
   }
 
   void _onNotifications(BuildContext context) {
@@ -305,6 +322,15 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: 12),
+                    _NetProfitStrip(
+                      collected: overview.rentReceived,
+                      expenses: overview.totalExpenses,
+                      netProfit: overview.netProfit,
+                      formatCurrency: _formatCurrency,
+                      onCollectedTap: onGoToPaymentsTab,
+                      onExpensesTap: () => _openAddExpense(context, ref),
+                    ),
+                    const SizedBox(height: 16),
                     GridView.count(
                       crossAxisCount: 2,
                       shrinkWrap: true,
@@ -339,24 +365,6 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                           value: '${overview.openComplaints}',
                           sublabel: 'Needs Action',
                           onTap: () => _openComplaints(context),
-                        ),
-                        _OverviewCard(
-                          icon: Icons.show_chart_rounded,
-                          iconColor: const Color(0xFFDC2626),
-                          iconBg: const Color(0xFFFEE2E2),
-                          label: 'Total Expenses',
-                          value: _formatCurrency(overview.totalExpenses),
-                          sublabel: 'This Month',
-                          onTap: onGoToPaymentsTab,
-                        ),
-                        _OverviewCard(
-                          icon: Icons.credit_card_outlined,
-                          iconColor: const Color(0xFF0891B2),
-                          iconBg: const Color(0xFFCFFAFE),
-                          label: 'Rent Received',
-                          value: _formatCurrency(overview.rentReceived),
-                          sublabel: 'This Month',
-                          onTap: onGoToPaymentsTab,
                         ),
                         _OverviewCard(
                           icon: Icons.timelapse_outlined,
@@ -432,7 +440,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                     icon: Icons.receipt_long_outlined,
                     label: 'Add Expense',
                     color: const Color(0xFF16A34A),
-                    onTap: () => _showComingSoon(context, 'Add Expense'),
+                    onTap: () => _openAddExpense(context, ref),
                   ),
                   _QuickAction(
                     icon: Icons.support_agent_outlined,
@@ -1069,6 +1077,124 @@ class _DashboardError extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NetProfitStrip extends StatelessWidget {
+  final double collected;
+  final double expenses;
+  final double netProfit;
+  final String Function(num) formatCurrency;
+  final VoidCallback? onCollectedTap;
+  final VoidCallback? onExpensesTap;
+
+  const _NetProfitStrip({
+    required this.collected,
+    required this.expenses,
+    required this.netProfit,
+    required this.formatCurrency,
+    this.onCollectedTap,
+    this.onExpensesTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _ProfitMetricCard(
+                label: 'Collected This Month',
+                value: formatCurrency(collected),
+                valueColor: AppColors.positive,
+                bg: const Color(0xFFDCFCE7),
+                onTap: onCollectedTap,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _ProfitMetricCard(
+                label: 'Expenses This Month',
+                value: formatCurrency(expenses),
+                valueColor: AppColors.danger,
+                bg: const Color(0xFFFEE2E2),
+                onTap: onExpensesTap,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _ProfitMetricCard(
+          label: 'Net Profit',
+          value: formatCurrency(netProfit),
+          valueColor: netProfit >= 0
+              ? PropertyDashboardTabScreen._brandPurple
+              : AppColors.danger,
+          bg: const Color(0xFFEDE9FE),
+          large: true,
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfitMetricCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color valueColor;
+  final Color bg;
+  final bool large;
+  final VoidCallback? onTap;
+
+  const _ProfitMetricCard({
+    required this.label,
+    required this.value,
+    required this.valueColor,
+    required this.bg,
+    this.large = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: large ? 16 : 12,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: large ? 13 : 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.slate,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: large ? 26 : 18,
+                  fontWeight: FontWeight.w800,
+                  color: valueColor,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

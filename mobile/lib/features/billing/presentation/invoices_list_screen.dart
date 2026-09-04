@@ -7,6 +7,7 @@ import '../../tenancies/data/tenancy_repository.dart';
 import '../data/billing_repository.dart';
 import 'create_invoice_screen.dart';
 import 'tenant_ledger_sheet.dart';
+import 'whatsapp_reminder.dart';
 
 enum _InvoiceStatusFilter { all, pending, paid, overdue }
 
@@ -81,6 +82,7 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
       tenancyId: group.tenancyId,
       tenantName: group.name,
       roomLabel: group.roomLabel,
+      phone: group.phone,
       allInvoices: allInvoices,
     );
     ref.invalidate(invoicesProvider(widget.propertyId));
@@ -179,10 +181,19 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
               inv['floorName']?.toString(),
           photoUrl: (inv['profile_photo_url'] ?? inv['profilePhotoUrl'])
               ?.toString(),
+          phone: (inv['phone'] ?? inv['mobile'] ?? inv['user_phone'])
+              ?.toString(),
           invoices: [],
         ),
       );
       group.invoices.add(inv);
+      final phone =
+          (inv['phone'] ?? inv['mobile'] ?? inv['user_phone'])?.toString();
+      if ((group.phone == null || group.phone!.trim().isEmpty) &&
+          phone != null &&
+          phone.trim().isNotEmpty) {
+        group.phone = phone;
+      }
     }
 
     final groups = map.values.toList()
@@ -725,6 +736,7 @@ class _TenantPaymentGroup {
   final String room;
   final String? floor;
   final String? photoUrl;
+  String? phone;
   final List<Map<String, dynamic>> invoices;
 
   _TenantPaymentGroup({
@@ -733,6 +745,7 @@ class _TenantPaymentGroup {
     required this.room,
     required this.floor,
     required this.photoUrl,
+    required this.phone,
     required this.invoices,
   });
 
@@ -936,7 +949,29 @@ class _TenantLedgerListRow extends StatelessWidget {
                         child: _InvoiceStatusBadge(status: status),
                       ),
                     ),
-                    const SizedBox(width: 2),
+                    if (group.grandTotalPending > 0) ...[
+                      const SizedBox(width: 2),
+                      IconButton(
+                        tooltip: 'WhatsApp reminder',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 28,
+                        ),
+                        onPressed: () => sendWhatsAppReminder(
+                          context,
+                          phone: group.phone,
+                          name: group.name,
+                          amount: group.grandTotalPending,
+                        ),
+                        icon: const Icon(
+                          Icons.chat,
+                          size: 18,
+                          color: whatsAppGreen,
+                        ),
+                      ),
+                    ],
                     const Icon(
                       Icons.chevron_right,
                       size: 16,

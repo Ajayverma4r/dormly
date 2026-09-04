@@ -75,6 +75,9 @@ class DashboardOverview {
     required this.rentPending,
   });
 
+  /// Collected this month minus expenses this month.
+  double get netProfit => rentReceived - totalExpenses;
+
   factory DashboardOverview.fromJson(Map<String, dynamic> json) {
     return DashboardOverview(
       totalActiveTenants:

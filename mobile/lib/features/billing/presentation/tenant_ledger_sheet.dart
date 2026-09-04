@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../data/billing_repository.dart';
 import 'create_invoice_screen.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
+import 'whatsapp_reminder.dart';
 
 const _accent = Color(0xFF7C3AED);
 
@@ -17,7 +18,23 @@ Future<void> showTenantLedgerSheet({
   required String tenantName,
   required String roomLabel,
   required List<Map<String, dynamic>> allInvoices,
+  String? phone,
 }) {
+  // Prefer explicit phone; else pick from any invoice row for this tenancy.
+  var resolvedPhone = phone;
+  if (resolvedPhone == null || resolvedPhone.trim().isEmpty) {
+    for (final inv in allInvoices) {
+      final tid =
+          (inv['tenancy_id'] ?? inv['tenancyId'])?.toString().toLowerCase();
+      if (tid != tenancyId.toLowerCase()) continue;
+      final p = (inv['phone'] ?? inv['mobile'])?.toString();
+      if (p != null && p.trim().isNotEmpty) {
+        resolvedPhone = p;
+        break;
+      }
+    }
+  }
+
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -30,6 +47,7 @@ Future<void> showTenantLedgerSheet({
       tenancyId: tenancyId,
       tenantName: tenantName,
       roomLabel: roomLabel,
+      phone: resolvedPhone,
       allInvoices: allInvoices,
     ),
   );
@@ -40,6 +58,7 @@ class TenantLedgerSheet extends ConsumerStatefulWidget {
   final String tenancyId;
   final String tenantName;
   final String roomLabel;
+  final String? phone;
   final List<Map<String, dynamic>> allInvoices;
 
   const TenantLedgerSheet({
@@ -49,6 +68,7 @@ class TenantLedgerSheet extends ConsumerStatefulWidget {
     required this.tenantName,
     required this.roomLabel,
     required this.allInvoices,
+    this.phone,
   });
 
   @override
@@ -378,6 +398,29 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
                               },
                             ),
             ),
+            if (_totalRemaining > 0.009) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => sendWhatsAppReminder(
+                  context,
+                  phone: widget.phone,
+                  name: widget.tenantName,
+                  amount: _totalRemaining,
+                ),
+                icon: const Icon(Icons.chat, color: whatsAppGreen),
+                label: const Text(
+                  'Send WhatsApp Reminder',
+                  style: TextStyle(
+                    color: whatsAppGreen,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: whatsAppGreen),
+                  minimumSize: const Size.fromHeight(48),
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -11,6 +11,7 @@ import { complaintRouter } from '@modules/complaints/complaint.routes';
 import { staffRouter } from '@modules/staff/staff.routes';
 import { reportsRouter } from '@modules/reports/reports.routes';
 import { dashboardRouter } from '@modules/dashboard/dashboard.routes';
+import { expenseRouter } from '@modules/expenses/expense.routes';
 
 const controller = new PropertiesController();
 export const propertiesRouter = Router();
@@ -29,6 +30,7 @@ propertiesRouter.use('/:propertyId/structure', ...propertyGuards, structureRoute
 propertiesRouter.use('/:propertyId/tenancies', ...propertyGuards, tenancyRouter);
 propertiesRouter.use('/:propertyId/analytics', ...propertyGuards, analyticsRouter);
 propertiesRouter.use('/:propertyId/dashboard', ...propertyGuards, dashboardRouter);
+propertiesRouter.use('/:propertyId/expenses', ...propertyGuards, expenseRouter);
 propertiesRouter.use('/:propertyId/complaints', ...propertyGuards, complaintRouter);
 propertiesRouter.use('/:propertyId/staff', ...propertyGuards, staffRouter);
 propertiesRouter.use('/:propertyId/reports', ...propertyGuards, reportsRouter);
