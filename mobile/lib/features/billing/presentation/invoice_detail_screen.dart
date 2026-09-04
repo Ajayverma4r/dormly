@@ -10,7 +10,15 @@ final invoiceDetailProvider = FutureProvider.autoDispose.family<Map<String, dyna
 class InvoiceDetailScreen extends ConsumerStatefulWidget {
   final String propertyId;
   final String invoiceId;
-  const InvoiceDetailScreen({super.key, required this.propertyId, required this.invoiceId});
+  /// When true, hides Record Payment / Send Reminder (Reports view-only).
+  final bool viewOnly;
+
+  const InvoiceDetailScreen({
+    super.key,
+    required this.propertyId,
+    required this.invoiceId,
+    this.viewOnly = false,
+  });
 
   @override
   ConsumerState<InvoiceDetailScreen> createState() => _InvoiceDetailScreenState();
@@ -109,7 +117,7 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              if (remaining > 0) ...[
+              if (!widget.viewOnly && remaining > 0) ...[
                 SizedBox(
                   height: 50,
                   child: ElevatedButton.icon(
