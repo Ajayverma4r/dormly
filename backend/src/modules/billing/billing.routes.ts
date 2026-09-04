@@ -14,5 +14,6 @@ billingRouter.delete('/charge-types/:chargeTypeId', controller.deleteChargeType)
 billingRouter.get('/invoices', controller.listInvoices);
 billingRouter.get('/invoices/:invoiceId', controller.getInvoice);
 billingRouter.post('/invoices', controller.createInvoice);
+billingRouter.patch('/invoices/:invoiceId', controller.updateInvoice);
 billingRouter.post('/invoices/:invoiceId/payments', controller.recordPayment);
 billingRouter.post('/invoices/:invoiceId/remind', controller.sendReminder);

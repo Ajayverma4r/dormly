@@ -12,16 +12,25 @@ const createChargeTypeSchema = z.object({
   isRecurring: z.boolean().default(true),
 });
 
+const lineItemsSchema = z.array(z.object({
+  chargeTypeId: z.string().uuid().optional(),
+  description: z.string().min(1),
+  amount: z.number(),
+})).min(1);
+
 const createInvoiceSchema = z.object({
   tenancyId: z.string().uuid(),
   periodStart: z.string(),
   periodEnd: z.string(),
   dueDate: z.string(),
-  lineItems: z.array(z.object({
-    chargeTypeId: z.string().uuid().optional(),
-    description: z.string().min(1),
-    amount: z.number(),
-  })).min(1),
+  lineItems: lineItemsSchema,
+});
+
+const updateInvoiceSchema = z.object({
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  dueDate: z.string(),
+  lineItems: lineItemsSchema,
 });
 
 const paymentSchema = z.object({
@@ -71,6 +80,19 @@ export class BillingController {
       const body = createInvoiceSchema.parse(req.body);
       const invoice = await service.createInvoice({ propertyId: req.params.propertyId, ...body });
       res.status(201).json({ data: invoice });
+    } catch (err) { next(err); }
+  };
+
+  updateInvoice = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const body = updateInvoiceSchema.parse(req.body);
+      const invoice = await service.updateInvoice(
+        req.params.invoiceId,
+        req.params.propertyId,
+        body,
+      );
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      res.json({ data: invoice });
     } catch (err) { next(err); }
   };
 

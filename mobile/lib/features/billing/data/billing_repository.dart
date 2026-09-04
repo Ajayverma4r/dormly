@@ -43,6 +43,26 @@ class BillingRepository {
     return Map<String, dynamic>.from(res.data['data']);
   }
 
+  Future<Map<String, dynamic>> updateInvoice(
+    String propertyId,
+    String invoiceId, {
+    required String periodStart,
+    required String periodEnd,
+    required String dueDate,
+    required List<Map<String, dynamic>> lineItems,
+  }) async {
+    final res = await _client.dio.patch(
+      '/v1/properties/$propertyId/billing/invoices/$invoiceId',
+      data: {
+        'periodStart': periodStart,
+        'periodEnd': periodEnd,
+        'dueDate': dueDate,
+        'lineItems': lineItems,
+      },
+    );
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
   Future<void> recordPayment(String propertyId, String invoiceId, double amount, String method) async {
     await _client.dio.post('/v1/properties/$propertyId/billing/invoices/$invoiceId/payments', data: {
       'amount': amount,

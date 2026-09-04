@@ -16,6 +16,13 @@ interface CreateInvoiceInput {
   lineItems: LineItemInput[];
 }
 
+interface UpdateInvoiceInput {
+  periodStart: string;
+  periodEnd: string;
+  dueDate: string;
+  lineItems: LineItemInput[];
+}
+
 export class BillingService {
   // ---- Charge Types ----
 
@@ -70,6 +77,48 @@ export class BillingService {
     return this.getById((invoice as any).id);
   }
 
+  async updateInvoice(invoiceId: string, propertyId: string, input: UpdateInvoiceInput) {
+    const [existing] = await query<{ id: string; property_id: string }>(
+      `SELECT id, property_id FROM invoices WHERE id = $1`,
+      [invoiceId],
+    );
+    if (!existing) return null;
+    if (existing.property_id !== propertyId) return null;
+
+    const totalAmount = input.lineItems.reduce((sum, li) => sum + li.amount, 0);
+
+    await query(
+      `UPDATE invoices
+       SET period_start = $1,
+           period_end = $2,
+           due_date = $3,
+           total_amount = $4,
+           updated_at = now()
+       WHERE id = $5 AND property_id = $6`,
+      [
+        input.periodStart,
+        input.periodEnd,
+        input.dueDate,
+        totalAmount,
+        invoiceId,
+        propertyId,
+      ],
+    );
+
+    await query(`DELETE FROM invoice_line_items WHERE invoice_id = $1`, [invoiceId]);
+
+    for (const li of input.lineItems) {
+      await query(
+        `INSERT INTO invoice_line_items (invoice_id, charge_type_id, description, amount)
+         VALUES ($1,$2,$3,$4)`,
+        [invoiceId, li.chargeTypeId ?? null, li.description, li.amount],
+      );
+    }
+
+    await this.recomputeStatus(invoiceId);
+    return this.getById(invoiceId);
+  }
+
   async getById(invoiceId: string) {
     const [invoice] = await query<any>(`SELECT * FROM invoices WHERE id = $1`, [invoiceId]);
     if (!invoice) return null;
@@ -80,12 +129,29 @@ export class BillingService {
 
   async listByProperty(propertyId: string) {
     return query(
-      `SELECT i.*, t.full_name, u.phone, n.name AS node_name,
+      `SELECT i.*, t.full_name, t.profile_photo_url, u.phone, n.name AS node_name,
+              floor_node.name AS floor_name,
               COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0) AS paid_amount
        FROM invoices i
        JOIN tenancies t ON t.id = i.tenancy_id
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
+       LEFT JOIN LATERAL (
+         WITH RECURSIVE ancestors AS (
+           SELECT hn.id, hn.name, hn.parent_node_id, hn.level_id
+           FROM hierarchy_nodes hn
+           WHERE hn.id = n.id
+           UNION ALL
+           SELECT p.id, p.name, p.parent_node_id, p.level_id
+           FROM hierarchy_nodes p
+           INNER JOIN ancestors a ON p.id = a.parent_node_id
+         )
+         SELECT a.name
+         FROM ancestors a
+         JOIN hierarchy_levels hl ON hl.id = a.level_id
+         WHERE lower(hl.display_name) LIKE '%floor%'
+         LIMIT 1
+       ) floor_node ON true
        WHERE i.property_id = $1
        ORDER BY i.due_date DESC`,
       [propertyId],
