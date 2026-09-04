@@ -441,103 +441,111 @@ class _MonthSection extends StatelessWidget {
                 inv['status']?.toString().toUpperCase() ?? 'PENDING';
             final busy = id != null && id == busyInvoiceId;
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.hairline),
+            return Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: busy ? null : () => onEdit(inv),
                 borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          status,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: status == 'OVERDUE'
-                                ? AppColors.danger
-                                : AppColors.caution,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        currency.format(remaining),
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ],
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppColors.hairline),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 8),
-                  if (items.isEmpty)
-                    Text(
-                      'Invoice total ${currency.format(total)}'
-                      '${paid > 0 ? ' · Paid ${currency.format(paid)}' : ''}',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    )
-                  else
-                    ...items.map((li) {
-                      final desc =
-                          li['description']?.toString() ?? 'Charge';
-                      final amt = amountOf(li['amount']);
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                desc,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ),
-                            Text(
-                              currency.format(amt),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  const SizedBox(height: 12),
-                  Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: busy ? null : () => onEdit(inv),
-                          icon: const Icon(Icons.edit_outlined, size: 16),
-                          label: const Text('Edit'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.positive,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: status == 'OVERDUE'
+                                    ? AppColors.danger
+                                    : AppColors.caution,
+                              ),
+                            ),
                           ),
-                          onPressed:
-                              busy ? null : () => onRecordPayment(inv),
-                          icon: busy
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
+                          Text(
+                            currency.format(remaining),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (items.isEmpty)
+                        Text(
+                          'Invoice total ${currency.format(total)}'
+                          '${paid > 0 ? ' · Paid ${currency.format(paid)}' : ''}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        )
+                      else
+                        ...items.map((li) {
+                          final desc =
+                              li['description']?.toString() ?? 'Charge';
+                          final amt = amountOf(li['amount']);
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    desc,
+                                    style: const TextStyle(fontSize: 13),
                                   ),
-                                )
-                              : const Icon(Icons.payments_outlined, size: 16),
-                          label: const Text('Record Payment'),
-                        ),
+                                ),
+                                Text(
+                                  currency.format(amt),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: busy ? null : () => onEdit(inv),
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                              label: const Text('Edit'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.positive,
+                              ),
+                              onPressed:
+                                  busy ? null : () => onRecordPayment(inv),
+                              icon: busy
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.payments_outlined,
+                                      size: 16),
+                              label: const Text('Record Payment'),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             );
           }),

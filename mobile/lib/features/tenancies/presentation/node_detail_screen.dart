@@ -5,6 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
+import '../../billing/presentation/invoices_list_screen.dart' show invoicesProvider;
+import '../../billing/presentation/tenant_ledger_sheet.dart';
 import '../../complaints/data/complaints_repository.dart';
 import '../../structure/data/structure_repository.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
@@ -1032,7 +1034,7 @@ class _FinancialOverviewCard extends ConsumerWidget {
     );
   }
 
-  Future<void> _showEditAmountSheet(
+  Future<void> _showEditAmountDialog(
     BuildContext context,
     WidgetRef ref, {
     required String title,
@@ -1048,59 +1050,42 @@ class _FinancialOverviewCard extends ConsumerWidget {
     );
     final formKey = GlobalKey<FormState>();
 
-    final saved = await showModalBottomSheet<bool>(
+    final saved = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-        ),
-        child: Form(
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Form(
           key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(ctx).textTheme.titleMedium),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: controller,
-                autofocus: true,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  prefixText: '₹ ',
-                  labelText: 'Amount',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (v) {
-                  final n = double.tryParse(v?.trim() ?? '');
-                  if (n == null || n < 0) return 'Enter a valid amount';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () {
-                    if (formKey.currentState?.validate() ?? false) {
-                      Navigator.pop(ctx, true);
-                    }
-                  },
-                  child: const Text('Save'),
-                ),
-              ),
-            ],
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              prefixText: '₹ ',
+              labelText: 'Amount',
+              border: OutlineInputBorder(),
+            ),
+            validator: (v) {
+              final n = double.tryParse(v?.trim() ?? '');
+              if (n == null || n < 0) return 'Enter a valid amount';
+              return null;
+            },
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.pop(ctx, true);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
 
@@ -1246,95 +1231,36 @@ class _FinancialOverviewCard extends ConsumerWidget {
     }
   }
 
-  void _showLedgerSheet(BuildContext context) {
-    showModalBottomSheet(
+  Future<void> _showLedgerSheet(BuildContext context, WidgetRef ref) async {
+    final tenant = _activeTenancy(ref);
+    final tenantName = _tenantName(tenant);
+    final roomLabel = (tenant['node_name'] ?? tenant['nodeName'] ?? 'Room')
+        .toString();
+
+    // Prefer property-wide list (same source as Payments); fall back to
+    // tenancy invoices already loaded on this card.
+    var allInvoices = invoices;
+    try {
+      allInvoices =
+          await ref.read(billingRepositoryProvider).listInvoices(propertyId);
+    } catch (_) {
+      // Keep local list.
+    }
+
+    if (!context.mounted) return;
+
+    await showTenantLedgerSheet(
       context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        if (invoices.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.receipt_long_outlined,
-                    size: 40, color: AppColors.slate),
-                SizedBox(height: 12),
-                Text('No ledger entries yet'),
-              ],
-            ),
-          );
-        }
-
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.55,
-          minChildSize: 0.35,
-          maxChildSize: 0.9,
-          builder: (_, scrollController) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text('Ledger',
-                    style: Theme.of(ctx).textTheme.titleMedium),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.separated(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  itemCount: invoices.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final inv = invoices[i];
-                    final total = double.tryParse(
-                          inv['total_amount']?.toString() ??
-                              inv['totalAmount']?.toString() ??
-                              '',
-                        ) ??
-                        0;
-                    final paid = double.tryParse(
-                          inv['paid_amount']?.toString() ??
-                              inv['paidAmount']?.toString() ??
-                              '',
-                        ) ??
-                        0;
-                    final balance = (total - paid).clamp(0, double.infinity);
-                    final status =
-                        inv['status']?.toString().replaceAll('_', ' ') ?? '';
-
-                    return ListTile(
-                      title: Text(
-                        _formatCurrency(total),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text(
-                        'Due ${(inv['due_date'] ?? inv['dueDate'])?.toString().split('T').first ?? '—'} · $status',
-                      ),
-                      trailing: Text(
-                        balance > 0
-                            ? _formatCurrency(balance)
-                            : 'Paid',
-                        style: TextStyle(
-                          color: balance > 0
-                              ? AppColors.danger
-                              : AppColors.positive,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      ref: ref,
+      propertyId: propertyId,
+      tenancyId: tenancyId,
+      tenantName: tenantName.isEmpty ? 'Tenant' : tenantName,
+      roomLabel: roomLabel,
+      allInvoices: allInvoices,
     );
+
+    ref.invalidate(tenancyInvoicesProvider((propertyId, tenancyId)));
+    ref.invalidate(invoicesProvider(propertyId));
   }
 
   Future<void> _showRecordPaymentSheet(
@@ -1478,119 +1404,126 @@ class _FinancialOverviewCard extends ConsumerWidget {
       tenant,
       ['security_deposit', 'securityDeposit'],
     );
+    final moveIn = tenant['move_in_at'] ?? tenant['moveInAt'];
+    final outstanding = pendingDues;
+    final outstandingLabel = outstanding == null
+        ? '…'
+        : _formatCurrency(outstanding);
 
-    return _SectionCard(
-      title: 'Financial Overview',
-      child: Column(
-        children: [
-          _EditableFinancialRow(
-            label: 'Monthly Rent',
-            value: rent != null ? _formatCurrency(rent) : '—',
-            onEdit: () => _showEditAmountSheet(
-              context,
-              ref,
-              title: 'Monthly Rent',
-              currentValue: rent,
-              onSave: (amount) => ref
-                  .read(tenancyRepositoryProvider)
-                  .update(
-                    propertyId,
-                    tenancyId,
-                    nodeId: nodeId,
-                    monthlyRent: amount,
-                  ),
-            ),
-          ),
-          const Divider(height: 20),
-          _EditableFinancialRow(
-            label: 'Security Deposit',
-            value: deposit != null ? _formatCurrency(deposit) : '—',
-            onEdit: () => _showEditAmountSheet(
-              context,
-              ref,
-              title: 'Security Deposit',
-              currentValue: deposit,
-              onSave: (amount) => ref
-                  .read(tenancyRepositoryProvider)
-                  .update(
-                    propertyId,
-                    tenancyId,
-                    nodeId: nodeId,
-                    securityDeposit: amount,
-                  ),
-            ),
-          ),
-          const Divider(height: 20),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionCard(
+          title: 'Current Outstanding',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 4,
-                  runSpacing: 2,
-                  children: [
-                    Text('Pending Dues',
-                        style: Theme.of(context).textTheme.bodyMedium),
-                    InkWell(
-                      onTap: () => _showAddChargeDialog(context, ref),
-                      borderRadius: BorderRadius.circular(6),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.add,
-                                size: 14, color: AppColors.blueprint),
-                            const SizedBox(width: 2),
-                            Text(
-                              'Add Charge',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.blueprint,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               Text(
-                pendingDues == null
-                    ? '…'
-                    : _formatCurrency(pendingDues!),
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: (pendingDues ?? 0) > 0
+                outstandingLabel,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: (outstanding ?? 0) > 0
                           ? AppColors.danger
                           : AppColors.positive,
                     ),
               ),
+              const SizedBox(height: 4),
+              Text(
+                (outstanding ?? 0) > 0
+                    ? 'Total unpaid across all invoices'
+                    : 'No pending dues',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade600,
+                    ),
+              ),
+              Align(
+                alignment: Alignment.center,
+                child: TextButton.icon(
+                  onPressed: () => _showAddChargeDialog(context, ref),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Add Charge'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.blueprint,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _showLedgerSheet(context, ref),
+                      child: const Text('View Ledger'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => _showRecordPaymentSheet(context, ref),
+                      child: const Text('Record Payment'),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
-          const Divider(height: 24),
-          Row(
+        ),
+        const SizedBox(height: 16),
+        _SectionCard(
+          title: 'Lease & Financials',
+          child: Column(
             children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _showLedgerSheet(context),
-                  child: const Text('View Ledger'),
+              _EditableFinancialRow(
+                label: 'Base Monthly Rent',
+                value: rent != null ? _formatCurrency(rent) : '—',
+                onEdit: () => _showEditAmountDialog(
+                  context,
+                  ref,
+                  title: 'Update Base Rent',
+                  currentValue: rent,
+                  onSave: (amount) => ref
+                      .read(tenancyRepositoryProvider)
+                      .update(
+                        propertyId,
+                        tenancyId,
+                        nodeId: nodeId,
+                        monthlyRent: amount,
+                      ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => _showRecordPaymentSheet(context, ref),
-                  child: const Text('Record Payment'),
+              const Divider(height: 20),
+              _EditableFinancialRow(
+                label: 'Security Deposit',
+                value: deposit != null ? _formatCurrency(deposit) : '—',
+                onEdit: () => _showEditAmountDialog(
+                  context,
+                  ref,
+                  title: 'Update Security Deposit',
+                  currentValue: deposit,
+                  onSave: (amount) => ref
+                      .read(tenancyRepositoryProvider)
+                      .update(
+                        propertyId,
+                        tenancyId,
+                        nodeId: nodeId,
+                        securityDeposit: amount,
+                      ),
                 ),
+              ),
+              const Divider(height: 20),
+              _FinancialRow(
+                label: 'Move-in Date',
+                value: moveIn != null
+                    ? moveIn.toString().split('T').first
+                    : 'Not recorded',
               ),
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -1642,21 +1575,13 @@ class _LeaseDocumentsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final moveIn = tenant['move_in_at'] ?? tenant['moveInAt'];
     final agreementUrl = tenant['agreement_pdf_url'] ?? tenant['agreementPdfUrl'];
 
     return _SectionCard(
-      title: 'Lease & Documents',
+      title: 'Documents',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _FinancialRow(
-            label: 'Move-in Date',
-            value: moveIn != null
-                ? moveIn.toString().split('T').first
-                : 'Not recorded',
-          ),
-          const SizedBox(height: 16),
           if (agreementUrl != null)
             SizedBox(
               width: double.infinity,

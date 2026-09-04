@@ -18,6 +18,18 @@ final invoicesProvider =
       ref.watch(billingRepositoryProvider).listInvoices(propertyId),
 );
 
+final receivedThisMonthProvider =
+    FutureProvider.autoDispose.family<double, String>((ref, propertyId) async {
+  try {
+    return await ref
+        .watch(billingRepositoryProvider)
+        .receivedThisMonth(propertyId);
+  } catch (_) {
+    // Endpoint may not be deployed yet — treat as zero.
+    return 0;
+  }
+});
+
 class InvoicesListScreen extends ConsumerStatefulWidget {
   final String propertyId;
   final bool asTab;
@@ -36,36 +48,14 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
   _InvoiceStatusFilter _filter = _InvoiceStatusFilter.all;
-  late DateTime _selectedMonth;
 
-  static final _monthFormat = DateFormat('MMMM yyyy');
   static final _currency =
       NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-
-  @override
-  void initState() {
-    super.initState();
-    final now = DateTime.now();
-    _selectedMonth = DateTime(now.year, now.month, 1);
-  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickMonth() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedMonth,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-      helpText: 'Select month',
-    );
-    if (picked != null) {
-      setState(() => _selectedMonth = DateTime(picked.year, picked.month, 1));
-    }
   }
 
   Future<void> _openNewInvoice() async {
@@ -76,6 +66,7 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
     );
     if (created == true) {
       ref.invalidate(invoicesProvider(widget.propertyId));
+      ref.invalidate(receivedThisMonthProvider(widget.propertyId));
     }
   }
 
@@ -93,6 +84,7 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
       allInvoices: allInvoices,
     );
     ref.invalidate(invoicesProvider(widget.propertyId));
+    ref.invalidate(receivedThisMonthProvider(widget.propertyId));
   }
 
   DateTime? _invoiceMonthDate(Map<String, dynamic> inv) {
@@ -123,21 +115,6 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
     return null;
   }
 
-  /// Match invoice to selected month using YYYY-MM from the raw date string
-  /// so UTC midnight DATE values are not shifted into the previous month.
-  bool _inSelectedMonth(Map<String, dynamic> inv) {
-    final month = _invoiceMonthDate(inv);
-    if (month == null) return true;
-    return month.year == _selectedMonth.year &&
-        month.month == _selectedMonth.month;
-  }
-
-  bool _isBeforeSelectedMonth(Map<String, dynamic> inv) {
-    final month = _invoiceMonthDate(inv);
-    if (month == null) return false;
-    return month.isBefore(_selectedMonth);
-  }
-
   bool _isOpenUnpaid(Map<String, dynamic> inv) {
     final status = _status(inv);
     if (!{'pending', 'overdue', 'partial', 'partially_paid'}.contains(status)) {
@@ -146,34 +123,17 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
     return (_totalAmount(inv) - _paidAmount(inv)) > 0.009;
   }
 
-  /// Selected-month invoices + ALL open unpaid invoices from earlier months.
-  List<Map<String, dynamic>> _listWithCarryForward(
+  List<Map<String, dynamic>> _sortedInvoices(
       List<Map<String, dynamic>> invoices) {
-    final seen = <String>{};
-    final result = <Map<String, dynamic>>[];
-
-    void add(Map<String, dynamic> inv) {
-      final id = inv['id']?.toString();
-      if (id == null || id.isEmpty || seen.contains(id)) return;
-      seen.add(id);
-      result.add(inv);
-    }
-
-    for (final inv in invoices) {
-      if (_inSelectedMonth(inv)) add(inv);
-    }
-    for (final inv in invoices) {
-      if (_isBeforeSelectedMonth(inv) && _isOpenUnpaid(inv)) add(inv);
-    }
-
-    result.sort((a, b) {
+    final all = List<Map<String, dynamic>>.from(invoices);
+    all.sort((a, b) {
       final am = _invoiceMonthDate(a) ?? DateTime(1970);
       final bm = _invoiceMonthDate(b) ?? DateTime(1970);
       final cmp = bm.compareTo(am);
       if (cmp != 0) return cmp;
       return _totalAmount(b).compareTo(_totalAmount(a));
     });
-    return result;
+    return all;
   }
 
   double _totalAmount(Map<String, dynamic> inv) =>
@@ -247,50 +207,34 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
     }).toList();
   }
 
-  /// Expected/Collected for selected month; Pending = global unpaid debt.
-  _CollectionSummary _summary({
-    required List<Map<String, dynamic>> monthInvoices,
-    required List<Map<String, dynamic>> allInvoices,
-  }) {
-    var expected = 0.0;
-    var collected = 0.0;
-
-    for (final inv in monthInvoices) {
-      final amount = _totalAmount(inv);
-      final paid = _paidAmount(inv);
-      final status = _status(inv);
-      expected += amount;
-      if (status == 'paid') {
-        collected += amount;
-      } else if (status == 'partial' || status == 'partially_paid') {
-        collected += paid;
-      }
-    }
-
+  double _totalOutstanding(List<Map<String, dynamic>> allInvoices) {
     var pending = 0.0;
     for (final inv in allInvoices) {
       if (!_isOpenUnpaid(inv)) continue;
       pending += _remaining(inv);
     }
-
-    final ratio = expected > 0 ? (collected / expected).clamp(0.0, 1.0) : 0.0;
-    return _CollectionSummary(
-      expected: expected,
-      collected: collected,
-      pending: pending,
-      percent: ratio * 100,
-    );
+    return pending;
   }
 
   Future<void> _refreshInvoices() async {
     ref.invalidate(invoicesProvider(widget.propertyId));
-    await ref.read(invoicesProvider(widget.propertyId).future);
+    ref.invalidate(receivedThisMonthProvider(widget.propertyId));
+    await Future.wait([
+      ref.read(invoicesProvider(widget.propertyId).future),
+      ref.read(receivedThisMonthProvider(widget.propertyId).future),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
     final invoicesAsync = ref.watch(invoicesProvider(widget.propertyId));
+    final receivedAsync =
+        ref.watch(receivedThisMonthProvider(widget.propertyId));
     final baseUrl = ref.watch(tenancyRepositoryProvider).baseUrl;
+    final receivedThisMonth = receivedAsync.maybeWhen(
+      data: (v) => v,
+      orElse: () => 0.0,
+    );
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -317,30 +261,22 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
             ),
           ),
           data: (invoices) {
-            final monthInvoices = invoices.where(_inSelectedMonth).toList();
-            final visible = _listWithCarryForward(invoices);
-            final summary = _summary(
-              monthInvoices: monthInvoices,
-              allInvoices: invoices,
-            );
+            final allSorted = _sortedInvoices(invoices);
+            final unpaid = allSorted.where(_isOpenUnpaid).toList();
+            final outstanding = _totalOutstanding(invoices);
 
-            // Build one row per tenant from unpaid invoices (or paid-only when
-            // the Paid filter is active).
             final sourceInvoices = switch (_filter) {
               _InvoiceStatusFilter.paid =>
-                monthInvoices.where((i) => _status(i) == 'paid').toList(),
-              _InvoiceStatusFilter.pending => visible
-                  .where((i) {
-                    final s = _status(i);
-                    return s == 'pending' ||
-                        s == 'partial' ||
-                        s == 'partially_paid';
-                  })
-                  .toList(),
+                allSorted.where((i) => _status(i) == 'paid').toList(),
+              _InvoiceStatusFilter.pending => unpaid.where((i) {
+                  final s = _status(i);
+                  return s == 'pending' ||
+                      s == 'partial' ||
+                      s == 'partially_paid';
+                }).toList(),
               _InvoiceStatusFilter.overdue =>
-                visible.where((i) => _status(i) == 'overdue').toList(),
-              _InvoiceStatusFilter.all =>
-                visible.where(_isOpenUnpaid).toList(),
+                unpaid.where((i) => _status(i) == 'overdue').toList(),
+              _InvoiceStatusFilter.all => unpaid,
             };
 
             final tenantGroups = _filterTenantGroups(
@@ -350,10 +286,9 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
                 }),
             );
 
-            final unpaidVisible = visible.where(_isOpenUnpaid).toList();
-            final allCount = _groupByTenant(unpaidVisible).length;
+            final allCount = _groupByTenant(unpaid).length;
             final pendingCount = _groupByTenant(
-              unpaidVisible.where((i) {
+              unpaid.where((i) {
                 final s = _status(i);
                 return s == 'pending' ||
                     s == 'partial' ||
@@ -361,10 +296,10 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
               }).toList(),
             ).length;
             final overdueCount = _groupByTenant(
-              unpaidVisible.where((i) => _status(i) == 'overdue').toList(),
+              unpaid.where((i) => _status(i) == 'overdue').toList(),
             ).length;
             final paidCount = _groupByTenant(
-              monthInvoices.where((i) => _status(i) == 'paid').toList(),
+              allSorted.where((i) => _status(i) == 'paid').toList(),
             ).length;
 
             final hasAnyInvoices = invoices.isNotEmpty;
@@ -375,15 +310,14 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: _PaymentsHeader(
-                    monthLabel: _monthFormat.format(_selectedMonth),
-                    onMonthTap: _pickMonth,
-                    onNewInvoice: _openNewInvoice,
-                  ),
+                  child: _PaymentsHeader(onNewInvoice: _openNewInvoice),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: _CollectionSummaryCard(summary: summary),
+                  child: _CashflowSummaryCard(
+                    outstanding: outstanding,
+                    receivedThisMonth: receivedThisMonth,
+                  ),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -440,9 +374,7 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
                                 child: _EmptyInvoices(
                                   onCreate: _openNewInvoice,
                                   hasAnyInvoices: hasAnyInvoices,
-                                  hasMonthInvoices: hasVisibleInvoices,
-                                  monthLabel:
-                                      _monthFormat.format(_selectedMonth),
+                                  hasVisibleRows: hasVisibleInvoices,
                                 ),
                               ),
                             ],
@@ -458,30 +390,10 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
   }
 }
 
-class _CollectionSummary {
-  final double expected;
-  final double collected;
-  final double pending;
-  final double percent;
-
-  const _CollectionSummary({
-    required this.expected,
-    required this.collected,
-    required this.pending,
-    required this.percent,
-  });
-}
-
 class _PaymentsHeader extends StatelessWidget {
-  final String monthLabel;
-  final VoidCallback onMonthTap;
   final VoidCallback onNewInvoice;
 
-  const _PaymentsHeader({
-    required this.monthLabel,
-    required this.onMonthTap,
-    required this.onNewInvoice,
-  });
+  const _PaymentsHeader({required this.onNewInvoice});
 
   @override
   Widget build(BuildContext context) {
@@ -489,42 +401,13 @@ class _PaymentsHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Payments',
-                style: TextStyle(
-                  fontSize: 28,
+          child: Text(
+            'Payments',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w800,
                   color: AppColors.ink,
                   height: 1.1,
                 ),
-              ),
-              const SizedBox(height: 6),
-              InkWell(
-                onTap: onMonthTap,
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        monthLabel,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.keyboard_arrow_down,
-                          size: 18, color: AppColors.slate),
-                    ],
-                  ),
-                ),
-              ),
-            ],
           ),
         ),
         ElevatedButton.icon(
@@ -549,14 +432,19 @@ class _PaymentsHeader extends StatelessWidget {
   }
 }
 
-class _CollectionSummaryCard extends StatelessWidget {
-  final _CollectionSummary summary;
+class _CashflowSummaryCard extends StatelessWidget {
+  final double outstanding;
+  final double receivedThisMonth;
 
-  const _CollectionSummaryCard({required this.summary});
+  const _CashflowSummaryCard({
+    required this.outstanding,
+    required this.receivedThisMonth,
+  });
 
   @override
   Widget build(BuildContext context) {
     final currency = _InvoicesListScreenState._currency;
+    final nowLabel = DateFormat('MMMM').format(DateTime.now());
 
     return Card(
       elevation: 0,
@@ -570,91 +458,65 @@ class _CollectionSummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Collection Summary',
+              'Cashflow & Outstanding',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            Text(
+              'Total Outstanding',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.slate,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              currency.format(outstanding),
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: outstanding > 0
+                        ? AppColors.danger
+                        : AppColors.positive,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Unpaid across all invoices',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
+                  ),
+            ),
+            const Divider(height: 28),
             Row(
               children: [
+                const Icon(Icons.payments_outlined,
+                    size: 18, color: AppColors.positive),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: _SummaryMetric(
-                    label: 'Expected',
-                    value: currency.format(summary.expected),
-                    valueColor: AppColors.ink,
+                  child: Text(
+                    'Received This Month ($nowLabel)',
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: 'Collected',
-                    value: currency.format(summary.collected),
-                    valueColor: AppColors.positive,
-                  ),
-                ),
-                Expanded(
-                  child: _SummaryMetric(
-                    label: 'Pending (all time)',
-                    value: currency.format(summary.pending),
-                    valueColor: AppColors.caution,
-                  ),
+                Text(
+                  currency.format(receivedThisMonth),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.positive,
+                      ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: summary.percent / 100,
-                minHeight: 8,
-                backgroundColor: AppColors.canvas,
-                valueColor: const AlwaysStoppedAnimation<Color>(_accent),
-              ),
-            ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
-              '${summary.percent.toStringAsFixed(0)}% collected',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              'Cash recorded by payment date this month',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
                     fontSize: 11,
                   ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SummaryMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color valueColor;
-
-  const _SummaryMetric({
-    required this.label,
-    required this.value,
-    required this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: valueColor,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 11),
-        ),
-      ],
     );
   }
 }
@@ -1163,27 +1025,25 @@ class _InvoiceStatusBadge extends StatelessWidget {
 class _EmptyInvoices extends StatelessWidget {
   final VoidCallback onCreate;
   final bool hasAnyInvoices;
-  final bool hasMonthInvoices;
-  final String monthLabel;
+  final bool hasVisibleRows;
 
   const _EmptyInvoices({
     required this.onCreate,
     this.hasAnyInvoices = false,
-    this.hasMonthInvoices = false,
-    this.monthLabel = '',
+    this.hasVisibleRows = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final title = !hasAnyInvoices
         ? 'No invoices found'
-        : !hasMonthInvoices
-            ? 'No invoices in $monthLabel'
+        : !hasVisibleRows
+            ? 'No outstanding dues'
             : 'No matching invoices';
     final subtitle = !hasAnyInvoices
         ? 'Create your first invoice to see it here.'
-        : !hasMonthInvoices
-            ? 'Invoices exist in other months. Try switching the month above.'
+        : !hasVisibleRows
+            ? 'All tenants are paid up, or try another status filter.'
             : 'Try clearing search or status filters.';
 
     return Center(

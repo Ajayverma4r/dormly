@@ -20,6 +20,22 @@ class BillingRepository {
     return List<Map<String, dynamic>>.from(res.data['data']);
   }
 
+  /// Cash received in the current calendar month (by payment transaction date).
+  Future<double> receivedThisMonth(String propertyId) async {
+    final res =
+        await _client.dio.get('/v1/properties/$propertyId/billing/cashflow-summary');
+    final data = res.data['data'];
+    if (data is Map) {
+      return double.tryParse(
+            (data['receivedThisMonth'] ?? data['received_this_month'])
+                    ?.toString() ??
+                '',
+          ) ??
+          0;
+    }
+    return 0;
+  }
+
   Future<Map<String, dynamic>> getInvoice(String propertyId, String invoiceId) async {
     final res = await _client.dio.get('/v1/properties/$propertyId/billing/invoices/$invoiceId');
     return Map<String, dynamic>.from(res.data['data']);

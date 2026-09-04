@@ -158,6 +158,23 @@ export class BillingService {
     );
   }
 
+  /**
+   * Cash received in the current calendar month (by payment.paid_at),
+   * independent of which invoice period was settled.
+   */
+  async receivedThisMonth(propertyId: string) {
+    const [row] = await query<{ received: string }>(
+      `SELECT COALESCE(SUM(p.amount), 0)::text AS received
+       FROM payments p
+       INNER JOIN invoices i ON i.id = p.invoice_id
+       WHERE i.property_id = $1
+         AND p.paid_at >= date_trunc('month', now())
+         AND p.paid_at < date_trunc('month', now()) + interval '1 month'`,
+      [propertyId],
+    );
+    return Number(row?.received ?? 0);
+  }
+
   async listByTenancy(tenancyId: string) {
     return query(
       `SELECT i.*,

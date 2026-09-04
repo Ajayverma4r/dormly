@@ -11,6 +11,7 @@ billingRouter.get('/charge-types', controller.listChargeTypes);
 billingRouter.post('/charge-types', controller.createChargeType);
 billingRouter.delete('/charge-types/:chargeTypeId', controller.deleteChargeType);
 
+billingRouter.get('/cashflow-summary', controller.cashflowSummary);
 billingRouter.get('/invoices', controller.listInvoices);
 billingRouter.get('/invoices/:invoiceId', controller.getInvoice);
 billingRouter.post('/invoices', controller.createInvoice);

@@ -67,6 +67,13 @@ export class BillingController {
     } catch (err) { next(err); }
   };
 
+  cashflowSummary = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const receivedThisMonth = await service.receivedThisMonth(req.params.propertyId);
+      res.json({ data: { receivedThisMonth } });
+    } catch (err) { next(err); }
+  };
+
   getInvoice = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const invoice = await service.getById(req.params.invoiceId);
