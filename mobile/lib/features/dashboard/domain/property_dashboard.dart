@@ -66,6 +66,8 @@ class DashboardOverview {
   final double totalExpenses;
   final double rentReceived;
   final double rentPending;
+  final double billedThisMonth;
+  final int tenantsWithDues;
 
   const DashboardOverview({
     required this.totalActiveTenants,
@@ -73,6 +75,8 @@ class DashboardOverview {
     required this.totalExpenses,
     required this.rentReceived,
     required this.rentPending,
+    this.billedThisMonth = 0,
+    this.tenantsWithDues = 0,
   });
 
   /// Collected this month minus expenses this month.
@@ -86,6 +90,10 @@ class DashboardOverview {
       totalExpenses: _asDouble(json['total_expenses'] ?? json['totalExpenses']),
       rentReceived: _asDouble(json['rent_received'] ?? json['rentReceived']),
       rentPending: _asDouble(json['rent_pending'] ?? json['rentPending']),
+      billedThisMonth:
+          _asDouble(json['billed_this_month'] ?? json['billedThisMonth']),
+      tenantsWithDues:
+          _asInt(json['tenants_with_dues'] ?? json['tenantsWithDues']),
     );
   }
 }

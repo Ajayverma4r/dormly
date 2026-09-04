@@ -30,6 +30,8 @@ export interface PropertyDashboard {
     total_expenses: number;
     rent_received: number;
     rent_pending: number;
+    billed_this_month: number;
+    tenants_with_dues: number;
   };
   actionable_insights: {
     defaulters: DashboardDefaulter[];
@@ -140,23 +142,23 @@ export class DashboardService {
       total_expenses: string;
       rent_received: string;
       rent_pending: string;
+      billed_this_month: string;
+      tenants_with_dues: string;
     }>(
       `WITH month_bounds AS (
          SELECT
            date_trunc('month', CURRENT_DATE)::date AS month_start,
            (date_trunc('month', CURRENT_DATE) + interval '1 month')::date AS month_end
        ),
-       invoice_balances AS (
+       open_balances AS (
          SELECT
-           i.id,
+           i.tenancy_id,
            i.total_amount - COALESCE((
              SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id
            ), 0) AS balance
-         FROM invoices i, month_bounds mb
+         FROM invoices i
          WHERE i.property_id = $1
            AND i.status <> 'paid'
-           AND i.period_start < mb.month_end
-           AND i.period_end >= mb.month_start
        )
        SELECT
          (SELECT COUNT(*)::text FROM tenancies
@@ -174,7 +176,15 @@ export class DashboardService {
           WHERE i.property_id = $1
             AND p.paid_at >= mb.month_start::timestamptz
             AND p.paid_at < mb.month_end::timestamptz) AS rent_received,
-         (SELECT COALESCE(SUM(balance), 0)::text FROM invoice_balances) AS rent_pending`,
+         (SELECT COALESCE(SUM(balance), 0)::text
+          FROM open_balances WHERE balance > 0) AS rent_pending,
+         (SELECT COALESCE(SUM(i.total_amount), 0)::text
+          FROM invoices i, month_bounds mb
+          WHERE i.property_id = $1
+            AND i.created_at >= mb.month_start::timestamptz
+            AND i.created_at < mb.month_end::timestamptz) AS billed_this_month,
+         (SELECT COUNT(DISTINCT tenancy_id)::text
+          FROM open_balances WHERE balance > 0.009) AS tenants_with_dues`,
       [propertyId],
     );
 
@@ -187,23 +197,23 @@ export class DashboardService {
       open_complaints: string;
       rent_received: string;
       rent_pending: string;
+      billed_this_month: string;
+      tenants_with_dues: string;
     }>(
       `WITH month_bounds AS (
          SELECT
            date_trunc('month', CURRENT_DATE)::date AS month_start,
            (date_trunc('month', CURRENT_DATE) + interval '1 month')::date AS month_end
        ),
-       invoice_balances AS (
+       open_balances AS (
          SELECT
-           i.id,
+           i.tenancy_id,
            i.total_amount - COALESCE((
              SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id
            ), 0) AS balance
-         FROM invoices i, month_bounds mb
+         FROM invoices i
          WHERE i.property_id = $1
            AND i.status <> 'paid'
-           AND i.period_start < mb.month_end
-           AND i.period_end >= mb.month_start
        )
        SELECT
          (SELECT COUNT(*)::text FROM tenancies
@@ -216,7 +226,15 @@ export class DashboardService {
           WHERE i.property_id = $1
             AND p.paid_at >= mb.month_start::timestamptz
             AND p.paid_at < mb.month_end::timestamptz) AS rent_received,
-         (SELECT COALESCE(SUM(balance), 0)::text FROM invoice_balances) AS rent_pending`,
+         (SELECT COALESCE(SUM(balance), 0)::text
+          FROM open_balances WHERE balance > 0) AS rent_pending,
+         (SELECT COALESCE(SUM(i.total_amount), 0)::text
+          FROM invoices i, month_bounds mb
+          WHERE i.property_id = $1
+            AND i.created_at >= mb.month_start::timestamptz
+            AND i.created_at < mb.month_end::timestamptz) AS billed_this_month,
+         (SELECT COUNT(DISTINCT tenancy_id)::text
+          FROM open_balances WHERE balance > 0.009) AS tenants_with_dues`,
       [propertyId],
     );
 
@@ -232,6 +250,8 @@ export class DashboardService {
     total_expenses?: string;
     rent_received: string;
     rent_pending: string;
+    billed_this_month?: string;
+    tenants_with_dues?: string;
   }) {
     return {
       total_active_tenants: Number(row?.total_active_tenants ?? 0),
@@ -239,6 +259,8 @@ export class DashboardService {
       total_expenses: Number(row?.total_expenses ?? 0),
       rent_received: Number(row?.rent_received ?? 0),
       rent_pending: Number(row?.rent_pending ?? 0),
+      billed_this_month: Number(row?.billed_this_month ?? 0),
+      tenants_with_dues: Number(row?.tenants_with_dues ?? 0),
     };
   }
 

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../billing/presentation/create_invoice_screen.dart';
 import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../dashboard/domain/property_dashboard.dart';
@@ -95,6 +96,38 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     if (vacant == 0) return 'Fully occupied';
     if (vacant == 1) return '1 Room Empty';
     return '$vacant Rooms Empty';
+  }
+
+  String _occupancyPrimary(HeroStats hero) {
+    if (hero.totalUnits <= 0) return '0% Occupied';
+    final pct =
+        ((hero.occupiedUnits / hero.totalUnits) * 100).round().clamp(0, 100);
+    return '$pct% Occupied';
+  }
+
+  String _pendingDuesSublabel(int tenantsWithDues) {
+    if (tenantsWithDues <= 0) return 'All clear';
+    if (tenantsWithDues == 1) return 'from 1 tenant';
+    return 'from $tenantsWithDues tenants';
+  }
+
+  Future<void> _openNewInvoice(BuildContext context, WidgetRef ref) async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => CreateInvoiceScreen(propertyId: propertyId),
+      ),
+    );
+    if (created == true) {
+      ref.invalidate(propertyDashboardProvider(propertyId));
+    }
+  }
+
+  void _openAddTenant(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AddTenantScreen(propertyId: propertyId),
+      ),
+    );
   }
 
   List<_InsightAlert> _buildAttentionAlerts(PropertyDashboard dashboard) {
@@ -288,39 +321,25 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       propertyName: displayName,
                       subtitle: _propertySubtitle(property),
                       isOccupied: hero.occupiedUnits > 0,
-                      availableUnits:
+                      occupancyPrimary: _occupancyPrimary(hero),
+                      occupancySubtitle:
                           _availableUnitsLabel(hero.availableUnits),
-                      monthlyRent:
-                          _formatCurrency(hero.expectedMonthlyRent),
+                      rentalValueLabel: 'Total Rental Value',
+                      rentalValue: _formatCurrency(hero.expectedMonthlyRent),
                       propertyId: propertyId,
-                      onAvailableUnitsTap: onGoToRoomsTab,
-                      onMonthlyRentTap: onGoToPaymentsTab,
+                      onOccupancyTap: onGoToRoomsTab,
+                      onRentalValueTap: onGoToPaymentsTab,
                     ),
+                    if (canManage) ...[
+                      const SizedBox(height: 16),
+                      _PrimaryQuickActionsRow(
+                        onAddTenant: () => _openAddTenant(context),
+                        onNewInvoice: () => _openNewInvoice(context, ref),
+                        onAddExpense: () => _openAddExpense(context, ref),
+                      ),
+                    ],
                     const SizedBox(height: 28),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Overview',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.ink,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: onGoToPaymentsTab,
-                          child: const Text(
-                            'View All',
-                            style: TextStyle(
-                              color: _brandPurple,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                    const _SectionTitle('Financial Overview'),
                     const SizedBox(height: 12),
                     _NetProfitStrip(
                       collected: overview.rentReceived,
@@ -330,7 +349,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       onCollectedTap: onGoToPaymentsTab,
                       onExpensesTap: () => _openAddExpense(context, ref),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     GridView.count(
                       crossAxisCount: 2,
                       shrinkWrap: true,
@@ -340,14 +359,37 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       childAspectRatio: 1.35,
                       children: [
                         _OverviewCard(
-                          icon: Icons.currency_rupee_rounded,
-                          iconColor: const Color(0xFF16A34A),
-                          iconBg: const Color(0xFFDCFCE7),
-                          label: 'Expected Rent',
-                          value: _formatCurrency(hero.expectedMonthlyRent),
-                          sublabel: 'This Month',
+                          icon: Icons.receipt_long_outlined,
+                          iconColor: const Color(0xFF0891B2),
+                          iconBg: const Color(0xFFCFFAFE),
+                          label: 'Billed This Month',
+                          value: _formatCurrency(overview.billedThisMonth),
+                          sublabel: 'Invoices generated',
                           onTap: onGoToPaymentsTab,
                         ),
+                        _OverviewCard(
+                          icon: Icons.timelapse_outlined,
+                          iconColor: const Color(0xFFD97706),
+                          iconBg: const Color(0xFFFEF3C7),
+                          label: 'Pending Dues',
+                          value: _formatCurrency(overview.rentPending),
+                          sublabel:
+                              _pendingDuesSublabel(overview.tenantsWithDues),
+                          onTap: onGoToPaymentsTab,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 28),
+                    const _SectionTitle('Property Operations'),
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.35,
+                      children: [
                         _OverviewCard(
                           icon: Icons.people_outline_rounded,
                           iconColor: const Color(0xFF2563EB),
@@ -365,15 +407,6 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                           value: '${overview.openComplaints}',
                           sublabel: 'Needs Action',
                           onTap: () => _openComplaints(context),
-                        ),
-                        _OverviewCard(
-                          icon: Icons.timelapse_outlined,
-                          iconColor: const Color(0xFFD97706),
-                          iconBg: const Color(0xFFFEF3C7),
-                          label: 'Rent Pending',
-                          value: _formatCurrency(overview.rentPending),
-                          sublabel: 'Overdue',
-                          onTap: onGoToPaymentsTab,
                         ),
                       ],
                     ),
@@ -404,7 +437,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
             if (canManage) ...[
               const SizedBox(height: 28),
               const Text(
-                'Quick Actions',
+                'More Actions',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
@@ -415,32 +448,13 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
               Wrap(
                 spacing: 8,
                 runSpacing: 20,
-                alignment: WrapAlignment.spaceBetween,
+                alignment: WrapAlignment.start,
                 children: [
                   _QuickAction(
                     icon: Icons.home_work_outlined,
                     label: 'Add Property',
                     color: _brandPurple,
                     onTap: () => context.push('/onboarding/create-property'),
-                  ),
-                  _QuickAction(
-                    icon: Icons.person_add_alt_1_outlined,
-                    label: 'Add Tenant',
-                    color: const Color(0xFF2563EB),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              AddTenantScreen(propertyId: propertyId),
-                        ),
-                      );
-                    },
-                  ),
-                  _QuickAction(
-                    icon: Icons.receipt_long_outlined,
-                    label: 'Add Expense',
-                    color: const Color(0xFF16A34A),
-                    onTap: () => _openAddExpense(context, ref),
                   ),
                   _QuickAction(
                     icon: Icons.support_agent_outlined,
@@ -685,21 +699,25 @@ class _HeroCard extends ConsumerWidget {
   final String propertyName;
   final String subtitle;
   final bool isOccupied;
-  final String availableUnits;
-  final String monthlyRent;
+  final String occupancyPrimary;
+  final String occupancySubtitle;
+  final String rentalValueLabel;
+  final String rentalValue;
   final String propertyId;
-  final VoidCallback? onAvailableUnitsTap;
-  final VoidCallback? onMonthlyRentTap;
+  final VoidCallback? onOccupancyTap;
+  final VoidCallback? onRentalValueTap;
 
   const _HeroCard({
     required this.propertyName,
     required this.subtitle,
     required this.isOccupied,
-    required this.availableUnits,
-    required this.monthlyRent,
+    required this.occupancyPrimary,
+    required this.occupancySubtitle,
+    required this.rentalValueLabel,
+    required this.rentalValue,
     required this.propertyId,
-    this.onAvailableUnitsTap,
-    this.onMonthlyRentTap,
+    this.onOccupancyTap,
+    this.onRentalValueTap,
   });
 
   @override
@@ -873,9 +891,9 @@ class _HeroCard extends ConsumerWidget {
               children: [
                 Expanded(
                   child: _HeroStat(
-                    label: 'Available Units',
-                    value: availableUnits,
-                    onTap: onAvailableUnitsTap,
+                    primary: occupancyPrimary,
+                    secondary: occupancySubtitle,
+                    onTap: onOccupancyTap,
                   ),
                 ),
                 Container(
@@ -885,9 +903,9 @@ class _HeroCard extends ConsumerWidget {
                 ),
                 Expanded(
                   child: _HeroStat(
-                    label: 'Monthly Rent',
-                    value: monthlyRent,
-                    onTap: onMonthlyRentTap,
+                    primary: rentalValue,
+                    secondary: rentalValueLabel,
+                    onTap: onRentalValueTap,
                   ),
                 ),
               ],
@@ -900,13 +918,13 @@ class _HeroCard extends ConsumerWidget {
 }
 
 class _HeroStat extends StatelessWidget {
-  final String label;
-  final String value;
+  final String primary;
+  final String secondary;
   final VoidCallback? onTap;
 
   const _HeroStat({
-    required this.label,
-    required this.value,
+    required this.primary,
+    required this.secondary,
     this.onTap,
   });
 
@@ -915,20 +933,21 @@ class _HeroStat extends StatelessWidget {
     final content = Column(
       children: [
         Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.75),
-            fontSize: 11,
+          primary,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 4),
         Text(
-          value,
+          secondary,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.75),
+            fontSize: 11,
           ),
         ),
       ],
@@ -946,6 +965,106 @@ class _HeroStat extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
           child: content,
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryQuickActionsRow extends StatelessWidget {
+  final VoidCallback onAddTenant;
+  final VoidCallback onNewInvoice;
+  final VoidCallback onAddExpense;
+
+  const _PrimaryQuickActionsRow({
+    required this.onAddTenant,
+    required this.onNewInvoice,
+    required this.onAddExpense,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _PrimaryActionChip(
+            icon: Icons.person_add_alt_1_outlined,
+            label: 'Add Tenant',
+            color: const Color(0xFF2563EB),
+            onTap: onAddTenant,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _PrimaryActionChip(
+            icon: Icons.receipt_outlined,
+            label: 'New Invoice',
+            color: PropertyDashboardTabScreen._brandPurple,
+            onTap: onNewInvoice,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _PrimaryActionChip(
+            icon: Icons.add_card_outlined,
+            label: 'Add Expense',
+            color: const Color(0xFF16A34A),
+            onTap: onAddExpense,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PrimaryActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _PrimaryActionChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          child: Column(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1384,6 +1503,13 @@ class _NeedsAttentionSection extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (onTap != null)
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: alert.isUrgent
+                              ? const Color(0xFF991B1B)
+                              : const Color(0xFF854D0E),
+                        ),
                     ],
                   ),
                 ),
