@@ -1,17 +1,13 @@
 // features/billing/presentation/reports_history_tab.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
-import '../../tenancies/data/tenancy_repository.dart';
 import 'billing_invoice_helpers.dart';
 import 'billing_providers.dart';
 import 'invoice_detail_screen.dart';
 
-const _accent = Color(0xFF7C3AED);
-
-/// Analytics-oriented history: month filter, billed/collected, all invoices.
+/// CA Ledger View: financial-year aggregates + month-by-month cash breakdown.
 class ReportsHistoryTab extends ConsumerStatefulWidget {
   final String propertyId;
 
@@ -22,64 +18,60 @@ class ReportsHistoryTab extends ConsumerStatefulWidget {
 }
 
 class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
-  late DateTime _selectedMonth;
+  late FinancialYear _selectedFy;
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _selectedMonth = DateTime(now.year, now.month, 1);
+    _selectedFy = FinancialYear.current();
   }
 
-  List<DateTime> get _monthOptions {
-    final now = DateTime.now();
-    return List.generate(24, (i) {
-      final d = DateTime(now.year, now.month - i, 1);
-      return DateTime(d.year, d.month, 1);
-    });
-  }
+  List<FinancialYear> get _fyOptions => FinancialYear.recent();
 
   Future<void> _refresh() async {
     ref.invalidate(invoicesProvider(widget.propertyId));
-    await ref.read(invoicesProvider(widget.propertyId).future);
+    ref.invalidate(paymentsProvider(widget.propertyId));
+    await Future.wait([
+      ref.read(invoicesProvider(widget.propertyId).future),
+      ref.read(paymentsProvider(widget.propertyId).future),
+    ]);
   }
 
-  Future<void> _openInvoice(Map<String, dynamic> inv) async {
-    final id = (inv['id'] ?? inv['invoice_id'])?.toString();
-    if (id == null || id.isEmpty) return;
+  void _onDownloadReport() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Generating CA Report CSV...')),
+    );
+  }
+
+  Future<void> _openInvoice(String? invoiceId) async {
+    if (invoiceId == null || invoiceId.isEmpty) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => InvoiceDetailScreen(
           propertyId: widget.propertyId,
-          invoiceId: id,
+          invoiceId: invoiceId,
           viewOnly: true,
         ),
       ),
     );
   }
 
-  List<Map<String, dynamic>> _invoicesForMonth(
-    List<Map<String, dynamic>> all,
-  ) {
-    final filtered = all
-        .where((inv) => invoiceMatchesMonth(inv, _selectedMonth))
-        .toList()
-      ..sort((a, b) {
-        final an = tenantDisplayName(a).toLowerCase();
-        final bn = tenantDisplayName(b).toLowerCase();
-        final byName = an.compareTo(bn);
-        if (byName != 0) return byName;
-        return invoiceTotalAmount(b).compareTo(invoiceTotalAmount(a));
-      });
-    return filtered;
+  List<CaPaymentEntry> _resolvePaymentEntries({
+    required List<Map<String, dynamic>> apiPayments,
+    required List<Map<String, dynamic>> invoices,
+  }) {
+    final fromApi = apiPayments
+        .map(caPaymentFromApiRow)
+        .whereType<CaPaymentEntry>()
+        .toList();
+    if (fromApi.isNotEmpty) return fromApi;
+    return synthesizePaymentsFromInvoices(invoices);
   }
 
   @override
   Widget build(BuildContext context) {
     final invoicesAsync = ref.watch(invoicesProvider(widget.propertyId));
-    final baseUrl = ref.watch(tenancyRepositoryProvider).baseUrl;
-    final monthLabel = DateFormat('MMMM yyyy').format(_selectedMonth);
-    final shortMonth = DateFormat('MMM').format(_selectedMonth);
+    final paymentsAsync = ref.watch(paymentsProvider(widget.propertyId));
 
     return invoicesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -100,25 +92,38 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
         ),
       ),
       data: (invoices) {
-        final monthInvoices = _invoicesForMonth(invoices);
-        final billed = monthInvoices.fold<double>(
+        final apiPayments = paymentsAsync.maybeWhen(
+          data: (p) => p,
+          orElse: () => <Map<String, dynamic>>[],
+        );
+        final entries = _resolvePaymentEntries(
+          apiPayments: apiPayments,
+          invoices: invoices,
+        );
+
+        final fyInvoices =
+            invoices.where((i) => invoiceInFinancialYear(i, _selectedFy));
+        final totalBilled = fyInvoices.fold<double>(
           0,
           (s, i) => s + invoiceTotalAmount(i),
         );
-        final collected = monthInvoices.fold<double>(
-          0,
-          (s, i) => s + invoicePaidAmount(i),
-        );
+        final fyPayments =
+            entries.where((e) => _selectedFy.containsDate(e.paidAt)).toList();
+        final totalCashIn =
+            fyPayments.fold<double>(0, (s, e) => s + e.amount);
+        final monthGroups =
+            groupPaymentsByMonthForFy(fyPayments, _selectedFy);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _MonthYearPicker(
-                selected: _selectedMonth,
-                options: _monthOptions,
-                onChanged: (m) => setState(() => _selectedMonth = m),
+              child: _FyFilterBar(
+                selected: _selectedFy,
+                options: _fyOptions,
+                onChanged: (fy) => setState(() => _selectedFy = fy),
+                onDownload: _onDownloadReport,
               ),
             ),
             Padding(
@@ -126,59 +131,48 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
               child: Row(
                 children: [
                   Expanded(
-                    child: _ReportSummaryTile(
-                      label: 'Total Billed in $shortMonth',
-                      value: billingCurrency.format(billed),
-                      valueColor: AppColors.blueprint,
-                      icon: Icons.receipt_long_outlined,
+                    child: _AggregateCard(
+                      label: 'Total Cash In',
+                      value: billingCurrency.format(totalCashIn),
+                      valueColor: AppColors.positive,
+                      icon: Icons.south_west,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: _ReportSummaryTile(
-                      label: 'Total Collected in $shortMonth',
-                      value: billingCurrency.format(collected),
-                      valueColor: AppColors.positive,
-                      icon: Icons.account_balance_wallet_outlined,
+                    child: _AggregateCard(
+                      label: 'Total Billed',
+                      value: billingCurrency.format(totalBilled),
+                      valueColor: AppColors.ink,
+                      icon: Icons.receipt_long_outlined,
                     ),
                   ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Text(
-                'Invoices · $monthLabel',
+                'Month-by-Month Breakdown',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: _ReportTableHeader(),
-            ),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refresh,
-                child: monthInvoices.isNotEmpty
-                    ? ListView.separated(
+                child: monthGroups.isNotEmpty
+                    ? ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.only(top: 4, bottom: 16),
-                        itemCount: monthInvoices.length,
-                        separatorBuilder: (_, __) => const Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: AppColors.hairline,
-                          indent: 12,
-                          endIndent: 12,
-                        ),
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                        itemCount: monthGroups.length,
                         itemBuilder: (context, i) {
-                          final inv = monthInvoices[i];
-                          return _InvoiceHistoryRow(
-                            invoice: inv,
-                            baseUrl: baseUrl,
-                            onTap: () => _openInvoice(inv),
+                          final group = monthGroups[i];
+                          return _MonthAccordion(
+                            group: group,
+                            onPaymentTap: (entry) =>
+                                _openInvoice(entry.invoiceId),
                           );
                         },
                       )
@@ -186,8 +180,7 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
                           SizedBox(
-                            height:
-                                MediaQuery.of(context).size.height * 0.32,
+                            height: MediaQuery.of(context).size.height * 0.32,
                             child: Center(
                               child: Padding(
                                 padding: const EdgeInsets.all(32),
@@ -195,13 +188,13 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     const Icon(
-                                      Icons.inbox_outlined,
+                                      Icons.account_balance_outlined,
                                       size: 48,
                                       color: AppColors.slate,
                                     ),
                                     const SizedBox(height: 12),
                                     Text(
-                                      'No invoices for $monthLabel',
+                                      'No ledger activity for ${_selectedFy.label}',
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleMedium,
@@ -209,7 +202,7 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
                                     ),
                                     const SizedBox(height: 8),
                                     Text(
-                                      'Pick another month or create invoices for this period.',
+                                      'Payments collected in this financial year will appear here month by month.',
                                       textAlign: TextAlign.center,
                                       style: Theme.of(context)
                                           .textTheme
@@ -231,64 +224,85 @@ class _ReportsHistoryTabState extends ConsumerState<ReportsHistoryTab> {
   }
 }
 
-class _MonthYearPicker extends StatelessWidget {
-  final DateTime selected;
-  final List<DateTime> options;
-  final ValueChanged<DateTime> onChanged;
+class _FyFilterBar extends StatelessWidget {
+  final FinancialYear selected;
+  final List<FinancialYear> options;
+  final ValueChanged<FinancialYear> onChanged;
+  final VoidCallback onDownload;
 
-  const _MonthYearPicker({
+  const _FyFilterBar({
     required this.selected,
     required this.options,
     required this.onChanged,
+    required this.onDownload,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<DateTime>(
-          isExpanded: true,
-          value: options.firstWhere(
-            (o) => o.year == selected.year && o.month == selected.month,
-            orElse: () => options.first,
-          ),
-          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.slate),
-          items: options
-              .map(
-                (m) => DropdownMenuItem(
-                  value: m,
-                  child: Text(
-                    DateFormat('MMMM yyyy').format(m),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.ink,
-                    ),
-                  ),
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.hairline),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<FinancialYear>(
+                isExpanded: true,
+                value: options.contains(selected) ? selected : options.first,
+                icon: const Icon(
+                  Icons.keyboard_arrow_down,
+                  color: AppColors.slate,
                 ),
-              )
-              .toList(),
-          onChanged: (m) {
-            if (m != null) onChanged(m);
-          },
+                items: options
+                    .map(
+                      (fy) => DropdownMenuItem(
+                        value: fy,
+                        child: Text(
+                          fy.label,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (fy) {
+                  if (fy != null) onChanged(fy);
+                },
+              ),
+            ),
+          ),
         ),
-      ),
+        const SizedBox(width: 8),
+        TextButton.icon(
+          onPressed: onDownload,
+          icon: const Icon(Icons.file_download, size: 18),
+          label: const Text(
+            'Download Report',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.blueprint,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _ReportSummaryTile extends StatelessWidget {
+class _AggregateCard extends StatelessWidget {
   final String label;
   final String value;
   final Color valueColor;
   final IconData icon;
 
-  const _ReportSummaryTile({
+  const _AggregateCard({
     required this.label,
     required this.value,
     required this.valueColor,
@@ -314,7 +328,7 @@ class _ReportSummaryTile extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.slate,
@@ -340,215 +354,81 @@ class _ReportSummaryTile extends StatelessWidget {
   }
 }
 
-class _ReportTableHeader extends StatelessWidget {
-  const _ReportTableHeader();
+class _MonthAccordion extends StatelessWidget {
+  final CaMonthGroup group;
+  final ValueChanged<CaPaymentEntry> onPaymentTap;
 
-  @override
-  Widget build(BuildContext context) {
-    const style = TextStyle(
-      fontSize: 12,
-      color: AppColors.slate,
-      fontWeight: FontWeight.w500,
-    );
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(flex: 3, child: Text('Tenant', style: style)),
-          Expanded(flex: 2, child: Text('Period', style: style)),
-          Expanded(flex: 2, child: Text('Amount', style: style)),
-          Expanded(flex: 2, child: Text('Status', style: style)),
-        ],
-      ),
-    );
-  }
-}
-
-class _InvoiceHistoryRow extends StatelessWidget {
-  final Map<String, dynamic> invoice;
-  final String baseUrl;
-  final VoidCallback onTap;
-
-  const _InvoiceHistoryRow({
-    required this.invoice,
-    required this.baseUrl,
-    required this.onTap,
+  const _MonthAccordion({
+    required this.group,
+    required this.onPaymentTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final name = tenantDisplayName(invoice);
-    final room = tenantRoomLabel(invoice);
-    final photoUrl = resolvePhotoUrl(tenantPhotoUrl(invoice), baseUrl);
-    final initials = initialsFromName(name);
-    final status = invoiceStatus(invoice);
-    final amount = invoiceTotalAmount(invoice);
-
-    return Material(
-      color: AppColors.surface,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: AppColors.canvas,
-                      backgroundImage:
-                          photoUrl != null ? NetworkImage(photoUrl) : null,
-                      child: photoUrl == null
-                          ? Text(
-                              initials,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: _accent,
-                              ),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.ink,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            room,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  periodLabel(invoice),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  billingCurrency.format(amount),
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.hairline),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.only(bottom: 6),
+          title: Text(
+            group.title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              color: AppColors.ink,
+            ),
+          ),
+          trailing: Text(
+            'Total: ${billingCurrency.format(group.totalCollected)}',
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              color: AppColors.positive,
+            ),
+          ),
+          children: [
+            for (final entry in group.payments)
+              ListTile(
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+                title: Text(
+                  entry.tenantName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
+                    fontWeight: FontWeight.w600,
                     fontSize: 13,
-                    fontWeight: FontWeight.w800,
                     color: AppColors.ink,
                   ),
                 ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Flexible(child: _StatusBadge(status: status)),
-                    const Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color: AppColors.slate,
-                    ),
-                  ],
+                subtitle: Text(
+                  entry.roomLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: AppColors.slate),
                 ),
+                trailing: Text(
+                  billingCurrency.format(entry.amount),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: AppColors.ink,
+                  ),
+                ),
+                onTap: () => onPaymentTap(entry),
               ),
-            ],
-          ),
+          ],
         ),
-      ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  final String status;
-
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    late Color bg;
-    late Color fg;
-    late String label;
-
-    switch (status) {
-      case 'paid':
-        bg = AppColors.positive.withValues(alpha: 0.12);
-        fg = AppColors.positive;
-        label = 'Paid';
-      case 'overdue':
-        bg = AppColors.danger.withValues(alpha: 0.12);
-        fg = AppColors.danger;
-        label = 'Overdue';
-      case 'partial':
-      case 'partially_paid':
-        bg = AppColors.caution.withValues(alpha: 0.12);
-        fg = AppColors.caution;
-        label = 'Partial';
-      default:
-        bg = AppColors.caution.withValues(alpha: 0.12);
-        fg = AppColors.caution;
-        label = 'Pending';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 3),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: fg,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -74,6 +74,12 @@ export class BillingController {
     } catch (err) { next(err); }
   };
 
+  listPayments = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      res.json({ data: await service.listPaymentsByProperty(req.params.propertyId) });
+    } catch (err) { next(err); }
+  };
+
   getInvoice = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const invoice = await service.getById(req.params.invoiceId);

@@ -175,6 +175,45 @@ export class BillingService {
     return Number(row?.received ?? 0);
   }
 
+  /** All payment receipts for a property (CA ledger / FY reports). */
+  async listPaymentsByProperty(propertyId: string) {
+    return query(
+      `SELECT p.id,
+              p.invoice_id,
+              p.amount,
+              p.method,
+              p.note,
+              p.paid_at,
+              i.tenancy_id,
+              t.full_name,
+              n.name AS node_name,
+              floor_node.name AS floor_name
+       FROM payments p
+       INNER JOIN invoices i ON i.id = p.invoice_id
+       INNER JOIN tenancies t ON t.id = i.tenancy_id
+       INNER JOIN hierarchy_nodes n ON n.id = t.node_id
+       LEFT JOIN LATERAL (
+         WITH RECURSIVE ancestors AS (
+           SELECT hn.id, hn.name, hn.parent_node_id, hn.level_id
+           FROM hierarchy_nodes hn
+           WHERE hn.id = n.id
+           UNION ALL
+           SELECT pr.id, pr.name, pr.parent_node_id, pr.level_id
+           FROM hierarchy_nodes pr
+           INNER JOIN ancestors a ON pr.id = a.parent_node_id
+         )
+         SELECT a.name
+         FROM ancestors a
+         JOIN hierarchy_levels hl ON hl.id = a.level_id
+         WHERE lower(hl.display_name) LIKE '%floor%'
+         LIMIT 1
+       ) floor_node ON true
+       WHERE i.property_id = $1
+       ORDER BY p.paid_at DESC`,
+      [propertyId],
+    );
+  }
+
   async listByTenancy(tenancyId: string) {
     return query(
       `SELECT i.*,

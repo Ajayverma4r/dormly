@@ -20,3 +20,17 @@ final receivedThisMonthProvider =
     return 0;
   }
 });
+
+final paymentsProvider =
+    FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
+  (ref, propertyId) async {
+    try {
+      return await ref
+          .watch(billingRepositoryProvider)
+          .listPayments(propertyId);
+    } catch (_) {
+      // Endpoint may not be deployed yet — empty list; UI falls back to invoices.
+      return [];
+    }
+  },
+);

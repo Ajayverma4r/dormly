@@ -36,6 +36,13 @@ class BillingRepository {
     return 0;
   }
 
+  /// Individual payment receipts for CA / FY ledger views.
+  Future<List<Map<String, dynamic>>> listPayments(String propertyId) async {
+    final res =
+        await _client.dio.get('/v1/properties/$propertyId/billing/payments');
+    return List<Map<String, dynamic>>.from(res.data['data']);
+  }
+
   Future<Map<String, dynamic>> getInvoice(String propertyId, String invoiceId) async {
     final res = await _client.dio.get('/v1/properties/$propertyId/billing/invoices/$invoiceId');
     return Map<String, dynamic>.from(res.data['data']);
