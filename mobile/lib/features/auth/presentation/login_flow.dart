@@ -1,10 +1,12 @@
 // features/auth/presentation/login_flow.dart
 //
-// Post-login routing:
-//   invitations → context → profile (if incomplete) → properties → home/shell
+// Post-login routing (frictionless):
+//   invitations → auto-pick primary context → profile (if needed) → first property shell
 //
 // Session restore (app restart):
 //   refresh token → restore context → route to dashboard / wizard
+//
+// Role/property list screens are bypassed; switching lives in-app (Menu / Dashboard).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,13 +31,10 @@ Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
     throw Exception('No accessible workspace found for this account.');
   }
 
-  if (contexts.length == 1) {
-    final chosen = contexts.first;
-    await authRepo.selectContext(chosen['type'], chosen['id']);
-    if (context.mounted) await routeAfterContextSelection(context, ref, chosen);
-  } else {
-    if (context.mounted) context.go('/select-context', extra: contexts);
-  }
+  // Frictionless: never show ContextPicker — auto-select primary workspace.
+  final chosen = _pickPrimaryContext(contexts);
+  await authRepo.selectContext(chosen['type'], chosen['id']);
+  if (context.mounted) await routeAfterContextSelection(context, ref, chosen);
 }
 
 /// Cold start — reuse persisted refresh token + last workspace context.
@@ -178,13 +177,75 @@ Future<void> routeAfterContextSelection(
   }
 }
 
+/// Switch workspace role in-app (owner ↔ tenant) without the context picker.
+Future<void> switchWorkspaceRole(
+  BuildContext context,
+  WidgetRef ref, {
+  required bool toTenant,
+}) async {
+  final authRepo = ref.read(authRepositoryProvider);
+  final contexts = await authRepo.listContexts();
+  final match = contexts.where((c) {
+    final role = c['role']?.toString();
+    if (toTenant) return role == 'tenant';
+    return role == 'owner' || role == 'admin' || role == 'manager';
+  }).toList();
+
+  if (match.isEmpty) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            toTenant
+                ? 'No tenant workspace on this account.'
+                : 'No owner workspace on this account.',
+          ),
+        ),
+      );
+    }
+    return;
+  }
+
+  final chosen = _pickPrimaryContext(match);
+  await authRepo.selectContext(chosen['type'], chosen['id']);
+  if (context.mounted) await routeAfterContextSelection(context, ref, chosen);
+}
+
+/// Prefer owner/admin org workspaces over staff/tenant for frictionless entry.
+Map<String, dynamic> _pickPrimaryContext(List<dynamic> contexts) {
+  int score(Map<String, dynamic> c) {
+    switch (c['role']?.toString()) {
+      case 'owner':
+        return 0;
+      case 'admin':
+        return 1;
+      case 'manager':
+        return 2;
+      case 'staff':
+        return 3;
+      case 'tenant':
+        return 4;
+      default:
+        return 5;
+    }
+  }
+
+  final list = contexts
+      .map((e) => Map<String, dynamic>.from(e as Map))
+      .toList()
+    ..sort((a, b) => score(a).compareTo(score(b)));
+  return list.first;
+}
+
+/// Always land on the first property shell — never the property list gate.
 void _goByPropertyCount(BuildContext context, List<dynamic> properties) {
   if (properties.isEmpty) {
     context.go('/onboarding/welcome');
-  } else if (properties.length == 1) {
-    final p = properties.first;
-    context.go('/property/${p['id']}', extra: {'propertyName': p['name']});
-  } else {
-    context.go('/home');
+    return;
   }
+  final p = properties.first as Map;
+  context.go(
+    '/property/${p['id']}',
+    extra: {'propertyName': p['name']},
+  );
 }

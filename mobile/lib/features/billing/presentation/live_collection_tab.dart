@@ -12,12 +12,21 @@ import 'tenant_ledger_sheet.dart';
 import 'whatsapp_reminder.dart';
 
 const _accent = Color(0xFF7C3AED);
+const _accentSoft = Color(0xFFF3E8FF);
+const _accentMuted = Color(0xFFEDE4FF);
 
-/// Action-oriented dues list: outstanding + received, tenants with pending only.
+enum _StatusFilter { all, pending, paid, overdue }
+
+/// Live Collection — matches the Payments reference mock.
 class LiveCollectionTab extends ConsumerStatefulWidget {
   final String propertyId;
+  final DateTime selectedMonth;
 
-  const LiveCollectionTab({super.key, required this.propertyId});
+  const LiveCollectionTab({
+    super.key,
+    required this.propertyId,
+    required this.selectedMonth,
+  });
 
   @override
   ConsumerState<LiveCollectionTab> createState() => _LiveCollectionTabState();
@@ -26,6 +35,7 @@ class LiveCollectionTab extends ConsumerStatefulWidget {
 class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
+  _StatusFilter _filter = _StatusFilter.all;
 
   @override
   void dispose() {
@@ -102,9 +112,7 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
       }
     }
 
-    final groups = map.values
-        .where((g) => g.grandTotalPending > 0.009)
-        .toList()
+    final groups = map.values.toList()
       ..sort((a, b) {
         final byPending =
             b.grandTotalPending.compareTo(a.grandTotalPending);
@@ -114,35 +122,133 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
     return groups;
   }
 
-  List<_TenantPaymentGroup> _filterGroups(List<_TenantPaymentGroup> groups) {
+  List<_TenantPaymentGroup> _applyFilters(List<_TenantPaymentGroup> groups) {
+    final byStatus = groups.where((g) {
+      switch (_filter) {
+        case _StatusFilter.all:
+          return true;
+        case _StatusFilter.pending:
+          return g.displayStatus == 'pending' ||
+              g.displayStatus == 'partial';
+        case _StatusFilter.paid:
+          return g.displayStatus == 'paid';
+        case _StatusFilter.overdue:
+          return g.displayStatus == 'overdue';
+      }
+    });
+
     final q = _searchQuery.trim().toLowerCase();
-    if (q.isEmpty) return groups;
-    return groups.where((g) {
+    if (q.isEmpty) return byStatus.toList();
+    return byStatus.where((g) {
       return g.name.toLowerCase().contains(q) ||
           g.room.toLowerCase().contains(q) ||
+          (g.phone ?? '').contains(q) ||
           g.grandTotalPending.toStringAsFixed(0).contains(q);
     }).toList();
   }
 
-  double _totalOutstanding(List<Map<String, dynamic>> all) {
-    var pending = 0.0;
+  /// Month-scoped collection metrics for the unified progress banner.
+  _CollectionMonthStats _monthStats(List<Map<String, dynamic>> all) {
+    var collected = 0.0;
+    var outstanding = 0.0;
     for (final inv in all) {
-      if (!isOpenUnpaidInvoice(inv)) continue;
-      pending += invoiceRemaining(inv);
+      if (!invoiceMatchesMonth(inv, widget.selectedMonth)) continue;
+      collected += invoicePaidAmount(inv);
+      if (isOpenUnpaidInvoice(inv)) {
+        outstanding += invoiceRemaining(inv);
+      }
     }
-    return pending;
+    final totalExpected = collected + outstanding;
+    return _CollectionMonthStats(
+      collected: collected,
+      outstanding: outstanding,
+      totalExpected: totalExpected,
+    );
+  }
+
+  /// Tenants with an unpaid invoice due within the next 7 days.
+  _DueThisWeekSummary _dueThisWeek(List<_TenantPaymentGroup> allGroups) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final weekEnd = today.add(const Duration(days: 7));
+    var amount = 0.0;
+    var tenants = 0;
+
+    for (final g in allGroups) {
+      if (g.grandTotalPending <= 0.009) continue;
+      var dueHere = 0.0;
+      for (final inv in g.invoices) {
+        if (!isOpenUnpaidInvoice(inv)) continue;
+        final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
+        if (raw == null) continue;
+        final d = DateTime.tryParse(raw)?.toLocal();
+        if (d == null) continue;
+        final day = DateTime(d.year, d.month, d.day);
+        if (!day.isBefore(today) && day.isBefore(weekEnd)) {
+          dueHere += invoiceRemaining(inv);
+        }
+      }
+      if (dueHere > 0.009) {
+        amount += dueHere;
+        tenants += 1;
+      }
+    }
+    return _DueThisWeekSummary(amount: amount, tenantCount: tenants);
+  }
+
+  Future<void> _sendDueReminders(List<_TenantPaymentGroup> allGroups) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final weekEnd = today.add(const Duration(days: 7));
+    final targets = <_TenantPaymentGroup>[];
+
+    for (final g in allGroups) {
+      if (g.grandTotalPending <= 0.009) continue;
+      final hasDue = g.invoices.any((inv) {
+        if (!isOpenUnpaidInvoice(inv)) return false;
+        final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
+        if (raw == null) return false;
+        final d = DateTime.tryParse(raw)?.toLocal();
+        if (d == null) return false;
+        final day = DateTime(d.year, d.month, d.day);
+        return !day.isBefore(today) && day.isBefore(weekEnd);
+      });
+      if (hasDue) targets.add(g);
+    }
+
+    if (targets.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No dues falling due this week')),
+      );
+      return;
+    }
+
+    // Open WhatsApp for the first due tenant; others noted in snackbar.
+    final first = targets.first;
+    await sendWhatsAppReminder(
+      context,
+      phone: first.phone,
+      name: first.name,
+      amount: first.grandTotalPending,
+    );
+    if (!mounted) return;
+    if (targets.length > 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Opened reminder for ${first.name}. '
+            '${targets.length - 1} more tenant(s) due this week.',
+          ),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final invoicesAsync = ref.watch(invoicesProvider(widget.propertyId));
-    final receivedAsync =
-        ref.watch(receivedThisMonthProvider(widget.propertyId));
     final baseUrl = ref.watch(tenancyRepositoryProvider).baseUrl;
-    final receivedThisMonth = receivedAsync.maybeWhen(
-      data: (v) => v,
-      orElse: () => 0.0,
-    );
 
     return invoicesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -163,96 +269,114 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
         ),
       ),
       data: (invoices) {
-        final outstanding = _totalOutstanding(invoices);
-        final groups = _filterGroups(_groupByTenant(invoices));
+        final monthStats = _monthStats(invoices);
+        final allGroups = _groupByTenant(invoices);
+        final visible = _applyFilters(allGroups);
         final hasAnyInvoices = invoices.isNotEmpty;
+
+        final pendingCount = allGroups
+            .where((g) =>
+                g.displayStatus == 'pending' || g.displayStatus == 'partial')
+            .length;
+        final paidCount =
+            allGroups.where((g) => g.displayStatus == 'paid').length;
+        final overdueCount =
+            allGroups.where((g) => g.displayStatus == 'overdue').length;
+        final dueWeek = _dueThisWeek(allGroups);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _CashflowCards(
-                outstanding: outstanding,
-                receivedThisMonth: receivedThisMonth,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _searchQuery = v),
-                decoration: InputDecoration(
-                  hintText: 'Search tenant, room or amount...',
-                  hintStyle: TextStyle(
-                    color: AppColors.slate.withValues(alpha: 0.8),
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.search,
-                    color: AppColors.slate,
-                    size: 20,
-                  ),
-                  filled: true,
-                  fillColor: AppColors.canvas,
-                  contentPadding: EdgeInsets.zero,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppColors.hairline),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: _accent, width: 1.2),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12),
-              child: _TableHeaderRow(),
-            ),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refresh,
-                child: groups.isNotEmpty
-                    ? ListView.separated(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.only(top: 4, bottom: 16),
-                        itemCount: groups.length,
-                        separatorBuilder: (_, __) => const Divider(
-                          height: 1,
-                          thickness: 1,
-                          color: AppColors.hairline,
-                          indent: 12,
-                          endIndent: 12,
-                        ),
-                        itemBuilder: (context, i) {
-                          final g = groups[i];
-                          return _TenantLedgerListRow(
-                            group: g,
-                            baseUrl: baseUrl,
-                            onPay: () => _openLedger(g, invoices),
-                            onRowTap: () => _openLedger(g, invoices),
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _CollectionProgressBanner(stats: monthStats),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _SearchFilterRow(
+                        controller: _searchController,
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                        onFilterTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Use status chips to filter'),
+                            ),
                           );
                         },
-                      )
-                    : ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: [
-                          SizedBox(
-                            height: MediaQuery.of(context).size.height * 0.35,
-                            child: _EmptyLiveCollection(
-                              onCreate: _openNewInvoice,
-                              hasAnyInvoices: hasAnyInvoices,
-                              searching: _searchQuery.trim().isNotEmpty,
-                            ),
-                          ),
-                        ],
                       ),
+                    ),
+                    const SizedBox(height: 10),
+                    _StatusFilterPills(
+                      allCount: allGroups.length,
+                      pendingCount: pendingCount,
+                      paidCount: paidCount,
+                      overdueCount: overdueCount,
+                      selected: _filter,
+                      onSelected: (f) => setState(() => _filter = f),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: _TableHeaderRow(),
+                    ),
+                    if (visible.isEmpty)
+                      SizedBox(
+                        height: 220,
+                        child: _EmptyLiveCollection(
+                          onCreate: _openNewInvoice,
+                          hasAnyInvoices: hasAnyInvoices,
+                          searching: _searchQuery.trim().isNotEmpty,
+                        ),
+                      )
+                    else
+                      for (var i = 0; i < visible.length; i++) ...[
+                        if (i > 0)
+                          const Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: AppColors.hairline,
+                            indent: 12,
+                            endIndent: 12,
+                          ),
+                        _TenantLedgerListRow(
+                          group: visible[i],
+                          baseUrl: baseUrl,
+                          onPay: () => _openLedger(visible[i], invoices),
+                          onRowTap: () => _openLedger(visible[i], invoices),
+                          onWhatsApp: () => sendWhatsAppReminder(
+                            context,
+                            phone: visible[i].phone,
+                            name: visible[i].name,
+                            amount: visible[i].grandTotalPending > 0
+                                ? visible[i].grandTotalPending
+                                : visible[i].totalBilled,
+                          ),
+                        ),
+                      ],
+                  ],
+                ),
+              ),
+            ),
+            SafeArea(
+              top: false,
+              minimum: EdgeInsets.zero,
+              child: _DueThisWeekBanner(
+                summary: dueWeek,
+                onTap: () {
+                  final dueGroups = allGroups.where((g) {
+                    return _dueThisWeek([g]).tenantCount > 0;
+                  }).toList();
+                  if (dueGroups.isNotEmpty) {
+                    _openLedger(dueGroups.first, invoices);
+                  }
+                },
+                onSendReminders: () => _sendDueReminders(allGroups),
               ),
             ),
           ],
@@ -262,40 +386,279 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
   }
 }
 
-class _CashflowCards extends StatelessWidget {
-  final double outstanding;
-  final double receivedThisMonth;
+class _DueThisWeekSummary {
+  final double amount;
+  final int tenantCount;
 
-  const _CashflowCards({
+  const _DueThisWeekSummary({
+    required this.amount,
+    required this.tenantCount,
+  });
+}
+
+class _CollectionMonthStats {
+  final double collected;
+  final double outstanding;
+  final double totalExpected;
+
+  const _CollectionMonthStats({
+    required this.collected,
     required this.outstanding,
-    required this.receivedThisMonth,
+    required this.totalExpected,
+  });
+
+  double get progress {
+    if (totalExpected <= 0) return 0;
+    return (collected / totalExpected).clamp(0.0, 1.0);
+  }
+}
+
+// ── Unified collection progress banner ──────────────────────────────────
+
+class _CollectionProgressBanner extends StatelessWidget {
+  final _CollectionMonthStats stats;
+
+  const _CollectionProgressBanner({required this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (stats.progress * 100).round();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.hairline),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 60,
+              height: 60,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 60,
+                    height: 60,
+                    child: CircularProgressIndicator(
+                      value: stats.progress,
+                      strokeWidth: 8,
+                      color: _accent,
+                      backgroundColor: Colors.grey.shade200,
+                      strokeCap: StrokeCap.round,
+                    ),
+                  ),
+                  Text(
+                    '$pct%',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      'Collection Progress',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: billingCurrency.format(stats.collected),
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          TextSpan(
+                            text:
+                                ' / ${billingCurrency.format(stats.totalExpected)}',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        const Text(
+                          'Collected',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.positive,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Total Expected',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            VerticalDivider(
+              color: Colors.grey.shade300,
+              width: 20,
+              thickness: 1,
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        billingCurrency.format(stats.outstanding),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFDC2626),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Outstanding',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: Colors.black54,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Search + chips ──────────────────────────────────────────────────────
+
+class _SearchFilterRow extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onFilterTap;
+
+  const _SearchFilterRow({
+    required this.controller,
+    required this.onChanged,
+    required this.onFilterTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final nowLabel = DateFormat('MMMM').format(DateTime.now());
     return Row(
       children: [
         Expanded(
-          child: _SummaryTile(
-            label: 'Total Outstanding',
-            value: billingCurrency.format(outstanding),
-            subtitle: 'Unpaid across all invoices',
-            valueColor:
-                outstanding > 0 ? AppColors.danger : AppColors.positive,
-            icon: Icons.warning_amber_rounded,
-            iconColor: AppColors.danger,
+          child: TextField(
+            controller: controller,
+            onChanged: onChanged,
+            decoration: InputDecoration(
+              hintText: 'Search tenant, room or amount...',
+              hintStyle: TextStyle(
+                color: AppColors.slate.withValues(alpha: 0.8),
+                fontSize: 13,
+              ),
+              prefixIcon: const Icon(
+                Icons.search,
+                color: AppColors.slate,
+                size: 20,
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: EdgeInsets.zero,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppColors.hairline),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _accent, width: 1.2),
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 10),
-        Expanded(
-          child: _SummaryTile(
-            label: 'Received This Month',
-            value: billingCurrency.format(receivedThisMonth),
-            subtitle: nowLabel,
-            valueColor: AppColors.positive,
-            icon: Icons.payments_outlined,
-            iconColor: AppColors.positive,
+        Material(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: AppColors.hairline),
+          ),
+          child: InkWell(
+            onTap: onFilterTap,
+            borderRadius: BorderRadius.circular(10),
+            child: const SizedBox(
+              width: 48,
+              height: 48,
+              child: Icon(Icons.tune, color: AppColors.slate, size: 20),
+            ),
           ),
         ),
       ],
@@ -303,71 +666,55 @@ class _CashflowCards extends StatelessWidget {
   }
 }
 
-class _SummaryTile extends StatelessWidget {
-  final String label;
-  final String value;
-  final String subtitle;
-  final Color valueColor;
-  final IconData icon;
-  final Color iconColor;
+class _StatusFilterPills extends StatelessWidget {
+  final int allCount;
+  final int pendingCount;
+  final int paidCount;
+  final int overdueCount;
+  final _StatusFilter selected;
+  final ValueChanged<_StatusFilter> onSelected;
 
-  const _SummaryTile({
-    required this.label,
-    required this.value,
-    required this.subtitle,
-    required this.valueColor,
-    required this.icon,
-    required this.iconColor,
+  const _StatusFilterPills({
+    required this.allCount,
+    required this.pendingCount,
+    required this.paidCount,
+    required this.overdueCount,
+    required this.selected,
+    required this.onSelected,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: iconColor),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.slate,
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
-            ],
+          _FilterPill(
+            label: 'All ($allCount)',
+            selected: selected == _StatusFilter.all,
+            onTap: () => onSelected(_StatusFilter.all),
           ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: valueColor,
-                ),
+          const SizedBox(width: 8),
+          _FilterPill(
+            label: 'Pending ($pendingCount)',
+            dotColor: AppColors.caution,
+            selected: selected == _StatusFilter.pending,
+            onTap: () => onSelected(_StatusFilter.pending),
           ),
-          const SizedBox(height: 2),
-          Text(
-            subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontSize: 11,
-                ),
+          const SizedBox(width: 8),
+          _FilterPill(
+            label: 'Paid ($paidCount)',
+            dotColor: AppColors.positive,
+            selected: selected == _StatusFilter.paid,
+            onTap: () => onSelected(_StatusFilter.paid),
+          ),
+          const SizedBox(width: 8),
+          _FilterPill(
+            label: 'Overdue ($overdueCount)',
+            dotColor: AppColors.danger,
+            selected: selected == _StatusFilter.overdue,
+            onTap: () => onSelected(_StatusFilter.overdue),
           ),
         ],
       ),
@@ -375,24 +722,79 @@ class _SummaryTile extends StatelessWidget {
   }
 }
 
+class _FilterPill extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color? dotColor;
+  final VoidCallback onTap;
+
+  const _FilterPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.dotColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? _accent : Colors.white,
+      shape: StadiumBorder(
+        side: BorderSide(color: selected ? _accent : AppColors.hairline),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const StadiumBorder(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (dotColor != null && !selected) ...[
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration:
+                      BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : AppColors.ink,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Table ───────────────────────────────────────────────────────────────
+
 class _TableHeaderRow extends StatelessWidget {
   const _TableHeaderRow();
 
   @override
   Widget build(BuildContext context) {
     const style = TextStyle(
-      fontSize: 12,
+      fontSize: 11,
       color: AppColors.slate,
       fontWeight: FontWeight.w500,
     );
     return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text('Tenant', style: style)),
-          Expanded(flex: 2, child: Text('Dues', style: style)),
-          Expanded(flex: 2, child: Text('Amount', style: style)),
-          Expanded(flex: 2, child: Text('Actions', style: style)),
+          Expanded(child: Text('Tenant', style: style)),
+          Text('Dues / Amount', style: style),
+          SizedBox(width: 12),
+          Text('Actions', style: style),
         ],
       ),
     );
@@ -437,35 +839,74 @@ class _TenantPaymentGroup {
     return sum;
   }
 
-  int get unpaidMonthCount {
-    final months = <String>{};
+  double get totalBilled =>
+      invoices.fold<double>(0, (s, i) => s + invoiceTotalAmount(i));
+
+  List<DateTime> get unpaidMonths {
+    final months = <String, DateTime>{};
     for (final inv in invoices) {
       if (invoiceStatus(inv) == 'paid') continue;
       if (invoiceRemaining(inv) <= 0.009) continue;
       final d = invoiceMonthDate(inv);
       if (d != null) {
-        months.add(
-          '${d.year}-${d.month.toString().padLeft(2, '0')}',
-        );
+        months['${d.year}-${d.month}'] = d;
       }
     }
-    return months.isEmpty
-        ? invoices.where((i) => invoiceStatus(i) != 'paid').length
-        : months.length;
+    final list = months.values.toList()..sort();
+    return list;
   }
 
-  bool get hasOverdue =>
-      invoices.any((i) => invoiceStatus(i) == 'overdue');
+  int get unpaidMonthCount {
+    final n = unpaidMonths.length;
+    if (n > 0) return n;
+    return invoices.where((i) => invoiceStatus(i) != 'paid').length;
+  }
+
+  String get duesTitle {
+    final n = unpaidMonthCount;
+    if (displayStatus == 'paid') {
+      return '${invoices.length} paid';
+    }
+    return '$n month${n == 1 ? '' : 's'}';
+  }
+
+  String get duesSubtitle {
+    if (displayStatus == 'paid') return 'Cleared';
+    final labels =
+        unpaidMonths.map((d) => DateFormat('MMM').format(d)).toList();
+    if (labels.isEmpty) return '—';
+    return labels.join(', ');
+  }
+
+  bool get hasOverdue => invoices.any((i) => invoiceStatus(i) == 'overdue');
+
+  bool get hasPartial => invoices.any((i) {
+        final s = invoiceStatus(i);
+        return s == 'partial' || s == 'partially_paid';
+      });
 
   String get displayStatus {
     if (hasOverdue) return 'overdue';
-    if (grandTotalPending > 0) return 'pending';
+    if (grandTotalPending > 0.009) {
+      return hasPartial ? 'partial' : 'pending';
+    }
+    if (invoices.any((i) => invoiceStatus(i) == 'paid')) return 'paid';
     return 'pending';
   }
 
-  String get duesSummary {
-    final n = unpaidMonthCount;
-    return '$n unpaid month${n == 1 ? '' : 's'}';
+  String? get phoneDisplay {
+    final raw = phone?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    var digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('0')) {
+      digits = digits.replaceFirst(RegExp(r'^0+'), '');
+    }
+    if (digits.length == 10) return '+91 $digits';
+    if (digits.length == 12 && digits.startsWith('91')) {
+      return '+91 ${digits.substring(2)}';
+    }
+    if (raw.startsWith('+')) return raw;
+    return raw;
   }
 }
 
@@ -474,144 +915,397 @@ class _TenantLedgerListRow extends StatelessWidget {
   final String baseUrl;
   final VoidCallback onPay;
   final VoidCallback onRowTap;
+  final VoidCallback onWhatsApp;
 
   const _TenantLedgerListRow({
     required this.group,
     required this.baseUrl,
     required this.onPay,
     required this.onRowTap,
+    required this.onWhatsApp,
   });
 
   @override
   Widget build(BuildContext context) {
     final photoUrl = resolvePhotoUrl(group.photoUrl, baseUrl);
     final initials = initialsFromName(group.name);
+    final amount = group.grandTotalPending > 0.009
+        ? group.grandTotalPending
+        : group.totalBilled;
+    final amountColor = group.grandTotalPending > 0.009
+        ? const Color(0xFFDC2626)
+        : AppColors.positive;
+    final phone = group.phoneDisplay;
 
     return Material(
-      color: AppColors.surface,
+      color: Colors.white,
       child: InkWell(
         onTap: onRowTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                flex: 3,
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: AppColors.canvas,
-                      backgroundImage:
-                          photoUrl != null ? NetworkImage(photoUrl) : null,
-                      child: photoUrl == null
-                          ? Text(
-                              initials,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: _accent,
-                              ),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _accentSoft,
+                    backgroundImage:
+                        photoUrl != null ? NetworkImage(photoUrl) : null,
+                    child: photoUrl == null
+                        ? Text(
+                            initials,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: _accent,
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          group.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          group.roomLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.slate,
+                          ),
+                        ),
+                        if (phone != null) ...[
+                          const SizedBox(height: 1),
                           Text(
-                            group.name,
+                            phone,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.ink,
+                              fontSize: 11,
+                              color: AppColors.slate,
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            group.roomLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(fontSize: 12),
-                          ),
                         ],
-                      ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  _InvoiceStatusBadge(status: group.displayStatus),
+                ],
               ),
-              Expanded(
-                flex: 2,
-                child: Text(
-                  group.duesSummary,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          group.duesTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        Text(
+                          group.duesSubtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.slate,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    billingCurrency.format(amount),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: amountColor,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  _ActionIcon(
+                    tooltip: 'WhatsApp reminder',
+                    icon: Icons.chat,
+                    color: whatsAppGreen,
+                    onTap: onWhatsApp,
+                  ),
+                  _ActionIcon(
+                    tooltip: 'Pay',
+                    icon: Icons.payments_outlined,
+                    color: AppColors.blueprint,
+                    onTap: onPay,
+                  ),
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: PopupMenuButton<String>(
+                      padding: EdgeInsets.zero,
+                      iconSize: 18,
+                      tooltip: 'More',
+                      icon: const Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: AppColors.slate,
                       ),
-                ),
+                      onSelected: (v) {
+                        if (v == 'ledger') onPay();
+                        if (v == 'whatsapp') onWhatsApp();
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'ledger',
+                          child: Text('View ledger'),
+                        ),
+                        PopupMenuItem(
+                          value: 'whatsapp',
+                          child: Text('WhatsApp reminder'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ActionIcon({
+    required this.tooltip,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+      onPressed: onTap,
+      icon: Icon(icon, size: 18, color: color),
+    );
+  }
+}
+
+class _InvoiceStatusBadge extends StatelessWidget {
+  final String status;
+
+  const _InvoiceStatusBadge({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    late Color bg;
+    late Color fg;
+    late String label;
+
+    switch (status) {
+      case 'paid':
+        bg = AppColors.positive.withValues(alpha: 0.12);
+        fg = AppColors.positive;
+        label = 'Paid';
+      case 'overdue':
+        bg = AppColors.danger.withValues(alpha: 0.12);
+        fg = AppColors.danger;
+        label = 'Overdue';
+      case 'partial':
+        bg = AppColors.caution.withValues(alpha: 0.12);
+        fg = AppColors.caution;
+        label = 'Partial';
+      default:
+        bg = const Color(0xFFFFF7ED);
+        fg = const Color(0xFFD97706);
+        label = 'Pending';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Sticky due banner ───────────────────────────────────────────────────
+
+class _DueThisWeekBanner extends StatelessWidget {
+  final _DueThisWeekSummary summary;
+  final VoidCallback onTap;
+  final VoidCallback onSendReminders;
+
+  const _DueThisWeekBanner({
+    required this.summary,
+    required this.onTap,
+    required this.onSendReminders,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tenantLabel = summary.tenantCount == 0
+        ? 'No dues this week'
+        : '${billingCurrency.format(summary.amount)} from ${summary.tenantCount} tenant${summary.tenantCount == 1 ? '' : 's'}';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      child: Material(
+        color: _accentMuted,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _accent.withValues(alpha: 0.12)),
+          ),
+          child: Row(
+            children: [
               Expanded(
-                flex: 2,
-                child: Text(
-                  billingCurrency.format(group.grandTotalPending),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.danger,
+                child: InkWell(
+                  onTap: summary.tenantCount > 0 ? onTap : null,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.calendar_month_outlined,
+                          size: 18,
+                          color: _accent,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Next due this week',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.slate,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              tenantLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.ink,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (summary.tenantCount > 0)
+                        const Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: AppColors.slate,
+                        ),
+                    ],
                   ),
                 ),
               ),
-              Expanded(
-                flex: 2,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      tooltip: 'WhatsApp reminder',
+              const SizedBox(width: 4),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: onSendReminders,
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: _accent,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
                       visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      onPressed: () => sendWhatsAppReminder(
-                        context,
-                        phone: group.phone,
-                        name: group.name,
-                        amount: group.grandTotalPending,
-                      ),
-                      icon: const Icon(
-                        Icons.chat,
-                        size: 18,
-                        color: whatsAppGreen,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Pay / ledger',
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      onPressed: onPay,
-                      icon: const Icon(
-                        Icons.payments_outlined,
-                        size: 18,
-                        color: AppColors.blueprint,
+                    icon: const Icon(Icons.send_outlined, size: 15),
+                    label: const Text(
+                      'Send Reminders',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -639,12 +1333,12 @@ class _EmptyLiveCollection extends StatelessWidget {
         ? 'No invoices found'
         : searching
             ? 'No matching tenants'
-            : 'No outstanding dues';
+            : 'No tenants in this filter';
     final subtitle = !hasAnyInvoices
         ? 'Create your first invoice to start collecting.'
         : searching
             ? 'Try a different search.'
-            : 'All tenants are paid up.';
+            : 'Try another status chip.';
 
     return Center(
       child: Padding(

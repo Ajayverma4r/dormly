@@ -8,11 +8,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/presentation/login_flow.dart';
 import '../../staff/presentation/staff_list_screen.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../reports/presentation/reports_screen.dart';
 import '../../analytics/presentation/analytics_dashboard_screen.dart';
+
+final _hasTenantContextProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final contexts = await ref.watch(authRepositoryProvider).listContexts();
+  return contexts.any((c) => c['role']?.toString() == 'tenant');
+});
 
 class PropertyMoreScreen extends ConsumerWidget {
   final String propertyId;
@@ -30,6 +36,7 @@ class PropertyMoreScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isOwnerOrAdmin = role == 'owner' || role == 'admin';
     final canManage = isOwnerOrAdmin || role == 'manager';
+    final hasTenantContext = ref.watch(_hasTenantContextProvider).valueOrNull ?? false;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Menu')),
@@ -50,6 +57,16 @@ class PropertyMoreScreen extends ConsumerWidget {
             Icons.person_outline,
             () => context.push('/profile'),
           ),
+          if (hasTenantContext) ...[
+            const SizedBox(height: 10),
+            _tile(
+              context,
+              'Switch to Tenant View',
+              'Open your resident portal',
+              Icons.home_outlined,
+              () => switchWorkspaceRole(context, ref, toTenant: true),
+            ),
+          ],
           if (isOwnerOrAdmin) ...[
             const SizedBox(height: 10),
             _tile(

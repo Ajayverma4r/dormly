@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../data/tenant_portal_repository.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/presentation/login_flow.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../complaints/data/complaints_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -19,12 +20,21 @@ final myComplaintsProvider = FutureProvider.autoDispose<List<Map<String, dynamic
   return ref.watch(complaintsRepositoryProvider).myComplaints();
 });
 
+final _hasOwnerContextProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final contexts = await ref.watch(authRepositoryProvider).listContexts();
+  return contexts.any((c) {
+    final role = c['role']?.toString();
+    return role == 'owner' || role == 'admin' || role == 'manager';
+  });
+});
+
 class TenantDashboardScreen extends ConsumerWidget {
   const TenantDashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tenancyAsync = ref.watch(myTenancyProvider);
+    final hasOwnerContext = ref.watch(_hasOwnerContextProvider).valueOrNull ?? false;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
@@ -33,6 +43,11 @@ class TenantDashboardScreen extends ConsumerWidget {
         elevation: 0,
         title: const Text('My Home', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w800)),
         actions: [
+          if (hasOwnerContext)
+            TextButton(
+              onPressed: () => switchWorkspaceRole(context, ref, toTenant: false),
+              child: const Text('Owner View'),
+            ),
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.black54),
             tooltip: 'Logout',
@@ -51,6 +66,15 @@ class TenantDashboardScreen extends ConsumerWidget {
             padding: const EdgeInsets.all(20),
             children: [
               Text('Welcome, ${t['full_name']} 👋', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              if (hasOwnerContext) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      switchWorkspaceRole(context, ref, toTenant: false),
+                  icon: const Icon(Icons.business_center_outlined),
+                  label: const Text('Switch to Owner View'),
+                ),
+              ],
               const SizedBox(height: 20),
 
               _sectionCard(
@@ -223,7 +247,7 @@ class TenantDashboardScreen extends ConsumerWidget {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: statusColor.withOpacity(0.15),
+                                  color: statusColor.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
