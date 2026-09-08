@@ -43,8 +43,8 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   });
 
   static const _canvas = Color(0xFFF8F9FB);
-  static const _heroStart = AppColors.primaryDark;
-  static const _heroEnd = AppColors.primary;
+  static const _heroStart = Color(0xFF4A6CF7);
+  static const _heroEnd = Color(0xFF6A5AE0);
   static const _brandPurple = AppColors.primary;
 
   String _greeting() {

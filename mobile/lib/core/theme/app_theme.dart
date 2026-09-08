@@ -5,6 +5,7 @@
 // Inter carries body and captions.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppColors {
@@ -17,6 +18,10 @@ class AppColors {
   static const primaryMuted = Color(0xFFEDE4FF);
   static const primaryDark = Color(0xFF5B21B6);
 
+  /// Logo / splash blue — not the app primary (which is Payments purple).
+  static const logoBlue = Color(0xFF2451B4);
+  static const logoBlueDark = Color(0xFF1A3A8F);
+
   /// Brand primary — kept as an alias for existing call sites.
   static const blueprint = primary;
   static const positive = Color(0xFF1F9D55);
@@ -26,6 +31,16 @@ class AppColors {
 }
 
 class AppTheme {
+  static const systemUi = SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: Colors.white,
+    systemNavigationBarIconBrightness: Brightness.dark,
+    systemNavigationBarDividerColor: Colors.transparent,
+    systemNavigationBarContrastEnforced: true,
+  );
+
   static ThemeData get light {
     final base = ThemeData(useMaterial3: true, brightness: Brightness.light);
     final headlineFont = GoogleFonts.sora();
@@ -56,6 +71,7 @@ class AppTheme {
         foregroundColor: AppColors.ink,
         centerTitle: false,
         titleTextStyle: headlineFont.copyWith(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.ink),
+        systemOverlayStyle: AppTheme.systemUi,
       ),
       dividerTheme: const DividerThemeData(color: AppColors.hairline, thickness: 1, space: 1),
       elevatedButtonTheme: ElevatedButtonThemeData(

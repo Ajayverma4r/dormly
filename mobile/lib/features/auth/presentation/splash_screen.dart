@@ -82,17 +82,21 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light.copyWith(
+      value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        systemNavigationBarColor: AppColors.blueprint,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarDividerColor: Colors.transparent,
       ),
       child: Scaffold(
-        backgroundColor: AppColors.blueprint,
+        backgroundColor: AppColors.logoBlue,
         body: Container(
           width: double.infinity,
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [AppColors.primaryDark, AppColors.blueprint],
+              colors: [AppColors.logoBlueDark, AppColors.logoBlue],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),

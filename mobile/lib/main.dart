@@ -2,6 +2,7 @@
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,6 +13,8 @@ import 'core/routing/app_router.dart';
 void main() async {
   // Must be the very first call — required before any plugin or binding access.
   WidgetsFlutterBinding.ensureInitialized();
+
+  SystemChrome.setSystemUIOverlayStyle(AppTheme.systemUi);
 
   // Prevent google_fonts from making live HTTP calls to fonts.googleapis.com
   // in release builds. Falls back to system fonts if not already cached —
@@ -51,6 +54,12 @@ class DormlyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       routerConfig: appRouter,
+      builder: (context, child) {
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: AppTheme.systemUi,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
   }
 }
