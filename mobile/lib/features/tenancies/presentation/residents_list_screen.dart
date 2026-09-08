@@ -9,7 +9,7 @@ import 'node_detail_screen.dart';
 enum _GuestStatusFilter { all, active, due, checkedOut }
 
 const _pageSize = 10;
-const _accent = Color(0xFF7C3AED);
+const _accent = AppColors.blueprint;
 
 final propertyResidentsProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, String>(
@@ -53,14 +53,12 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
   }
 
   Future<void> _openAddGuest() async {
-    final created = await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => AddTenantScreen(propertyId: widget.propertyId),
       ),
     );
-    if (created == true) {
-      ref.invalidate(propertyResidentsProvider(widget.propertyId));
-    }
+    ref.invalidate(propertyResidentsProvider(widget.propertyId));
   }
 
   Future<void> _openGuestDetail(Map<String, dynamic> r) async {
@@ -81,13 +79,11 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
         (r['level_name'] ?? r['levelName'])?.toString() ?? 'Room';
 
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => NodeDetailScreen(
-          propertyId: widget.propertyId,
-          nodeId: nodeId,
-          nodeName: nodeName,
-          levelName: levelName,
-        ),
+      NodeDetailScreen.route(
+        propertyId: widget.propertyId,
+        nodeId: nodeId,
+        nodeName: nodeName,
+        levelName: levelName,
       ),
     );
     ref.invalidate(propertyResidentsProvider(widget.propertyId));
@@ -521,10 +517,10 @@ class _TableHeaderRow extends StatelessWidget {
       color: AppColors.slate,
       fontWeight: FontWeight.w500,
     );
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 8),
       child: Row(
-        children: const [
+        children: [
           Expanded(flex: 4, child: Text('Guest', style: style)),
           Expanded(flex: 2, child: Text('Room', style: style)),
           Expanded(flex: 3, child: Text('Floor', style: style)),

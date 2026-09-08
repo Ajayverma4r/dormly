@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../tenancies/data/tenancy_repository.dart';
 import '../data/billing_repository.dart';
+import 'billing_providers.dart';
 
 class CreateInvoiceScreen extends ConsumerStatefulWidget {
   final String propertyId;
@@ -16,11 +18,31 @@ class CreateInvoiceScreen extends ConsumerStatefulWidget {
   /// Optional seed from list/ledger; full invoice with line items is fetched.
   final Map<String, dynamic>? invoice;
 
+  /// Tenancy to pre-select in the tenant dropdown (onboarding after Add Tenant).
+  final String? preSelectedTenantId;
+
+  /// Display name used if the new tenancy is not in the list yet.
+  final String? preSelectedTenantName;
+
+  /// Room/unit id the new tenant was assigned to.
+  final String? roomId;
+
+  /// Room/unit label for the dropdown while the tenancy list catches up.
+  final String? preSelectedRoomName;
+
+  /// When true, Skip / successful create return to Room details.
+  final bool isFromOnboarding;
+
   const CreateInvoiceScreen({
     super.key,
     required this.propertyId,
     this.invoiceId,
     this.invoice,
+    this.preSelectedTenantId,
+    this.preSelectedTenantName,
+    this.roomId,
+    this.preSelectedRoomName,
+    this.isFromOnboarding = false,
   });
 
   bool get isEditMode => invoiceId != null && invoiceId!.isNotEmpty;
@@ -184,10 +206,16 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
       if (widget.isEditMode) {
         await _loadExistingInvoice();
+      } else {
+        _ensurePreselectedTenant();
       }
 
       if (!mounted) return;
       setState(() => _loading = false);
+
+      if (!widget.isEditMode && widget.preSelectedTenantId != null) {
+        await _onTenantSelected(widget.preSelectedTenantId);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -367,6 +395,31 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
       if (t['id']?.toString() == tenancyId) return t;
     }
     return null;
+  }
+
+  void _ensurePreselectedTenant() {
+    final id = widget.preSelectedTenantId;
+    if (id == null || id.isEmpty) return;
+    if (_tenancyById(id) != null) return;
+    _tenancies = [
+      {
+        'id': id,
+        'full_name': widget.preSelectedTenantName ?? 'Tenant',
+        'node_name': widget.preSelectedRoomName ?? '—',
+        'node_id': widget.roomId,
+        'nodeId': widget.roomId,
+        'status': 'active',
+      },
+      ..._tenancies,
+    ];
+  }
+
+  void _returnToRoomDetails() {
+    ref.invalidate(invoicesProvider(widget.propertyId));
+    Navigator.of(context).popUntil((route) {
+      // Keep in sync with NodeDetailScreen.routeName.
+      return route.settings.name == 'node-detail' || route.isFirst;
+    });
   }
 
   String _hintForCharge(Map<String, dynamic> charge) {
@@ -770,7 +823,12 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           lineItems: lineItems,
         );
       }
-      if (mounted) Navigator.of(context).pop(true);
+      if (!mounted) return;
+      if (widget.isFromOnboarding) {
+        _returnToRoomDetails();
+      } else {
+        Navigator.of(context).pop(true);
+      }
     } catch (e) {
       setState(() => _error = _friendlySaveError(e));
     } finally {
@@ -805,8 +863,29 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.isEditMode;
-    return Scaffold(
-      appBar: AppBar(title: Text(isEdit ? 'Edit Invoice' : 'New Invoice')),
+    return PopScope(
+      canPop: !widget.isFromOnboarding || isEdit,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !widget.isFromOnboarding) return;
+        _returnToRoomDetails();
+      },
+      child: Scaffold(
+      appBar: AppBar(
+        title: Text(isEdit ? 'Edit Invoice' : 'New Invoice'),
+        actions: [
+          if (widget.isFromOnboarding && !isEdit)
+            TextButton(
+              onPressed: _returnToRoomDetails,
+              child: Text(
+                'Skip',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -829,14 +908,19 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
                       ),
                     ),
                     items: _tenancies
-                        .map(
-                          (t) => DropdownMenuItem<String>(
-                            value: t['id'],
+                        .map((t) {
+                          final id = t['id']?.toString();
+                          if (id == null || id.isEmpty) {
+                            return null;
+                          }
+                          return DropdownMenuItem<String>(
+                            value: id,
                             child: Text(
                               '${t['full_name']} — ${t['node_name']}',
                             ),
-                          ),
-                        )
+                          );
+                        })
+                        .whereType<DropdownMenuItem<String>>()
                         .toList(),
                     onChanged: isEdit ? null : _onTenantSelected,
                   ),
@@ -1061,7 +1145,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
                   height: 54,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2B5CFF),
+                      backgroundColor: AppColors.blueprint,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
@@ -1080,6 +1164,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
                 ),
               ],
             ),
+      ),
     );
   }
 }

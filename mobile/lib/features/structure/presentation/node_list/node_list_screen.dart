@@ -124,6 +124,7 @@ class NodeListScreen extends ConsumerWidget {
     );
 
     if (action == 'rename') {
+      if (!context.mounted) return;
       final controller = TextEditingController(text: node['name']);
       final newName = await showDialog<String>(
         context: context,
@@ -147,6 +148,7 @@ class NodeListScreen extends ConsumerWidget {
         }
       }
     } else if (action == 'delete') {
+      if (!context.mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -179,13 +181,11 @@ class NodeListScreen extends ConsumerWidget {
     final children = _childLevels;
 if (children.isEmpty) {
       final refreshed = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(
-          builder: (context) => NodeDetailScreen(
-            propertyId: propertyId,
-            nodeId: node['id'],
-            nodeName: node['name'],
-            levelName: level.displayName.toLowerCase(),
-          ),
+        NodeDetailScreen.route(
+          propertyId: propertyId,
+          nodeId: node['id'],
+          nodeName: node['name'],
+          levelName: level.displayName.toLowerCase(),
         ),
       );
       if (refreshed == true) {
@@ -369,6 +369,7 @@ if (children.isEmpty) {
                 [];
             final entitlements = ref.read(entitlementsProvider);
             if (!entitlements.hasQuota('max_rooms', nodes.length)) {
+              if (!context.mounted) return;
               Navigator.of(context).push(
                 MaterialPageRoute(
             builder: (_) => const PaywallScreen(

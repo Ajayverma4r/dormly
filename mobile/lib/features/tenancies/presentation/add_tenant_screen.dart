@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../billing/presentation/create_invoice_screen.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
@@ -83,7 +85,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
     });
 
     try {
-      await ref.read(tenancyRepositoryProvider).create(
+      final created = await ref.read(tenancyRepositoryProvider).create(
             widget.propertyId,
             nodeId: _selectedNodeId!,
             phone: _normalizePhone(_phoneController.text.trim()),
@@ -106,12 +108,39 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                 ? null
                 : _notesController.text.trim(),
           );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Tenant added successfully')),
-        );
+      if (!mounted) return;
+
+      final tenancyId = created['id']?.toString() ?? '';
+      final tenantName = _nameController.text.trim();
+      final roomId = _selectedNodeId!;
+      final units =
+          ref.read(assignableUnitsProvider(widget.propertyId)).valueOrNull;
+      final selectedUnit =
+          units?.where((u) => u.nodeId == roomId).firstOrNull;
+
+      ref.invalidate(assignableUnitsProvider(widget.propertyId));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tenant added successfully')),
+      );
+
+      if (tenancyId.isEmpty) {
         Navigator.of(context).pop(true);
+        return;
       }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CreateInvoiceScreen(
+            propertyId: widget.propertyId,
+            preSelectedTenantId: tenancyId,
+            preSelectedTenantName: tenantName,
+            roomId: roomId,
+            preSelectedRoomName: selectedUnit?.pathLabel,
+            isFromOnboarding: true,
+          ),
+        ),
+      );
     } catch (e) {
       final message = tenancyErrorMessage(e);
       setState(() => _error = message);
@@ -294,7 +323,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                 height: 54,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2B5CFF),
+                    backgroundColor: AppColors.blueprint,
                     disabledBackgroundColor: Colors.grey.shade300,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16)),

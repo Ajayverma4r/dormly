@@ -364,7 +364,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
           height: 54,
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2B5CFF),
+              backgroundColor: AppColors.blueprint,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             ),
             onPressed: _loadingTemplate ? null : _goToConfigureStep,
@@ -408,7 +408,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
               width: double.infinity, height: 54,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2B5CFF),
+                  backgroundColor: AppColors.blueprint,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
                 onPressed: _creating ? null : _createProperty,
@@ -494,7 +494,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
             height: 54,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2B5CFF),
+                backgroundColor: AppColors.blueprint,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
               onPressed: () => setState(() => _step = 2),
@@ -559,7 +559,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
             height: 54,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2B5CFF),
+                backgroundColor: AppColors.blueprint,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
               onPressed: _creating ? null : _createProperty,
@@ -632,7 +632,7 @@ class _SuccessScreen extends StatelessWidget {
                 width: double.infinity, height: 54,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2B5CFF),
+                    backgroundColor: AppColors.blueprint,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () => context.go('/dashboard/${property['id']}', extra: {'propertyName': property['name']}),

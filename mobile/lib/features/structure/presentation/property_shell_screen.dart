@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/network/network_error.dart';
 import '../../properties/data/properties_repository.dart';
 import '../../properties/domain/property_monetization.dart';
 import '../../subscription/presentation/paywall_screen.dart';
@@ -76,14 +77,27 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
     return roleAsync.when(
       loading: () =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (err, _) =>
-          Scaffold(body: Center(child: Text('Something went wrong: $err'))),
+      error: (err, _) => Scaffold(
+        body: DormlyLoadError(
+          error: err,
+          onRetry: () {
+            ref.invalidate(contextRoleProvider);
+            ref.invalidate(propertyDetailProvider(widget.propertyId));
+          },
+        ),
+      ),
       data: (role) {
         return propertyAsync.when(
           loading: () =>
               const Scaffold(body: Center(child: CircularProgressIndicator())),
-          error: (err, _) =>
-              Scaffold(body: Center(child: Text('Something went wrong: $err'))),
+          error: (err, _) => Scaffold(
+            body: DormlyLoadError(
+              error: err,
+              onRetry: () {
+                ref.invalidate(propertyDetailProvider(widget.propertyId));
+              },
+            ),
+          ),
           data: (property) {
             final locked = !isPaid &&
                 (property['is_locked'] == true ||
@@ -201,7 +215,7 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                 selectedIndex: _index,
                 onDestinationSelected: _goToTab,
                 backgroundColor: AppColors.surface,
-                indicatorColor: AppColors.blueprint.withOpacity(0.12),
+                indicatorColor: AppColors.primarySoft,
                 destinations: const [
                   NavigationDestination(
                     icon: Icon(Icons.home_outlined),

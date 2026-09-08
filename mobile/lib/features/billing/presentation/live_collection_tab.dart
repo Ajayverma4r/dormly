@@ -11,9 +11,9 @@ import 'create_invoice_screen.dart';
 import 'tenant_ledger_sheet.dart';
 import 'whatsapp_reminder.dart';
 
-const _accent = Color(0xFF7C3AED);
-const _accentSoft = Color(0xFFF3E8FF);
-const _accentMuted = Color(0xFFEDE4FF);
+const _accent = AppColors.blueprint;
+const _accentSoft = AppColors.primarySoft;
+const _accentMuted = AppColors.primaryMuted;
 
 enum _StatusFilter { all, pending, paid, overdue }
 

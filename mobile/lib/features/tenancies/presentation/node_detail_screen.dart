@@ -51,6 +51,8 @@ final tenancyInvoicesProvider = FutureProvider.autoDispose
 });
 
 class NodeDetailScreen extends ConsumerWidget {
+  static const routeName = 'node-detail';
+
   final String propertyId;
   final String nodeId;
   final String nodeName;
@@ -63,6 +65,23 @@ class NodeDetailScreen extends ConsumerWidget {
     required this.nodeName,
     required this.levelName,
   });
+
+  static MaterialPageRoute<T> route<T>({
+    required String propertyId,
+    required String nodeId,
+    required String nodeName,
+    required String levelName,
+  }) {
+    return MaterialPageRoute<T>(
+      settings: const RouteSettings(name: routeName),
+      builder: (_) => NodeDetailScreen(
+        propertyId: propertyId,
+        nodeId: nodeId,
+        nodeName: nodeName,
+        levelName: levelName,
+      ),
+    );
+  }
 
   Future<void> _renameNode(BuildContext context, WidgetRef ref) async {
     final controller = TextEditingController(text: nodeName);
@@ -247,8 +266,7 @@ class NodeDetailScreen extends ConsumerWidget {
                         const SizedBox(height: 20),
                         ElevatedButton.icon(
                           onPressed: () async {
-                            final created =
-                                await Navigator.of(context).push<bool>(
+                            await Navigator.of(context).push<bool>(
                               MaterialPageRoute(
                                 builder: (context) => AddTenantScreen(
                                   propertyId: propertyId,
@@ -256,10 +274,10 @@ class NodeDetailScreen extends ConsumerWidget {
                                 ),
                               ),
                             );
-                            if (created == true) {
-                              ref.invalidate(
-                                  tenanciesForNodeProvider((propertyId, nodeId)));
-                            }
+                            ref.invalidate(
+                                tenanciesForNodeProvider((propertyId, nodeId)));
+                            ref.invalidate(invoicesProvider(propertyId));
+                            ref.invalidate(tenancyInvoicesProvider);
                           },
                           icon: const Icon(Icons.person_add_outlined),
                           label: const Padding(

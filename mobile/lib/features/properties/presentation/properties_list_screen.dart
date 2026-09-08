@@ -14,6 +14,7 @@ import '../../subscription/presentation/subscription_provider.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../subscription/presentation/widgets/quota_warning_banner.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
+import '../../../core/theme/app_theme.dart';
 
 final myPropertiesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
   final authRepo = ref.read(authRepositoryProvider);
@@ -142,7 +143,7 @@ class PropertiesListScreen extends ConsumerWidget {
                               ),
                               const SizedBox(height: 20),
                               ElevatedButton(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2B5CFF)),
+                                style: ElevatedButton.styleFrom(backgroundColor: AppColors.blueprint),
                                 onPressed: () => context.push('/onboarding/create-property'),
                                 child: const Padding(
                                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -180,12 +181,12 @@ class PropertiesListScreen extends ConsumerWidget {
                               leading: CircleAvatar(
                                 backgroundColor: locked
                                     ? const Color(0xFFFFF7ED)
-                                    : const Color(0xFFEFF2FF),
+                                    : AppColors.primarySoft,
                                 child: Icon(
                                   locked ? Icons.lock_outline : Icons.apartment,
                                   color: locked
                                       ? const Color(0xFFB45309)
-                                      : const Color(0xFF2B5CFF),
+                                      : AppColors.blueprint,
                                 ),
                               ),
                               title: Text(p['name'] ?? '',
@@ -227,7 +228,7 @@ class PropertiesListScreen extends ConsumerWidget {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color(0xFF2B5CFF),
+        backgroundColor: AppColors.blueprint,
         onPressed: () {
           // Residential types are unlimited; commercial types are gated in the
           // wizard (and on the backend). Always open the create flow.

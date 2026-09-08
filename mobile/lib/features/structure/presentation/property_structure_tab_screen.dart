@@ -2,13 +2,11 @@
 //
 // Dynamic Rooms explorer — mirrors whatever hierarchy the property actually
 // has (Villa units, Hostel Building→Floor→Room→Bed, Rental Shop/Flat, etc.).
-// No hardcoded Building/Floor/Flat path; empty branches are pruned.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/dynamic_icon.dart';
 import '../../tenancies/presentation/node_detail_screen.dart';
 import '../data/structure_repository.dart';
 import '../domain/hierarchy_level.dart';
@@ -20,17 +18,9 @@ import 'rooms/rooms_tree_provider.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
 
-String _childCountLabel(List<RoomsTreeNode> children) {
-  if (children.isEmpty) return '';
-  final counts = <String, int>{};
-  for (final c in children) {
-    final key = c.level.displayName;
-    counts[key] = (counts[key] ?? 0) + 1;
-  }
-  return counts.entries
-      .map((e) => '${e.value} ${e.key}${e.value == 1 ? '' : 's'}')
-      .join(' · ');
-}
+const _occupiedGreen = Color(0xFF22C55E);
+
+enum _RoomsVacancyFilter { all, vacant, occupied }
 
 class PropertyStructureTabScreen extends ConsumerStatefulWidget {
   final String propertyId;
@@ -50,7 +40,17 @@ class PropertyStructureTabScreen extends ConsumerStatefulWidget {
 class _PropertyStructureTabScreenState
     extends ConsumerState<PropertyStructureTabScreen> {
   final Set<String> _expanded = {};
+  final _searchController = TextEditingController();
   bool _didAutoExpand = false;
+  bool _showSearch = false;
+  String _searchQuery = '';
+  _RoomsVacancyFilter _vacancyFilter = _RoomsVacancyFilter.all;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   /// Expand solitary paths so users land on useful content immediately
   /// (1 building → floors; 1 floor → rooms/beds; etc.).
@@ -73,13 +73,11 @@ class _PropertyStructureTabScreenState
 
   Future<void> _openLeaf(RoomsTreeNode leaf) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => NodeDetailScreen(
-          propertyId: widget.propertyId,
-          nodeId: leaf.id,
-          nodeName: leaf.name,
-          levelName: leaf.level.displayName,
-        ),
+      NodeDetailScreen.route(
+        propertyId: widget.propertyId,
+        nodeId: leaf.id,
+        nodeName: leaf.name,
+        levelName: leaf.level.displayName,
       ),
     );
     ref.invalidate(roomsTreeProvider(widget.propertyId));
@@ -233,113 +231,573 @@ class _PropertyStructureTabScreenState
     }
   }
 
+  void _toggleExpandAll(List<RoomsTreeNode> buildings) {
+    final ids = buildings.map((b) => b.id).toSet();
+    final allOpen = ids.every(_expanded.contains);
+    setState(() {
+      if (allOpen) {
+        _expanded.removeAll(ids);
+      } else {
+        _expanded.addAll(ids);
+      }
+    });
+  }
+
+  Future<void> _pickVacancyFilter() async {
+    final picked = await showModalBottomSheet<_RoomsVacancyFilter>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Filter buildings',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ),
+              ),
+              ListTile(
+                title: const Text('All buildings'),
+                trailing: _vacancyFilter == _RoomsVacancyFilter.all
+                    ? const Icon(Icons.check, color: AppColors.blueprint)
+                    : null,
+                onTap: () => Navigator.pop(ctx, _RoomsVacancyFilter.all),
+              ),
+              ListTile(
+                title: const Text('Has vacant rooms'),
+                trailing: _vacancyFilter == _RoomsVacancyFilter.vacant
+                    ? const Icon(Icons.check, color: AppColors.blueprint)
+                    : null,
+                onTap: () => Navigator.pop(ctx, _RoomsVacancyFilter.vacant),
+              ),
+              ListTile(
+                title: const Text('Fully occupied'),
+                trailing: _vacancyFilter == _RoomsVacancyFilter.occupied
+                    ? const Icon(Icons.check, color: AppColors.blueprint)
+                    : null,
+                onTap: () => Navigator.pop(ctx, _RoomsVacancyFilter.occupied),
+              ),
+              if (widget.canManage)
+                ListTile(
+                  leading: const Icon(Icons.tune, color: AppColors.slate),
+                  title: const Text('Structure settings'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    context.push('/dashboard/${widget.propertyId}/structure');
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _vacancyFilter = picked);
+    }
+  }
+
+  List<RoomsTreeNode> _visibleBuildings(List<RoomsTreeNode> buildings) {
+    final q = _searchQuery.trim().toLowerCase();
+    return buildings.where((b) {
+      if (q.isNotEmpty) {
+        final inName = b.name.toLowerCase().contains(q);
+        final inFloor = b.children.any(
+          (c) => c.name.toLowerCase().contains(q),
+        );
+        if (!inName && !inFloor) return false;
+      }
+      final occ = RoomOccupancySummary.fromNode(b);
+      switch (_vacancyFilter) {
+        case _RoomsVacancyFilter.all:
+          return true;
+        case _RoomsVacancyFilter.vacant:
+          return occ.available > 0;
+        case _RoomsVacancyFilter.occupied:
+          return occ.total > 0 && occ.available == 0;
+      }
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final treeAsync = ref.watch(roomsTreeProvider(widget.propertyId));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Rooms'),
-        actions: [
-          if (widget.canManage)
-            IconButton(
-              icon: const Icon(Icons.tune, size: 20),
-              tooltip: 'Structure settings',
-              onPressed: () =>
-                  context.push('/dashboard/${widget.propertyId}/structure'),
-            ),
-        ],
-      ),
-      body: treeAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Something went wrong: $err')),
-        data: (tree) {
-          final hasUnits = tree.assignableUnitCount > 0;
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: treeAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (err, _) => Center(child: Text('Something went wrong: $err')),
+          data: (tree) {
+            final hasUnits = tree.assignableUnitCount > 0;
 
-          if (!hasUnits) {
-            return _PremiumRoomsEmptyState(
-              canManage: widget.canManage,
-              onAddFirstRoom: _openAddRoom,
-            );
-          }
-
-          _maybeAutoExpand(tree.roots);
-
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            children: [
-              _legend(),
-              const SizedBox(height: 12),
-              if (tree.isFlatLeafForest)
-                _roomList(tree.roots)
-              else
-                _HierarchyBranch(
-                  nodes: tree.roots,
-                  levels: tree.levels,
-                  expanded: _expanded,
-                  depth: 0,
-                  canManage: widget.canManage,
-                  onToggle: (id) {
-                    setState(() {
-                      if (_expanded.contains(id)) {
-                        _expanded.remove(id);
-                      } else {
-                        _expanded.add(id);
+            if (!hasUnits) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _RoomsHeader(
+                    showSearch: _showSearch,
+                    searchController: _searchController,
+                    onSearchChanged: (v) =>
+                        setState(() => _searchQuery = v),
+                    onToggleSearch: () => setState(() {
+                      _showSearch = !_showSearch;
+                      if (!_showSearch) {
+                        _searchController.clear();
+                        _searchQuery = '';
                       }
-                    });
-                  },
-                  onOpenLeaf: _openLeaf,
-                  onRename: _renameContainer,
-                  onAddFloor: _addFloorUnderBuilding,
-                  onOpenFloor: _openFloor,
-                ),
-              if (widget.canManage &&
-                  findRootBuildingLevel(tree.levels) != null &&
-                  !tree.isFlatLeafForest) ...[
-                const SizedBox(height: 16),
-                OutlinedButton(
-                  onPressed: _addBuilding,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.blueprint,
-                    side: const BorderSide(color: AppColors.blueprint),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    }),
+                    onFilter: _pickVacancyFilter,
                   ),
-                  child: const Text('+ Add New Building'),
+                  Expanded(
+                    child: _PremiumRoomsEmptyState(
+                      canManage: widget.canManage,
+                      onAddFirstRoom: _openAddRoom,
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            _maybeAutoExpand(tree.roots);
+
+            final overall = _aggregateOccupancy(tree.roots);
+            final buildings = tree.roots.where((n) => !n.isAssignable).toList();
+            final visible = _visibleBuildings(buildings);
+            final allExpanded = visible.isNotEmpty &&
+                visible.every((b) => _expanded.contains(b.id));
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _RoomsHeader(
+                  showSearch: _showSearch,
+                  searchController: _searchController,
+                  onSearchChanged: (v) => setState(() => _searchQuery = v),
+                  onToggleSearch: () => setState(() {
+                    _showSearch = !_showSearch;
+                    if (!_showSearch) {
+                      _searchController.clear();
+                      _searchQuery = '';
+                    }
+                  }),
+                  onFilter: _pickVacancyFilter,
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    children: [
+                      _RoomsSummaryCard(summary: overall),
+                      const SizedBox(height: 16),
+                      if (tree.isFlatLeafForest)
+                        buildRoomGrid(context, tree.roots, _openLeaf)
+                      else ...[
+                        _BuildingsListHeader(
+                          count: visible.length,
+                          allExpanded: allExpanded,
+                          onToggleExpandAll: visible.isEmpty
+                              ? null
+                              : () => _toggleExpandAll(visible),
+                        ),
+                        const SizedBox(height: 10),
+                        if (visible.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 32),
+                            child: Center(
+                              child: Text(
+                                'No buildings match your search.',
+                                style: TextStyle(color: AppColors.slate),
+                              ),
+                            ),
+                          )
+                        else
+                          _HierarchyBranch(
+                            nodes: visible,
+                            levels: tree.levels,
+                            expanded: _expanded,
+                            canManage: widget.canManage,
+                            onToggle: (id) {
+                              setState(() {
+                                if (_expanded.contains(id)) {
+                                  _expanded.remove(id);
+                                } else {
+                                  _expanded.add(id);
+                                }
+                              });
+                            },
+                            onOpenLeaf: _openLeaf,
+                            onRename: _renameContainer,
+                            onAddFloor: _addFloorUnderBuilding,
+                            onOpenFloor: _openFloor,
+                          ),
+                        if (widget.canManage &&
+                            findRootBuildingLevel(tree.levels) != null) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed: _addBuilding,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.blueprint,
+                                side: const BorderSide(
+                                  color: AppColors.blueprint,
+                                  width: 1.4,
+                                ),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: const StadiumBorder(),
+                              ),
+                              child: const Text(
+                                '+ Add New Building',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
                 ),
               ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
+}
 
-  Widget _legend() {
+RoomOccupancySummary _aggregateOccupancy(List<RoomsTreeNode> nodes) {
+  var total = 0;
+  var occupied = 0;
+  for (final n in nodes) {
+    final s = RoomOccupancySummary.fromNode(n);
+    total += s.total;
+    occupied += s.occupied;
+  }
+  return RoomOccupancySummary(total: total, occupied: occupied);
+}
+
+int _occupancyPercent(RoomOccupancySummary s) {
+  if (s.total <= 0) return 0;
+  return ((s.occupied / s.total) * 100).round();
+}
+
+String _floorCountLabel(RoomsTreeNode building) {
+  final floors = building.children.length;
+  return '$floors Floor${floors == 1 ? '' : 's'}';
+}
+
+class _RoomsHeader extends StatelessWidget {
+  final bool showSearch;
+  final TextEditingController searchController;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onToggleSearch;
+  final VoidCallback onFilter;
+
+  const _RoomsHeader({
+    required this.showSearch,
+    required this.searchController,
+    required this.onSearchChanged,
+    required this.onToggleSearch,
+    required this.onFilter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Rooms',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.ink,
+                        height: 1.1,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Manage your buildings, floors and rooms',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.slate,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Search',
+                onPressed: onToggleSearch,
+                icon: Icon(
+                  showSearch ? Icons.close : Icons.search,
+                  color: AppColors.ink,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Filter',
+                onPressed: onFilter,
+                icon: const Icon(Icons.tune, color: AppColors.ink),
+              ),
+            ],
+          ),
+          if (showSearch) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextField(
+                controller: searchController,
+                onChanged: onSearchChanged,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Search buildings or floors...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  filled: true,
+                  fillColor: AppColors.canvas,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomsSummaryCard extends StatelessWidget {
+  final RoomOccupancySummary summary;
+
+  const _RoomsSummaryCard({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = _occupancyPercent(summary);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.hairline),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          children: [
+            Expanded(
+              child: _SummarySegment(
+                leading: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.bed_outlined,
+                    size: 18,
+                    color: AppColors.blueprint,
+                  ),
+                ),
+                value: '${summary.total}',
+                label: 'Total Rooms',
+              ),
+            ),
+            VerticalDivider(color: Colors.grey.shade300, width: 16, thickness: 1),
+            Expanded(
+              child: _SummarySegment(
+                leading: const _StatusDot(color: _occupiedGreen),
+                value: '${summary.occupied}',
+                label: 'Occupied',
+              ),
+            ),
+            VerticalDivider(color: Colors.grey.shade300, width: 16, thickness: 1),
+            Expanded(
+              child: _SummarySegment(
+                leading: _StatusDot(color: Colors.grey.shade400),
+                value: '${summary.available}',
+                label: 'Vacant',
+              ),
+            ),
+            VerticalDivider(color: Colors.grey.shade300, width: 16, thickness: 1),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '$pct%',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.ink,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Occupancy',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10, color: AppColors.slate),
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: summary.total == 0 ? 0 : summary.occupied / summary.total,
+                      minHeight: 4,
+                      color: _occupiedGreen,
+                      backgroundColor: Colors.grey.shade200,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummarySegment extends StatelessWidget {
+  final Widget leading;
+  final String value;
+  final String label;
+
+  const _SummarySegment({
+    required this.leading,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
-        _statusDot(AppColors.positive),
+        leading,
         const SizedBox(width: 6),
-        const Text('Occupied',
-            style: TextStyle(fontSize: 12, color: AppColors.slate)),
-        const SizedBox(width: 16),
-        _statusDot(Colors.grey.shade400),
-        const SizedBox(width: 6),
-        const Text('Vacant',
-            style: TextStyle(fontSize: 12, color: AppColors.slate)),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 10, color: AppColors.slate),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
+}
 
-  Widget _statusDot(Color color) {
+class _StatusDot extends StatelessWidget {
+  final Color color;
+  const _StatusDot({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: 10,
-      height: 10,
+      width: 8,
+      height: 8,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
+}
 
-  Widget _roomList(List<RoomsTreeNode> rooms) {
-    return buildRoomGrid(context, rooms, _openLeaf);
+class _BuildingsListHeader extends StatelessWidget {
+  final int count;
+  final bool allExpanded;
+  final VoidCallback? onToggleExpandAll;
+
+  const _BuildingsListHeader({
+    required this.count,
+    required this.allExpanded,
+    required this.onToggleExpandAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          'Buildings ($count)',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: AppColors.ink,
+          ),
+        ),
+        const Spacer(),
+        TextButton(
+          onPressed: onToggleExpandAll,
+          style: TextButton.styleFrom(
+            foregroundColor: AppColors.blueprint,
+            visualDensity: VisualDensity.compact,
+          ),
+          child: Text(
+            allExpanded ? 'Collapse All' : 'Expand All',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -420,7 +878,6 @@ class _HierarchyBranch extends StatelessWidget {
   final List<RoomsTreeNode> nodes;
   final List<HierarchyLevel> levels;
   final Set<String> expanded;
-  final int depth;
   final bool canManage;
   final ValueChanged<String> onToggle;
   final Future<void> Function(RoomsTreeNode) onOpenLeaf;
@@ -432,7 +889,6 @@ class _HierarchyBranch extends StatelessWidget {
     required this.nodes,
     required this.levels,
     required this.expanded,
-    required this.depth,
     required this.canManage,
     required this.onToggle,
     required this.onOpenLeaf,
@@ -440,34 +896,6 @@ class _HierarchyBranch extends StatelessWidget {
     required this.onAddFloor,
     required this.onOpenFloor,
   });
-
-  Widget _roomList(BuildContext context, List<RoomsTreeNode> rooms) {
-    return buildRoomGrid(context, rooms, onOpenLeaf);
-  }
-
-  Widget _buildContainerChild(BuildContext context, RoomsTreeNode node) {
-    if (isRoomParentFloorNode(node.level, levels)) {
-      return _FloorNavCard(
-        floorNode: node,
-        canManage: canManage,
-        onTap: () => onOpenFloor(node),
-        onRename: () => onRename(node),
-      );
-    }
-
-    return _HierarchyBranch(
-      nodes: [node],
-      levels: levels,
-      expanded: expanded,
-      depth: depth + 1,
-      canManage: canManage,
-      onToggle: onToggle,
-      onOpenLeaf: onOpenLeaf,
-      onRename: onRename,
-      onAddFloor: onAddFloor,
-      onOpenFloor: onOpenFloor,
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -481,10 +909,6 @@ class _HierarchyBranch extends StatelessWidget {
       );
     }
 
-    if (nodes.every((n) => n.isAssignable)) {
-      return _roomList(context, nodes);
-    }
-
     final units = nodes.where((n) => n.isAssignable).toList();
     final containers = nodes.where((n) => !n.isAssignable).toList();
 
@@ -492,7 +916,7 @@ class _HierarchyBranch extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (units.isNotEmpty) ...[
-          _roomList(context, units),
+          buildRoomGrid(context, units, onOpenLeaf),
           if (containers.isNotEmpty) const SizedBox(height: 10),
         ],
         ...containers.map((node) {
@@ -501,112 +925,23 @@ class _HierarchyBranch extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: _FloorNavCard(
                 floorNode: node,
-                canManage: canManage,
                 onTap: () => onOpenFloor(node),
-                onRename: () => onRename(node),
               ),
             );
           }
 
-          final open = expanded.contains(node.id);
-          final isTop = depth == 0;
-          final radius = isTop ? 16.0 : 12.0;
-
           return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Material(
-              color: isTop ? AppColors.surface : AppColors.canvas,
-              elevation: isTop ? 0 : 0,
-              borderRadius: BorderRadius.circular(radius),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(radius),
-                  border: Border.all(
-                    color: isTop ? AppColors.hairline : AppColors.hairline,
-                  ),
-                  boxShadow: isTop
-                      ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.04),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Theme(
-                  data: Theme.of(context).copyWith(
-                    dividerColor: Colors.transparent,
-                    splashColor: AppColors.blueprint.withValues(alpha: 0.08),
-                  ),
-                  child: ExpansionTile(
-                    key: ValueKey('rooms-exp-${node.id}-$open'),
-                    initiallyExpanded: open,
-                    onExpansionChanged: (v) => onToggle(node.id),
-                    tilePadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    childrenPadding:
-                        const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(radius),
-                    ),
-                    collapsedShape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(radius),
-                    ),
-                    leading: DynamicIcon(
-                      name: node.level.icon,
-                      colorHex: node.level.color,
-                      size: isTop ? 26 : 22,
-                    ),
-                    title: Text(
-                      node.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: isTop ? 16 : 14,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '${node.level.displayName} · ${_childCountLabel(node.children)}',
-                      style: const TextStyle(fontSize: 12, color: AppColors.slate),
-                    ),
-                    trailing: canManage
-                        ? IconButton(
-                            icon: Icon(
-                              Icons.edit,
-                              size: 20,
-                              color: Colors.grey.shade600,
-                            ),
-                            tooltip: 'Rename ${node.level.displayName}',
-                            onPressed: () => onRename(node),
-                          )
-                        : null,
-                    children: [
-                      for (final child in node.children)
-                        _buildContainerChild(context, child),
-                      if (canManage && canAddFloorUnderNode(node.level, levels))
-                        Padding(
-                          padding: const EdgeInsets.only(
-                            left: 16,
-                            top: 8,
-                            bottom: 8,
-                          ),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton.icon(
-                              onPressed: () => onAddFloor(node),
-                              icon: const Icon(Icons.add, size: 18),
-                              label: const Text('Add Floor'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: AppColors.blueprint,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _BuildingCard(
+              node: node,
+              levels: levels,
+              expanded: expanded.contains(node.id),
+              canManage: canManage,
+              onToggle: () => onToggle(node.id),
+              onRename: () => onRename(node),
+              onAddFloor: () => onAddFloor(node),
+              onOpenFloor: onOpenFloor,
+              onOpenLeaf: onOpenLeaf,
             ),
           );
         }),
@@ -615,73 +950,340 @@ class _HierarchyBranch extends StatelessWidget {
   }
 }
 
-class _FloorNavCard extends StatelessWidget {
-  final RoomsTreeNode floorNode;
+class _BuildingCard extends StatelessWidget {
+  final RoomsTreeNode node;
+  final List<HierarchyLevel> levels;
+  final bool expanded;
   final bool canManage;
-  final VoidCallback onTap;
+  final VoidCallback onToggle;
   final VoidCallback onRename;
+  final VoidCallback onAddFloor;
+  final Future<void> Function(RoomsTreeNode) onOpenFloor;
+  final Future<void> Function(RoomsTreeNode) onOpenLeaf;
 
-  const _FloorNavCard({
-    required this.floorNode,
+  const _BuildingCard({
+    required this.node,
+    required this.levels,
+    required this.expanded,
     required this.canManage,
-    required this.onTap,
+    required this.onToggle,
     required this.onRename,
+    required this.onAddFloor,
+    required this.onOpenFloor,
+    required this.onOpenLeaf,
   });
 
   @override
   Widget build(BuildContext context) {
-    final roomCount = countRoomsOnFloor(floorNode);
-    final roomLabel = '$roomCount Room${roomCount == 1 ? '' : 's'}';
+    final occ = RoomOccupancySummary.fromNode(node);
+    final pct = _occupancyPercent(occ);
+    final subtitle = '${_floorCountLabel(node)} • ${occ.total} Room${occ.total == 1 ? '' : 's'}';
 
     return Material(
-      color: AppColors.canvas,
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.hairline),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 4, 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.primarySoft,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.business,
+                        size: 22,
+                        color: AppColors.blueprint,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            node.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.slate,
+                            ),
+                          ),
+                          if (!expanded) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              '● ${occ.occupied} Occupied  •  ${occ.available} Vacant  •  $pct% Occupancy',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.slate,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (canManage)
+                      PopupMenuButton<String>(
+                        padding: EdgeInsets.zero,
+                        icon: Icon(
+                          Icons.more_vert,
+                          color: Colors.grey.shade600,
+                          size: 20,
+                        ),
+                        onSelected: (v) {
+                          if (v == 'rename') onRename();
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'rename',
+                            child: Text('Rename'),
+                          ),
+                        ],
+                      ),
+                    IconButton(
+                      onPressed: onToggle,
+                      icon: Icon(
+                        expanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (expanded) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                child: _BuildingStatusRow(summary: occ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: Column(
+                  children: [
+                    for (final child in node.children)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: isRoomParentFloorNode(child.level, levels)
+                            ? _FloorNavCard(
+                                floorNode: child,
+                                onTap: () => onOpenFloor(child),
+                              )
+                            : child.isAssignable
+                                ? Material(
+                                    color: Colors.grey.shade50,
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(12),
+                                      onTap: () => onOpenLeaf(child),
+                                      child: ListTile(
+                                        dense: true,
+                                        title: Text(child.name),
+                                        trailing: const Icon(
+                                          Icons.chevron_right,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : _FloorNavCard(
+                                    floorNode: child,
+                                    onTap: () => onOpenFloor(child),
+                                  ),
+                      ),
+                    if (canManage && canAddFloorUnderNode(node.level, levels))
+                      SizedBox(
+                        width: double.infinity,
+                        child: TextButton(
+                          onPressed: onAddFloor,
+                          style: TextButton.styleFrom(
+                            backgroundColor: AppColors.primarySoft,
+                            foregroundColor: AppColors.blueprint,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            '+ Add Floor',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BuildingStatusRow extends StatelessWidget {
+  final RoomOccupancySummary summary;
+
+  const _BuildingStatusRow({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = _occupancyPercent(summary);
+    return Row(
+      children: [
+        const _StatusDot(color: _occupiedGreen),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            '${summary.occupied} Occupied',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: AppColors.slate),
+          ),
+        ),
+        Container(
+          width: 1,
+          height: 12,
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          color: Colors.grey.shade300,
+        ),
+        _StatusDot(color: Colors.grey.shade400),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            '${summary.available} Vacant',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: AppColors.slate),
+          ),
+        ),
+        Container(
+          width: 1,
+          height: 12,
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          color: Colors.grey.shade300,
+        ),
+        Text(
+          '$pct% Occupancy',
+          style: const TextStyle(fontSize: 12, color: AppColors.slate),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 48,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: summary.total == 0 ? 0 : summary.occupied / summary.total,
+              minHeight: 4,
+              color: _occupiedGreen,
+              backgroundColor: Colors.grey.shade200,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FloorNavCard extends StatelessWidget {
+  final RoomsTreeNode floorNode;
+  final VoidCallback onTap;
+
+  const _FloorNavCard({
+    required this.floorNode,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final occ = RoomOccupancySummary.fromNode(floorNode);
+    final roomCount = countRoomsOnFloor(floorNode);
+    final subtitle = roomCount == 0
+        ? 'No rooms yet'
+        : '$roomCount Room${roomCount == 1 ? '' : 's'} • ${occ.occupied} Occupied • ${occ.available} Vacant';
+
+    return Material(
+      color: Colors.grey.shade50,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.hairline),
+            border: Border.all(color: Colors.grey.shade300),
           ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            leading: DynamicIcon(
-              name: floorNode.level.icon,
-              colorHex: floorNode.level.color,
-              size: 22,
-            ),
-            title: Text(
-              floorNode.name,
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 15,
-                color: AppColors.ink,
-              ),
-            ),
-            subtitle: Text(
-              roomLabel,
-              style: const TextStyle(fontSize: 12, color: AppColors.slate),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (canManage)
-                  IconButton(
-                    icon: Icon(
-                      Icons.edit,
-                      size: 20,
-                      color: Colors.grey.shade600,
+          child: Row(
+            children: [
+              const Icon(Icons.layers, size: 22, color: AppColors.blueprint),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      floorNode.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        color: AppColors.ink,
+                      ),
                     ),
-                    tooltip: 'Rename ${floorNode.level.displayName}',
-                    onPressed: onRename,
-                  ),
-                Icon(
-                  Icons.chevron_right,
-                  color: Colors.grey.shade500,
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.slate,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey.shade500, size: 20),
+            ],
           ),
         ),
       ),

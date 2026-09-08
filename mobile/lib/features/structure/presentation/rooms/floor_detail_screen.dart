@@ -30,13 +30,11 @@ class FloorDetailScreen extends ConsumerStatefulWidget {
 class _FloorDetailScreenState extends ConsumerState<FloorDetailScreen> {
   Future<void> _openRoom(RoomsTreeNode room) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => NodeDetailScreen(
-          propertyId: widget.propertyId,
-          nodeId: room.id,
-          nodeName: room.name,
-          levelName: room.level.displayName,
-        ),
+      NodeDetailScreen.route(
+        propertyId: widget.propertyId,
+        nodeId: room.id,
+        nodeName: room.name,
+        levelName: room.level.displayName,
       ),
     );
     ref.invalidate(roomsTreeProvider(widget.propertyId));

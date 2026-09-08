@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_theme.dart';
 import '../data/tenant_portal_repository.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/login_flow.dart';
@@ -89,7 +90,7 @@ class TenantDashboardScreen extends ConsumerWidget {
                 title: 'Owner: ${t['owner_name'] ?? 'N/A'}',
                 subtitle: t['owner_phone'] ?? '',
                 trailing: IconButton(
-                  icon: const Icon(Icons.call_outlined, color: Color(0xFF2B5CFF)),
+                  icon: const Icon(Icons.call_outlined, color: AppColors.blueprint),
                   onPressed: () {}, // TODO: launch dialer with owner_phone
                 ),
               ),
@@ -276,7 +277,7 @@ class TenantDashboardScreen extends ConsumerWidget {
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
       child: Row(
         children: [
-          CircleAvatar(backgroundColor: const Color(0xFFEFF2FF), child: Icon(icon, color: const Color(0xFF2B5CFF))),
+          CircleAvatar(backgroundColor: AppColors.primarySoft, child: Icon(icon, color: AppColors.blueprint)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

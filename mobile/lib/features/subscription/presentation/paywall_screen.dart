@@ -469,7 +469,7 @@ class _HeroHeader extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF1A3A8F), AppColors.blueprint],
+          colors: [AppColors.primaryDark, AppColors.blueprint],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -490,7 +490,7 @@ class _HeroHeader extends StatelessWidget {
                 child: const Text(
                   'EARLY BIRD DEAL',
                   style: TextStyle(
-                    color: Color(0xFF1A3A8F),
+                    color: AppColors.primaryDark,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.6,

@@ -20,9 +20,9 @@ class ApiClient {
 
     final baseOptions = BaseOptions(
       baseUrl: baseUrl,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
-      sendTimeout: const Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 45),
+      receiveTimeout: const Duration(seconds: 45),
+      sendTimeout: const Duration(seconds: 45),
     );
 
     dio = Dio(baseOptions);
@@ -42,6 +42,19 @@ class ApiClient {
         handler.next(options);
       },
       onError: (error, handler) async {
+        if (_isTransientConnection(error) &&
+            error.requestOptions.extra['connRetried'] != true) {
+          error.requestOptions.extra['connRetried'] = true;
+          try {
+            await Future<void>.delayed(const Duration(milliseconds: 700));
+            final response = await dio.fetch(error.requestOptions);
+            handler.resolve(response);
+            return;
+          } on DioException catch (retryError) {
+            error = retryError;
+          } catch (_) {}
+        }
+
         if (error.response?.statusCode != 401) {
           handler.next(error);
           return;
@@ -121,5 +134,18 @@ class ApiClient {
     } finally {
       _refreshing = false;
     }
+  }
+
+  bool _isTransientConnection(DioException error) {
+    if (error.type == DioExceptionType.cancel) return false;
+    if (error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout) {
+      return true;
+    }
+    final raw = '${error.error ?? ''} ${error.message ?? ''}'.toLowerCase();
+    return raw.contains('connection abort') ||
+        raw.contains('connection reset') ||
+        raw.contains('software caused connection abort');
   }
 }

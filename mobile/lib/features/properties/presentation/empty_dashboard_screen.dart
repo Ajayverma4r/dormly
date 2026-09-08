@@ -1,6 +1,7 @@
 // features/properties/presentation/empty_dashboard_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_theme.dart';
 
 class EmptyDashboardScreen extends StatelessWidget {
   const EmptyDashboardScreen({super.key});
@@ -29,7 +30,7 @@ class EmptyDashboardScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.apartment, color: Color(0xFF2B5CFF), size: 32),
+                const Icon(Icons.apartment, color: AppColors.blueprint, size: 32),
                 const SizedBox(height: 12),
                 const Text('Workspace Ready', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
@@ -39,7 +40,7 @@ class EmptyDashboardScreen extends StatelessWidget {
                   width: double.infinity, height: 50,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2B5CFF),
+                      backgroundColor: AppColors.blueprint,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     onPressed: () => context.push('/onboarding/create-property'),
@@ -82,7 +83,7 @@ class _QuickActionCard extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: const Color(0xFF2B5CFF), size: 30),
+          Icon(icon, color: AppColors.blueprint, size: 30),
           const SizedBox(height: 10),
           Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],

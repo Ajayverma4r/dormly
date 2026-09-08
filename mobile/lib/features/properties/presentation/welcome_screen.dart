@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../auth/data/auth_repository.dart';
 
 class WelcomeScreen extends ConsumerWidget {
@@ -34,10 +35,10 @@ class WelcomeScreen extends ConsumerWidget {
               Container(
                 width: 160, height: 160,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEFF2FF),
+                  color: AppColors.primarySoft,
                   borderRadius: BorderRadius.circular(28),
                 ),
-                child: const Icon(Icons.location_city, size: 84, color: Color(0xFF2B5CFF)),
+                child: const Icon(Icons.location_city, size: 84, color: AppColors.blueprint),
               ),
               const SizedBox(height: 32),
               const Text('Welcome to Dormly 👋',
@@ -51,7 +52,7 @@ class WelcomeScreen extends ConsumerWidget {
                 width: double.infinity, height: 54,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2B5CFF),
+                    backgroundColor: AppColors.blueprint,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () => context.push('/onboarding/create-property'),

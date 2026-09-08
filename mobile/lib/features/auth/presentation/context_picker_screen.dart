@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_theme.dart';
 import '../data/auth_repository.dart';
 import 'login_flow.dart';
 // Shared by both the auto-select path (OTP verify, only one context) and
@@ -45,8 +46,8 @@ class ContextPickerScreen extends ConsumerWidget {
             child: ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               leading: CircleAvatar(
-                backgroundColor: const Color(0xFFEFF2FF),
-                child: Icon(_iconFor(ctx['role']), color: const Color(0xFF2B5CFF)),
+                backgroundColor: AppColors.primarySoft,
+                child: Icon(_iconFor(ctx['role']), color: AppColors.blueprint),
               ),
               title: Text(ctx['label'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Text((ctx['role'] as String).toUpperCase(), style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),

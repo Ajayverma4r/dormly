@@ -43,9 +43,9 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   });
 
   static const _canvas = Color(0xFFF8F9FB);
-  static const _heroStart = Color(0xFF4A6CF7);
-  static const _heroEnd = Color(0xFF6A5AE0);
-  static const _brandPurple = Color(0xFF5D3FD3);
+  static const _heroStart = AppColors.primaryDark;
+  static const _heroEnd = AppColors.primary;
+  static const _brandPurple = AppColors.primary;
 
   String _greeting() {
     final h = DateTime.now().hour;
@@ -122,12 +122,13 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     }
   }
 
-  void _openAddTenant(BuildContext context) {
-    Navigator.of(context).push(
+  Future<void> _openAddTenant(BuildContext context, WidgetRef ref) async {
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => AddTenantScreen(propertyId: propertyId),
       ),
     );
+    ref.invalidate(propertyDashboardProvider(propertyId));
   }
 
   List<_InsightAlert> _buildAttentionAlerts(PropertyDashboard dashboard) {
@@ -333,7 +334,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                     if (canManage) ...[
                       const SizedBox(height: 16),
                       _PrimaryQuickActionsRow(
-                        onAddTenant: () => _openAddTenant(context),
+                        onAddTenant: () => _openAddTenant(context, ref),
                         onNewInvoice: () => _openNewInvoice(context, ref),
                         onAddExpense: () => _openAddExpense(context, ref),
                       ),
@@ -392,8 +393,8 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       children: [
                         _OverviewCard(
                           icon: Icons.people_outline_rounded,
-                          iconColor: const Color(0xFF2563EB),
-                          iconBg: const Color(0xFFDBEAFE),
+                          iconColor: AppColors.blueprint,
+                          iconBg: AppColors.primarySoft,
                           label: 'Total Tenants',
                           value: '${overview.totalActiveTenants}',
                           sublabel: 'Active',
@@ -528,7 +529,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                         leading: CircleAvatar(
                           backgroundColor: isPayment
                               ? const Color(0xFFDCFCE7)
-                              : const Color(0xFFDBEAFE),
+                              : AppColors.primarySoft,
                           child: Icon(
                             isPayment
                                 ? Icons.payments_outlined
@@ -995,7 +996,7 @@ class _PrimaryQuickActionsRow extends StatelessWidget {
           child: _PrimaryActionChip(
             icon: Icons.person_add_alt_1_outlined,
             label: 'Add Tenant',
-            color: const Color(0xFF2563EB),
+            color: AppColors.blueprint,
             onTap: onAddTenant,
           ),
         ),
@@ -1646,7 +1647,7 @@ class _UpcomingVacanciesCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE0E7FF)),
+          border: Border.all(color: AppColors.primaryMuted),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.04),
@@ -1673,7 +1674,7 @@ class _UpcomingVacanciesCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE0E7FF)),
+        border: Border.all(color: AppColors.primaryMuted),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),

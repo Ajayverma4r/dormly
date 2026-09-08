@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_theme.dart';
 import '../data/auth_repository.dart';
 
 class PhoneLoginScreen extends ConsumerStatefulWidget {
@@ -121,7 +122,7 @@ class _PhoneLoginScreenState extends ConsumerState<PhoneLoginScreen> {
                   height: 54,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2B5CFF),
+                      backgroundColor: AppColors.blueprint,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     onPressed: _loading || _controller.text.length < 10 ? null : _sendOtp,

@@ -12,8 +12,8 @@ import 'reports_history_tab.dart';
 export 'billing_providers.dart'
     show invoicesProvider, receivedThisMonthProvider;
 
-const _accent = Color(0xFF7C3AED);
-const _accentSoft = Color(0xFFF3E8FF);
+const _accent = AppColors.blueprint;
+const _accentSoft = AppColors.primarySoft;
 
 enum PaymentsSegment { liveCollection, reports }
 

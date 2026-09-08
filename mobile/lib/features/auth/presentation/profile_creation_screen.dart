@@ -156,7 +156,7 @@ class _ProfileCreationScreenState extends ConsumerState<ProfileCreationScreen> {
                     children: [
                       CircleAvatar(
                         radius: 48,
-                        backgroundColor: const Color(0xFFEFF2FF),
+                        backgroundColor: AppColors.primarySoft,
                         backgroundImage: _localAvatarPath != null
                             ? FileImage(File(_localAvatarPath!))
                             : null,

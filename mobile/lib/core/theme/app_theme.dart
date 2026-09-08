@@ -1,9 +1,8 @@
 // core/theme/app_theme.dart
 //
-// Design tokens for Dormly. The palette leans architectural (deep structural
-// blue, ink-dark text, cool neutral background) rather than a generic bright
-// SaaS indigo — it should read as "property operations software," not a
-// template. Sora carries headlines/numbers; Inter carries body and captions.
+// Design tokens for Dormly. Brand primary is the Payments purple used on
+// "New Invoice" and active tab indicators. Sora carries headlines/numbers;
+// Inter carries body and captions.
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -13,7 +12,13 @@ class AppColors {
   static const slate = Color(0xFF6B7280);
   static const canvas = Color(0xFFF3F4F7);
   static const surface = Color(0xFFFFFFFF);
-  static const blueprint = Color(0xFF2451B4);
+  static const primary = Color(0xFF7C3AED);
+  static const primarySoft = Color(0xFFF3E8FF);
+  static const primaryMuted = Color(0xFFEDE4FF);
+  static const primaryDark = Color(0xFF5B21B6);
+
+  /// Brand primary — kept as an alias for existing call sites.
+  static const blueprint = primary;
   static const positive = Color(0xFF1F9D55);
   static const caution = Color(0xFFB45309);
   static const danger = Color(0xFFB91C1C);
@@ -29,7 +34,10 @@ class AppTheme {
     return base.copyWith(
       scaffoldBackgroundColor: AppColors.canvas,
       colorScheme: base.colorScheme.copyWith(
-        primary: AppColors.blueprint,
+        primary: AppColors.primary,
+        onPrimary: Colors.white,
+        primaryContainer: AppColors.primarySoft,
+        onPrimaryContainer: AppColors.primaryDark,
         surface: AppColors.surface,
       ),
       textTheme: base.textTheme.copyWith(
@@ -52,12 +60,21 @@ class AppTheme {
       dividerTheme: const DividerThemeData(color: AppColors.hairline, thickness: 1, space: 1),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.blueprint,
+          backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
           textStyle: bodyFont.copyWith(fontWeight: FontWeight.w600, fontSize: 15),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           padding: const EdgeInsets.symmetric(vertical: 14),
         ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        backgroundColor: AppColors.surface,
+        indicatorColor: AppColors.primarySoft,
+        surfaceTintColor: Colors.transparent,
       ),
       visualDensity: VisualDensity.adaptivePlatformDensity,
     );

@@ -81,7 +81,7 @@ class HomeDashboardScreen extends ConsumerWidget {
                   children: [
                     _statCard('Total Properties', '${a['totalProperties']}', Icons.apartment, AppColors.blueprint),
                     _statCard('Occupancy', '${a['occupancyRate']}%', Icons.pie_chart_outline, AppColors.positive),
-                    _statCard('Residents', '${a['totalResidents']}', Icons.people_outline, const Color(0xFF7C3AED)),
+                    _statCard('Residents', '${a['totalResidents']}', Icons.people_outline, AppColors.blueprint),
                     _statCard('Revenue', '₹${_formatNumber(revenue)}', Icons.trending_up, AppColors.caution),
                   ],
                 );

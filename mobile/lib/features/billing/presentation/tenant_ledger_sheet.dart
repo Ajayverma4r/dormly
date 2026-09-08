@@ -8,7 +8,7 @@ import 'create_invoice_screen.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
 import 'whatsapp_reminder.dart';
 
-const _accent = Color(0xFF7C3AED);
+const _accent = AppColors.blueprint;
 
 Future<void> showTenantLedgerSheet({
   required BuildContext context,
