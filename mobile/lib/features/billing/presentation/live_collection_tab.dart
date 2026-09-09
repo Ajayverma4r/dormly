@@ -247,6 +247,22 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<LiveCollectionStatusFilter?>(
+      liveCollectionFilterRequestProvider,
+      (prev, next) {
+        if (next == null) return;
+        final mapped = switch (next) {
+          LiveCollectionStatusFilter.all => _StatusFilter.all,
+          LiveCollectionStatusFilter.pending => _StatusFilter.pending,
+          LiveCollectionStatusFilter.paid => _StatusFilter.paid,
+          LiveCollectionStatusFilter.overdue => _StatusFilter.overdue,
+        };
+        if (_filter != mapped) {
+          setState(() => _filter = mapped);
+        }
+      },
+    );
+
     final invoicesAsync = ref.watch(invoicesProvider(widget.propertyId));
     final baseUrl = ref.watch(tenancyRepositoryProvider).baseUrl;
 

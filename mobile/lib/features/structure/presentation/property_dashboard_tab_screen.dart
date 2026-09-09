@@ -7,12 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../billing/presentation/billing_insights_sheet.dart';
+import '../../billing/presentation/billing_providers.dart';
+import '../../billing/presentation/collection_breakdown_sheet.dart';
 import '../../billing/presentation/create_invoice_screen.dart';
+import '../../dashboard/presentation/net_profit_insights_sheet.dart';
 import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../expenses/presentation/add_expense_sheet.dart';
+import '../../expenses/presentation/expense_history_screen.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
 import '../../notifications/data/notifications_repository.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
@@ -119,7 +124,21 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     );
     if (created == true) {
       ref.invalidate(propertyDashboardProvider(propertyId));
+      ref.invalidate(invoicesProvider(propertyId));
     }
+  }
+
+  Future<void> _openBillingInsights(
+    BuildContext context,
+    WidgetRef ref,
+    DashboardOverview overview,
+  ) {
+    return showBillingInsightsSheet(
+      context: context,
+      propertyId: propertyId,
+      billedThisMonth: overview.billedThisMonth,
+      onGenerateInvoice: () => _openNewInvoice(context, ref),
+    );
   }
 
   Future<void> _openAddTenant(BuildContext context, WidgetRef ref) async {
@@ -159,6 +178,44 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Coming Soon: $featureName')),
     );
+  }
+
+  Future<void> _openCollectionBreakdown(BuildContext context) {
+    return showCollectionBreakdownSheet(
+      context: context,
+      propertyId: propertyId,
+    );
+  }
+
+  Future<void> _openNetProfitInsights(
+    BuildContext context,
+    WidgetRef ref,
+    DashboardOverview overview,
+  ) {
+    return showNetProfitInsightsSheet(
+      context: context,
+      propertyId: propertyId,
+      collected: overview.rentReceived,
+      expenses: overview.totalExpenses,
+      netProfit: overview.netProfit,
+      pendingDues: overview.rentPending,
+      onViewPendingDues: () {
+        ref.read(liveCollectionFilterRequestProvider.notifier).state =
+            LiveCollectionStatusFilter.pending;
+        onGoToPaymentsTab?.call();
+      },
+    );
+  }
+
+  Future<void> _openExpenseHistory(BuildContext context, WidgetRef ref) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ExpenseHistoryScreen(propertyId: propertyId),
+      ),
+    );
+    if (context.mounted) {
+      ref.invalidate(propertyDashboardProvider(propertyId));
+    }
   }
 
   Future<void> _openAddExpense(BuildContext context, WidgetRef ref) async {
@@ -325,7 +382,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       occupancyPrimary: _occupancyPrimary(hero),
                       occupancySubtitle:
                           _availableUnitsLabel(hero.availableUnits),
-                      rentalValueLabel: 'Total Rental Value',
+                      rentalValueLabel: 'Active Monthly Rent',
                       rentalValue: _formatCurrency(hero.expectedMonthlyRent),
                       propertyId: propertyId,
                       onOccupancyTap: onGoToRoomsTab,
@@ -347,8 +404,10 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       expenses: overview.totalExpenses,
                       netProfit: overview.netProfit,
                       formatCurrency: _formatCurrency,
-                      onCollectedTap: onGoToPaymentsTab,
-                      onExpensesTap: () => _openAddExpense(context, ref),
+                      onCollectedTap: () => _openCollectionBreakdown(context),
+                      onExpensesTap: () => _openExpenseHistory(context, ref),
+                      onNetProfitTap: () =>
+                          _openNetProfitInsights(context, ref, overview),
                     ),
                     const SizedBox(height: 12),
                     GridView.count(
@@ -366,7 +425,8 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                           label: 'Billed This Month',
                           value: _formatCurrency(overview.billedThisMonth),
                           sublabel: 'Invoices generated',
-                          onTap: onGoToPaymentsTab,
+                          onTap: () =>
+                              _openBillingInsights(context, ref, overview),
                         ),
                         _OverviewCard(
                           icon: Icons.timelapse_outlined,
@@ -948,12 +1008,16 @@ class _HeroStat extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          secondary,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.75),
-            fontSize: 11,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            secondary,
+            maxLines: 1,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.75),
+              fontSize: 11,
+            ),
           ),
         ),
       ],
@@ -1214,6 +1278,7 @@ class _NetProfitStrip extends StatelessWidget {
   final String Function(num) formatCurrency;
   final VoidCallback? onCollectedTap;
   final VoidCallback? onExpensesTap;
+  final VoidCallback? onNetProfitTap;
 
   const _NetProfitStrip({
     required this.collected,
@@ -1222,6 +1287,7 @@ class _NetProfitStrip extends StatelessWidget {
     required this.formatCurrency,
     this.onCollectedTap,
     this.onExpensesTap,
+    this.onNetProfitTap,
   });
 
   @override
@@ -1261,6 +1327,7 @@ class _NetProfitStrip extends StatelessWidget {
               : AppColors.danger,
           bg: const Color(0xFFEDE9FE),
           large: true,
+          onTap: onNetProfitTap,
         ),
       ],
     );

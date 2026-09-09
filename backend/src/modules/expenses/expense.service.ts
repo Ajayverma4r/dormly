@@ -50,4 +50,14 @@ export class ExpenseService {
     );
     return row;
   }
+
+  async remove(propertyId: string, expenseId: string) {
+    const [row] = await query<{ id: string }>(
+      `DELETE FROM expenses
+       WHERE id = $1 AND property_id = $2
+       RETURNING id`,
+      [expenseId, propertyId],
+    );
+    return row ?? null;
+  }
 }

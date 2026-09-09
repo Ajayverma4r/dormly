@@ -11,3 +11,4 @@ expenseRouter.use(requireRole('owner', 'admin', 'manager'));
 expenseRouter.get('/', controller.list);
 expenseRouter.get('/summary/this-month', controller.totalThisMonth);
 expenseRouter.post('/', controller.create);
+expenseRouter.delete('/:expenseId', controller.remove);

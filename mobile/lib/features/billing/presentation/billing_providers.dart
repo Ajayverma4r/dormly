@@ -34,3 +34,9 @@ final paymentsProvider =
     }
   },
 );
+
+enum LiveCollectionStatusFilter { all, pending, paid, overdue }
+
+/// Set before switching to the Payments tab to pre-select a status chip.
+final liveCollectionFilterRequestProvider =
+    StateProvider<LiveCollectionStatusFilter?>((ref) => null);

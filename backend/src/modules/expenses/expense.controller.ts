@@ -47,4 +47,17 @@ export class ExpenseController {
       next(err);
     }
   };
+
+  remove = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const deleted = await service.remove(req.params.propertyId, req.params.expenseId);
+      if (!deleted) {
+        res.status(404).json({ error: 'Expense not found' });
+        return;
+      }
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  };
 }

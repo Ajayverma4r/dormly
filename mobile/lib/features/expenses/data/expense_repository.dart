@@ -41,6 +41,7 @@ class ExpenseRepository {
     required String title,
     required double amount,
     DateTime? date,
+    String? category,
   }) async {
     final res = await _client.dio.post(
       '/v1/properties/$propertyId/expenses',
@@ -49,8 +50,18 @@ class ExpenseRepository {
         'amount': amount,
         if (date != null)
           'expenseDate': date.toIso8601String().split('T').first,
+        if (category != null && category.isNotEmpty) 'category': category,
       },
     );
     return Expense.fromJson(Map<String, dynamic>.from(res.data['data'] as Map));
   }
+
+  Future<void> delete(String propertyId, String expenseId) async {
+    await _client.dio.delete('/v1/properties/$propertyId/expenses/$expenseId');
+  }
 }
+
+final expensesProvider =
+    FutureProvider.autoDispose.family<List<Expense>, String>(
+  (ref, propertyId) => ref.watch(expenseRepositoryProvider).list(propertyId),
+);

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../tenancies/data/tenancy_repository.dart';
 import '../data/billing_repository.dart';
 import 'billing_providers.dart';
@@ -416,6 +417,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   void _returnToRoomDetails() {
     ref.invalidate(invoicesProvider(widget.propertyId));
+    ref.invalidate(propertyDashboardProvider(widget.propertyId));
     Navigator.of(context).popUntil((route) {
       // Keep in sync with NodeDetailScreen.routeName.
       return route.settings.name == 'node-detail' || route.isFirst;
@@ -692,32 +694,37 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   double? _currentRentInput() {
     final rentId = _rentChargeTypeId();
-    if (rentId == null) return null;
-    if (_chargeSelected[rentId] != true) return null;
-    return double.tryParse(_amountControllers[rentId]?.text.trim() ?? '');
+    if (rentId != null && _chargeSelected[rentId] == true) {
+      final parsed =
+          double.tryParse(_amountControllers[rentId]?.text.trim() ?? '');
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    for (final row in _customCharges) {
+      final name = row.name.text.trim().toLowerCase();
+      if (name != 'rent' && name != 'base rent' && name != 'monthly rent') {
+        continue;
+      }
+      final amount = double.tryParse(row.amount.text.trim()) ?? 0;
+      if (amount > 0) return amount;
+    }
+    return null;
   }
 
-  Future<bool?> _askUpdateDefaultRent(double newRent) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Update default rent?'),
-        content: Text(
-          'You changed the base rent. Do you want to permanently update this '
-          'tenant\'s monthly rent to ${_currency.format(newRent)} for future invoices?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Only for this invoice'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Update Permanently'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _syncRentToTenancy(double rent) async {
+    final t = _tenancyById(_selectedTenancyId);
+    final nodeId = widget.roomId ??
+        t?['node_id']?.toString() ??
+        t?['nodeId']?.toString();
+    await ref.read(tenancyRepositoryProvider).update(
+          widget.propertyId,
+          _selectedTenancyId!,
+          nodeId: (nodeId != null && nodeId.isNotEmpty) ? nodeId : null,
+          monthlyRent: rent,
+        );
+    if (t != null) {
+      t['monthly_rent'] = rent;
+      t['monthlyRent'] = rent;
+    }
   }
 
   Future<void> _save() async {
@@ -768,17 +775,9 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
     final rentInput = _currentRentInput();
     final savedRent = _readMonthlyRent(_tenancyById(_selectedTenancyId));
-    var updateRentPermanently = false;
-
-    if (rentInput != null &&
+    final shouldSyncRent = rentInput != null &&
         rentInput > 0 &&
-        savedRent != null &&
-        (rentInput - savedRent).abs() > 0.009) {
-      final choice = await _askUpdateDefaultRent(rentInput);
-      if (!mounted) return;
-      if (choice == null) return; // dialog dismissed — abort save
-      updateRentPermanently = choice == true;
-    }
+        (savedRent == null || (rentInput - savedRent).abs() > 0.009);
 
     setState(() {
       _saving = true;
@@ -786,19 +785,6 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     });
 
     try {
-      if (updateRentPermanently && rentInput != null) {
-        await ref.read(tenancyRepositoryProvider).update(
-              widget.propertyId,
-              _selectedTenancyId!,
-              monthlyRent: rentInput,
-            );
-        final t = _tenancyById(_selectedTenancyId);
-        if (t != null) {
-          t['monthly_rent'] = rentInput;
-          t['monthlyRent'] = rentInput;
-        }
-      }
-
       final periodStart = _periodStart.toIso8601String().split('T').first;
       final periodEnd = _periodEnd.toIso8601String().split('T').first;
       final dueDate = _dueDate.toIso8601String().split('T').first;
@@ -823,6 +809,27 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           lineItems: lineItems,
         );
       }
+
+      if (shouldSyncRent) {
+        try {
+          await _syncRentToTenancy(rentInput);
+        } catch (e) {
+          debugPrint('Could not sync base monthly rent: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Invoice saved. Update Base Monthly Rent on the tenant profile if it is still empty.',
+                ),
+              ),
+            );
+          }
+        }
+      }
+
+      ref.invalidate(invoicesProvider(widget.propertyId));
+      ref.invalidate(propertyDashboardProvider(widget.propertyId));
+
       if (!mounted) return;
       if (widget.isFromOnboarding) {
         _returnToRoomDetails();
@@ -901,7 +908,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
                   )
                 else
                   DropdownButtonFormField<String>(
-                    value: _selectedTenancyId,
+                    initialValue: _selectedTenancyId,
                     decoration: InputDecoration(
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),

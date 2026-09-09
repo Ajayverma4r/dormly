@@ -6,6 +6,7 @@ class Expense {
   final double amount;
   final DateTime date;
   final String? category;
+  final String? receiptUrl;
 
   const Expense({
     required this.id,
@@ -13,6 +14,7 @@ class Expense {
     required this.amount,
     required this.date,
     this.category,
+    this.receiptUrl,
   });
 
   factory Expense.fromJson(Map<String, dynamic> json) {
@@ -27,7 +29,13 @@ class Expense {
       amount: _asDouble(json['amount']),
       date: parsed ?? DateTime.now(),
       category: json['category']?.toString(),
+      receiptUrl: (json['receipt_url'] ?? json['receiptUrl'])?.toString(),
     );
+  }
+
+  bool get hasReceipt {
+    final url = receiptUrl?.trim();
+    return url != null && url.isNotEmpty;
   }
 }
 
