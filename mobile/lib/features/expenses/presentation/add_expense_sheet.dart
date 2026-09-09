@@ -24,6 +24,7 @@ Future<bool> showAddExpenseSheet({
   required BuildContext context,
   required WidgetRef ref,
   required String propertyId,
+  String? initialNotes,
 }) async {
   final result = await showModalBottomSheet<bool>(
     context: context,
@@ -32,7 +33,10 @@ Future<bool> showAddExpenseSheet({
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (ctx) => _AddExpenseSheet(propertyId: propertyId),
+    builder: (ctx) => _AddExpenseSheet(
+      propertyId: propertyId,
+      initialNotes: initialNotes,
+    ),
   );
 
   if (result == true) {
@@ -43,7 +47,8 @@ Future<bool> showAddExpenseSheet({
 
 class _AddExpenseSheet extends ConsumerStatefulWidget {
   final String propertyId;
-  const _AddExpenseSheet({required this.propertyId});
+  final String? initialNotes;
+  const _AddExpenseSheet({required this.propertyId, this.initialNotes});
 
   @override
   ConsumerState<_AddExpenseSheet> createState() => _AddExpenseSheetState();
@@ -58,6 +63,15 @@ class _AddExpenseSheetState extends ConsumerState<_AddExpenseSheet> {
   String? _receiptName;
   bool _saving = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final notes = widget.initialNotes?.trim();
+    if (notes != null && notes.isNotEmpty) {
+      _notesController.text = notes;
+    }
+  }
 
   @override
   void dispose() {

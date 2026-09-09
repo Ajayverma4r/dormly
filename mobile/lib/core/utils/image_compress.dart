@@ -15,6 +15,28 @@ class ImageCompressResult {
   bool get success => file != null;
 }
 
+/// Compresses a KYC document scan to ~200KB: quality 70, max 1200×1200.
+/// Keeps Aadhaar / ID text readable unlike the 100 KB profile-photo path.
+Future<ImageCompressResult> compressKycImage(File file) async {
+  final dir = await getTemporaryDirectory();
+  final outPath =
+      '${dir.path}/kyc_${DateTime.now().millisecondsSinceEpoch}.jpg';
+  final result = await FlutterImageCompress.compressAndGetFile(
+    file.absolute.path,
+    outPath,
+    quality: 70,
+    minWidth: 1200,
+    minHeight: 1200,
+    format: CompressFormat.jpeg,
+  );
+  if (result == null) {
+    return const ImageCompressResult(
+      errorMessage: 'Could not compress image. Please try another photo.',
+    );
+  }
+  return ImageCompressResult(file: File(result.path));
+}
+
 /// Compresses [file] to JPEG, targeting under [kMaxImageBytes].
 Future<ImageCompressResult> compressImage(File file) async {
   final dir = await getTemporaryDirectory();

@@ -11,8 +11,9 @@ import '../../billing/presentation/billing_insights_sheet.dart';
 import '../../billing/presentation/billing_providers.dart';
 import '../../billing/presentation/collection_breakdown_sheet.dart';
 import '../../billing/presentation/create_invoice_screen.dart';
+import '../../billing/presentation/recovery_action_sheet.dart';
 import '../../dashboard/presentation/net_profit_insights_sheet.dart';
-import '../../complaints/presentation/complaints_list_screen.dart';
+import '../../complaints/presentation/maintenance_action_sheet.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
@@ -24,6 +25,7 @@ import '../../properties/presentation/property_switcher_sheet.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 import '../../tenancies/presentation/add_tenant_screen.dart';
+import '../../tenancies/presentation/pending_kyc_sheet.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show activityProvider;
 import 'property_shell_screen.dart' show propertyDetailProvider;
 
@@ -126,6 +128,17 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
       ref.invalidate(propertyDashboardProvider(propertyId));
       ref.invalidate(invoicesProvider(propertyId));
     }
+  }
+
+  Future<void> _openRecoveryHub(
+    BuildContext context,
+    DashboardOverview overview,
+  ) {
+    return showRecoveryActionSheet(
+      context: context,
+      propertyId: propertyId,
+      pendingFallback: overview.rentPending,
+    );
   }
 
   Future<void> _openBillingInsights(
@@ -246,11 +259,17 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     }
   }
 
-  void _openComplaints(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ComplaintsListScreen(propertyId: propertyId),
-      ),
+  Future<void> _openComplaints(BuildContext context) {
+    return showMaintenanceActionSheet(
+      context: context,
+      propertyId: propertyId,
+    );
+  }
+
+  Future<void> _openPendingKyc(BuildContext context) {
+    return showPendingKYCSheet(
+      context: context,
+      propertyId: propertyId,
     );
   }
 
@@ -436,7 +455,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                           value: _formatCurrency(overview.rentPending),
                           sublabel:
                               _pendingDuesSublabel(overview.tenantsWithDues),
-                          onTap: onGoToPaymentsTab,
+                          onTap: () => _openRecoveryHub(context, overview),
                         ),
                       ],
                     ),
@@ -477,7 +496,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       const SizedBox(height: 12),
                       _NeedsAttentionSection(
                         alerts: attentionAlerts,
-                        onKycTap: onGoToTenantsTab,
+                        onKycTap: () => _openPendingKyc(context),
                         onMaintenanceTap: () => _openComplaints(context),
                       ),
                     ],

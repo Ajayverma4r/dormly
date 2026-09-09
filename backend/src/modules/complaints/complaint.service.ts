@@ -4,10 +4,20 @@ import { query } from '@config/db';
 export class ComplaintService {
   async listByProperty(propertyId: string) {
     return query(
-      `SELECT c.*, n.name AS node_name, u.phone AS raised_by_phone
+      `SELECT c.*, n.name AS node_name, u.phone AS raised_by_phone,
+              u.name AS raised_by_name, occ.full_name AS tenant_name
        FROM complaints c
        JOIN hierarchy_nodes n ON n.id = c.node_id
        JOIN users u ON u.id = c.raised_by
+       LEFT JOIN LATERAL (
+         SELECT t.full_name
+         FROM tenancies t
+         WHERE t.node_id = c.node_id
+           AND t.property_id = c.property_id
+           AND t.status = 'active'
+         ORDER BY t.created_at DESC
+         LIMIT 1
+       ) occ ON true
        WHERE c.property_id = $1
        ORDER BY c.created_at DESC`,
       [propertyId],
