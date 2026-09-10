@@ -8,6 +8,7 @@ import '../../billing/presentation/create_invoice_screen.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
+import '../../structure/presentation/rooms/add_room_bottom_sheet.dart';
 import '../data/tenancy_repository.dart';
 import '../domain/assignable_unit.dart';
 import 'assignable_units_provider.dart';
@@ -15,6 +16,34 @@ import 'utils/aadhaar_validation.dart';
 import 'utils/tenancy_errors.dart';
 import 'widgets/assignable_unit_search_field.dart';
 import 'widgets/unit_selection_cascade.dart';
+
+/// Result popped when the user chooses to create a room from the empty state.
+const addTenantCreateRoomResult = 'create_room';
+
+/// Opens Add Tenant; if the user taps "Create Room Now", opens the room sheet.
+Future<void> openAddTenantFlow({
+  required BuildContext context,
+  required WidgetRef ref,
+  required String propertyId,
+  String? nodeId,
+}) async {
+  final result = await Navigator.of(context).push<Object?>(
+    MaterialPageRoute(
+      builder: (_) => AddTenantScreen(
+        propertyId: propertyId,
+        nodeId: nodeId,
+      ),
+    ),
+  );
+  if (result == addTenantCreateRoomResult && context.mounted) {
+    await showAddRoomBottomSheet(
+      context: context,
+      ref: ref,
+      propertyId: propertyId,
+    );
+    ref.invalidate(assignableUnitsProvider(propertyId));
+  }
+}
 
 class AddTenantScreen extends ConsumerStatefulWidget {
   final String propertyId;
@@ -196,18 +225,6 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
 
   Widget _buildUnitSection(
       List<HierarchyLevel> levels, List<AssignableUnit> units) {
-    if (units.isEmpty) {
-      return Card(
-        color: Colors.orange.shade50,
-        child: const Padding(
-          padding: EdgeInsets.all(14),
-          child: Text(
-            'No assignable units found. Add beds, flats, or rooms in Structure Settings first.',
-          ),
-        ),
-      );
-    }
-
     final selectedUnit =
         units.where((u) => u.nodeId == _selectedNodeId).firstOrNull;
 
@@ -267,6 +284,64 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
     );
   }
 
+  Widget _noRoomsEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.bedroom_parent_outlined,
+              size: 60,
+              color: AppColors.primary,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'No Rooms Available',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: AppColors.ink,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              "You haven't created any rooms yet. Please create a room first to add a tenant.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.45,
+                color: AppColors.slate,
+              ),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).pop(addTenantCreateRoomResult),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.add),
+                label: const Text(
+                  'Create Room Now',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final levelsAsync = ref.watch(hierarchyLevelsProvider(widget.propertyId));
@@ -285,74 +360,85 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
         data: (levels) => unitsAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(child: Text('Could not load units: $e')),
-          data: (units) => Form(
-            key: _formKey,
-            child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              if (widget.nodeId != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    'Adding tenant to a specific unit',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          data: (units) {
+            if (units.isEmpty) {
+              return _noRoomsEmptyState();
+            }
+            return Form(
+              key: _formKey,
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  if (widget.nodeId != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Adding tenant to a specific unit',
+                        style: TextStyle(
+                            color: Colors.grey.shade600, fontSize: 13),
+                      ),
+                    ),
+                  _buildUnitSection(levels, units),
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  _field('Full Name', _nameController, required: true),
+                  _field('Mobile Number', _phoneController,
+                      type: TextInputType.phone,
+                      required: true,
+                      maxLength: 10),
+                  _field('Email', _emailController,
+                      type: TextInputType.emailAddress),
+                  _field('Address', _addressController),
+                  _field('Company Name (Optional)', _companyController),
+                  _field('Aadhaar Number', _aadhaarController,
+                      type: TextInputType.number,
+                      maxLength: 12,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly
+                      ],
+                      validator: (v) =>
+                          validateAadhaarNumber(v, required: false)),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(_moveInDate == null
+                        ? 'Move-in Date *'
+                        : 'Move-in: ${DateFormat('dd MMM yyyy').format(_moveInDate!)}'),
+                    trailing: const Icon(Icons.calendar_today_outlined),
+                    onTap: _pickMoveInDate,
                   ),
-                ),
-              _buildUnitSection(levels, units),
-              const SizedBox(height: 8),
-              const Divider(),
-              const SizedBox(height: 8),
-              _field('Full Name', _nameController, required: true),
-              _field('Mobile Number', _phoneController,
-                  type: TextInputType.phone, required: true, maxLength: 10),
-              _field('Email', _emailController,
-                  type: TextInputType.emailAddress),
-              _field('Address', _addressController),
-              _field('Company Name (Optional)', _companyController),
-              _field('Aadhaar Number', _aadhaarController,
-                  type: TextInputType.number,
-                  maxLength: 12,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  validator: (v) => validateAadhaarNumber(v, required: false)),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(_moveInDate == null
-                    ? 'Move-in Date *'
-                    : 'Move-in: ${DateFormat('dd MMM yyyy').format(_moveInDate!)}'),
-                trailing: const Icon(Icons.calendar_today_outlined),
-                onTap: _pickMoveInDate,
-              ),
-              const SizedBox(height: 14),
-              _field('Security Deposit', _depositController,
-                  type: TextInputType.number),
-              _field('Notes', _notesController),
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
-              ],
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 54,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.blueprint,
-                    disabledBackgroundColor: Colors.grey.shade300,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16)),
+                  const SizedBox(height: 14),
+                  _field('Security Deposit', _depositController,
+                      type: TextInputType.number),
+                  _field('Notes', _notesController),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(_error!, style: const TextStyle(color: Colors.red)),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 54,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.blueprint,
+                        disabledBackgroundColor: Colors.grey.shade300,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: canSave ? _save : null,
+                      child: _saving
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('Save Tenant',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700)),
+                    ),
                   ),
-                  onPressed: canSave ? _save : null,
-                  child: _saving
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('Save Tenant',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700)),
-                ),
+                ],
               ),
-            ],
-          ),
-          ),
+            );
+          },
         ),
       ),
     );

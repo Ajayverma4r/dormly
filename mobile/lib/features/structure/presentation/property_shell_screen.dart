@@ -5,6 +5,7 @@
 // Property switcher = global app-bar dropdown (bottom sheet), not a full screen.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
@@ -61,8 +62,47 @@ class PropertyShellScreen extends ConsumerStatefulWidget {
 
 class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
   int _index = 0;
+  bool _exitDialogOpen = false;
 
   void _goToTab(int i) => setState(() => _index = i);
+
+  Future<void> _showExitDialog(BuildContext context) async {
+    if (_exitDialogOpen) return;
+    _exitDialogOpen = true;
+    try {
+      final shouldExit = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.exit_to_app, color: AppColors.danger, size: 22),
+              SizedBox(width: 10),
+              Text('Exit App'),
+            ],
+          ),
+          content: const Text('Are you sure you want to exit?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('No'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              child: const Text('Yes, Exit'),
+            ),
+          ],
+        ),
+      );
+      if (shouldExit == true) {
+        await SystemNavigator.pop();
+      }
+    } finally {
+      _exitDialogOpen = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -207,44 +247,55 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
               ),
             ];
 
-            return Scaffold(
-              key: const ValueKey('property-bottom-nav-v2'),
-              body: IndexedStack(index: _index, children: tabs),
-              bottomNavigationBar: NavigationBar(
-                key: const ValueKey('nav-bar-dashboard-tenants-payments-rooms-menu'),
-                selectedIndex: _index,
-                onDestinationSelected: _goToTab,
-                backgroundColor: AppColors.surface,
-                indicatorColor: AppColors.primarySoft,
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home, color: AppColors.blueprint),
-                    label: 'Dashboard',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.people_outline),
-                    selectedIcon: Icon(Icons.people, color: AppColors.blueprint),
-                    label: 'Tenants',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.account_balance_wallet_outlined),
-                    selectedIcon: Icon(Icons.account_balance_wallet,
-                        color: AppColors.blueprint),
-                    label: 'Payments',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.meeting_room_outlined),
-                    selectedIcon:
-                        Icon(Icons.meeting_room, color: AppColors.blueprint),
-                    label: 'Rooms',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.menu),
-                    selectedIcon: Icon(Icons.menu, color: AppColors.blueprint),
-                    label: 'Menu',
-                  ),
-                ],
+            return PopScope(
+              canPop: false,
+              onPopInvokedWithResult: (didPop, _) {
+                if (didPop) return;
+                _showExitDialog(context);
+              },
+              child: Scaffold(
+                key: const ValueKey('property-bottom-nav-v2'),
+                body: IndexedStack(index: _index, children: tabs),
+                bottomNavigationBar: NavigationBar(
+                  key: const ValueKey(
+                      'nav-bar-dashboard-tenants-payments-rooms-menu'),
+                  selectedIndex: _index,
+                  onDestinationSelected: _goToTab,
+                  backgroundColor: AppColors.surface,
+                  indicatorColor: AppColors.primarySoft,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon:
+                          Icon(Icons.home, color: AppColors.blueprint),
+                      label: 'Dashboard',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.people_outline),
+                      selectedIcon:
+                          Icon(Icons.people, color: AppColors.blueprint),
+                      label: 'Tenants',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.account_balance_wallet_outlined),
+                      selectedIcon: Icon(Icons.account_balance_wallet,
+                          color: AppColors.blueprint),
+                      label: 'Payments',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.meeting_room_outlined),
+                      selectedIcon: Icon(Icons.meeting_room,
+                          color: AppColors.blueprint),
+                      label: 'Rooms',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.menu),
+                      selectedIcon:
+                          Icon(Icons.menu, color: AppColors.blueprint),
+                      label: 'Menu',
+                    ),
+                  ],
+                ),
               ),
             );
           },

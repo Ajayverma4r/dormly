@@ -268,13 +268,11 @@ class NodeDetailScreen extends ConsumerWidget {
                         const SizedBox(height: 20),
                         ElevatedButton.icon(
                           onPressed: () async {
-                            await Navigator.of(context).push<bool>(
-                              MaterialPageRoute(
-                                builder: (context) => AddTenantScreen(
-                                  propertyId: propertyId,
-                                  nodeId: nodeId,
-                                ),
-                              ),
+                            await openAddTenantFlow(
+                              context: context,
+                              ref: ref,
+                              propertyId: propertyId,
+                              nodeId: nodeId,
                             );
                             ref.invalidate(
                                 tenanciesForNodeProvider((propertyId, nodeId)));

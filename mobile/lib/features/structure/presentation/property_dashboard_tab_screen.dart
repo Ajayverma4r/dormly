@@ -155,10 +155,10 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   }
 
   Future<void> _openAddTenant(BuildContext context, WidgetRef ref) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AddTenantScreen(propertyId: propertyId),
-      ),
+    await openAddTenantFlow(
+      context: context,
+      ref: ref,
+      propertyId: propertyId,
     );
     ref.invalidate(propertyDashboardProvider(propertyId));
   }

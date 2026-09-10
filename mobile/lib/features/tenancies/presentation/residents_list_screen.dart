@@ -53,10 +53,10 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
   }
 
   Future<void> _openAddGuest() async {
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => AddTenantScreen(propertyId: widget.propertyId),
-      ),
+    await openAddTenantFlow(
+      context: context,
+      ref: ref,
+      propertyId: widget.propertyId,
     );
     ref.invalidate(propertyResidentsProvider(widget.propertyId));
   }
