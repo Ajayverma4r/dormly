@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/billing_repository.dart';
+import 'record_payment_dialog.dart';
 
 final invoiceDetailProvider = FutureProvider.autoDispose.family<Map<String, dynamic>, (String, String)>(
   (ref, args) => ref.watch(billingRepositoryProvider).getInvoice(args.$1, args.$2),
@@ -26,29 +27,21 @@ class InvoiceDetailScreen extends ConsumerStatefulWidget {
 
 class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
   Future<void> _recordPayment(double remaining) async {
-    final controller = TextEditingController(text: remaining.toStringAsFixed(0));
-    final amount = await showDialog<double>(
+    final result = await showRecordPaymentDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Record Payment'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(prefixText: '₹', labelText: 'Amount'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, double.tryParse(controller.text)),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      outstandingLabel: 'Outstanding: ₹${remaining.toStringAsFixed(0)}',
+      initialAmount: remaining,
+      maxAmount: remaining,
     );
-    if (amount == null || amount <= 0) return;
+    if (result == null || result.amount <= 0) return;
 
     try {
-      await ref.read(billingRepositoryProvider).recordPayment(widget.propertyId, widget.invoiceId, amount, 'cash');
+      await ref.read(billingRepositoryProvider).recordPayment(
+            widget.propertyId,
+            widget.invoiceId,
+            result.amount,
+            result.method,
+          );
       ref.invalidate(invoiceDetailProvider((widget.propertyId, widget.invoiceId)));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not record payment: $e')));

@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
 import '../../billing/presentation/invoices_list_screen.dart' show invoicesProvider;
+import '../../billing/presentation/record_payment_dialog.dart';
 import '../../billing/presentation/tenant_ledger_sheet.dart';
 import '../../complaints/data/complaints_repository.dart';
 import '../../structure/data/structure_repository.dart';
@@ -1319,86 +1321,22 @@ class _FinancialOverviewCard extends ConsumerWidget {
       return;
     }
 
-    final controller =
-        TextEditingController(text: maxPayable.toStringAsFixed(0));
-    final formKey = GlobalKey<FormState>();
-
-    final saved = await showModalBottomSheet<bool>(
+    final result = await showRecordPaymentDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-        ),
-        child: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Record Payment',
-                  style: Theme.of(ctx).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Text(
-                'Outstanding: ${_formatCurrency(maxPayable)}',
-                style: Theme.of(ctx).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: controller,
-                autofocus: true,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  prefixText: '₹ ',
-                  labelText: 'Amount received',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (v) {
-                  final n = double.tryParse(v?.trim() ?? '');
-                  if (n == null || n <= 0) return 'Enter a valid amount';
-                  if (n > maxPayable + 0.01) {
-                    return 'Cannot exceed outstanding balance';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () {
-                    if (formKey.currentState?.validate() ?? false) {
-                      Navigator.pop(ctx, true);
-                    }
-                  },
-                  child: const Text('Record Payment'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      outstandingLabel: 'Outstanding: ${_formatCurrency(maxPayable)}',
+      initialAmount: maxPayable,
+      maxAmount: maxPayable,
     );
+    if (result == null) return;
 
-    if (saved != true) return;
-
-    final amount = double.tryParse(controller.text.trim());
-    if (amount == null) return;
+    final amount = result.amount;
 
     try {
       await ref.read(billingRepositoryProvider).recordPayment(
             propertyId,
             target['id'].toString(),
             amount,
-            'cash',
+            result.method,
           );
       ref.invalidate(tenancyInvoicesProvider((propertyId, tenancyId)));
       if (context.mounted) {
@@ -1533,17 +1471,68 @@ class _FinancialOverviewCard extends ConsumerWidget {
                 ),
               ),
               const Divider(height: 20),
-              _FinancialRow(
+              _EditableFinancialRow(
                 label: 'Move-in Date',
-                value: moveIn != null
-                    ? moveIn.toString().split('T').first
-                    : 'Not recorded',
+                value: _formatMoveInDate(moveIn),
+                onEdit: () => _editMoveInDate(context, ref, moveIn),
               ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  Future<void> _editMoveInDate(
+    BuildContext context,
+    WidgetRef ref,
+    dynamic current,
+  ) async {
+    final currentDate = _parseMoveInDate(current);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: currentDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked == null) return;
+
+    try {
+      await ref.read(tenancyRepositoryProvider).update(
+            propertyId,
+            tenancyId,
+            nodeId: nodeId,
+            moveInAt: picked.toIso8601String(),
+          );
+      ref.invalidate(tenanciesForNodeProvider((propertyId, nodeId)));
+      await ref.read(tenanciesForNodeProvider((propertyId, nodeId)).future);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Move-in Date updated'),
+            backgroundColor: AppColors.positive,
+          ),
+        );
+      }
+    } on TenancyUpdateException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update Move-in Date. Please try again.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
   }
 }
 
@@ -1666,32 +1655,20 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _FinancialRow extends StatelessWidget {
-  final String label;
-  final String value;
+// ---- Helpers ----
 
-  const _FinancialRow({
-    required this.label,
-    required this.value,
-  });
+final _moveInDateFormat = DateFormat('dd MMM yyyy');
 
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-        ),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-      ],
-    );
-  }
+DateTime? _parseMoveInDate(dynamic raw) {
+  if (raw == null) return null;
+  return DateTime.tryParse(raw.toString());
 }
 
-// ---- Helpers ----
+String _formatMoveInDate(dynamic raw) {
+  final date = _parseMoveInDate(raw);
+  if (date == null) return 'Not recorded';
+  return _moveInDateFormat.format(date.toLocal());
+}
 
 double? _readTenancyAmount(Map<String, dynamic> data, List<String> keys) {
   for (final key in keys) {

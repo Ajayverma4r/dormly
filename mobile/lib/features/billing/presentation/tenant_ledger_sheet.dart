@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../data/billing_repository.dart';
 import 'create_invoice_screen.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
+import 'record_payment_dialog.dart';
 import 'whatsapp_reminder.dart';
 
 const _accent = AppColors.blueprint;
@@ -232,61 +233,25 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     final monthLabel =
         month != null ? _monthFormat.format(month) : 'this invoice';
 
-    final controller =
-        TextEditingController(text: remaining.toStringAsFixed(0));
-    final amount = await showDialog<double>(
+    final result = await showRecordPaymentDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Record Payment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              monthLabel,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Outstanding for this month: ${_currency.format(remaining)}',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                prefixText: '₹ ',
-                labelText: 'Amount received',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      headline: monthLabel,
+      outstandingLabel:
+          'Outstanding for this month: ${_currency.format(remaining)}',
+      initialAmount: remaining,
+      maxAmount: remaining,
     );
-    if (amount == null || amount <= 0) return;
+    if (result == null || result.amount <= 0) return;
 
     setState(() => _busyInvoiceId = id);
     try {
-      final pay = amount > remaining ? remaining : amount;
+      final pay =
+          result.amount > remaining ? remaining : result.amount;
       await ref.read(billingRepositoryProvider).recordPayment(
             widget.propertyId,
             id,
             pay,
-            'cash',
+            result.method,
           );
       ref.invalidate(invoicesProvider(widget.propertyId));
       if (mounted) {

@@ -174,6 +174,7 @@ class TenancyRepository {
     bool? policeVerificationDone,
     String? kycStatus,
     String? companyName,
+    String? moveInAt,
   }) async {
     final body = <String, dynamic>{};
     if (monthlyRent != null) {
@@ -183,6 +184,10 @@ class TenancyRepository {
     if (securityDeposit != null) {
       body['securityDeposit'] = securityDeposit;
       body['security_deposit'] = securityDeposit;
+    }
+    if (moveInAt != null) {
+      body['moveInAt'] = moveInAt;
+      body['move_in_at'] = moveInAt;
     }
     if (fullName != null) body['fullName'] = fullName;
     if (email != null) body['email'] = email;

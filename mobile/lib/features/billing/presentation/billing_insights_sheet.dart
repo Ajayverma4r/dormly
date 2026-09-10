@@ -12,6 +12,7 @@ import 'billing_invoice_helpers.dart';
 import 'billing_providers.dart';
 import 'create_invoice_screen.dart';
 import 'invoice_detail_screen.dart';
+import 'record_payment_dialog.dart';
 
 const _accent = AppColors.primary;
 const _unpaidOrange = Color(0xFFD97706);
@@ -519,46 +520,24 @@ class _InvoiceTile extends ConsumerWidget {
       return;
     }
 
-    final controller =
-        TextEditingController(text: invoice.remaining.toStringAsFixed(0));
-    final amount = await showDialog<double>(
+    final result = await showRecordPaymentDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Record Payment'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            prefixText: '₹ ',
-            labelText: 'Amount received',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
-            style: FilledButton.styleFrom(backgroundColor: _accent),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      outstandingLabel:
+          'Outstanding: ${_currency.format(invoice.remaining)}',
+      initialAmount: invoice.remaining,
+      maxAmount: invoice.remaining,
     );
-    if (amount == null || amount <= 0 || !context.mounted) return;
+    if (result == null || result.amount <= 0 || !context.mounted) return;
 
-    final pay =
-        amount > invoice.remaining ? invoice.remaining : amount;
+    final pay = result.amount > invoice.remaining
+        ? invoice.remaining
+        : result.amount;
     try {
       await ref.read(billingRepositoryProvider).recordPayment(
             propertyId,
             invoice.id,
             pay,
-            'cash',
+            result.method,
           );
       ref.invalidate(invoicesProvider(propertyId));
       ref.invalidate(propertyDashboardProvider(propertyId));

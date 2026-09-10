@@ -26,13 +26,21 @@ Future<void> showCollectionBreakdownSheet({
   );
 }
 
-class CollectionBreakdownSheet extends ConsumerWidget {
+class CollectionBreakdownSheet extends ConsumerStatefulWidget {
   final String propertyId;
 
   const CollectionBreakdownSheet({super.key, required this.propertyId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CollectionBreakdownSheet> createState() =>
+      _CollectionBreakdownSheetState();
+}
+
+class _CollectionBreakdownSheetState
+    extends ConsumerState<CollectionBreakdownSheet> {
+  @override
+  Widget build(BuildContext context) {
+    final propertyId = widget.propertyId;
     final async = ref.watch(paymentsProvider(propertyId));
     final now = DateTime.now();
     final month = DateTime(now.year, now.month);
@@ -50,118 +58,202 @@ class CollectionBreakdownSheet extends ConsumerWidget {
         final loading = async.isLoading;
         final loadError = async.hasError;
 
-        return Material(
-          color: AppColors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.viewInsetsOf(context).bottom,
-            ),
-            child: CustomScrollView(
-              controller: scrollController,
-              slivers: [
-                const SliverToBoxAdapter(child: SizedBox(height: 10)),
-                SliverToBoxAdapter(
-                  child: Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.hairline,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                ),
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
-                    child: Text(
-                      "This Month's Collections",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-                    child: _SplitSummaryRow(payments: payments),
-                  ),
-                ),
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
-                    child: Divider(height: 1),
-                  ),
-                ),
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(20, 12, 20, 4),
-                    child: Text(
-                      'Recent transactions',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.slate,
-                      ),
-                    ),
-                  ),
-                ),
-                if (loading)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _accent,
-                        ),
-                      ),
-                    ),
-                  )
-                else if (loadError)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _EmptyCollections(
-                      message: 'Could not load collections. Pull to close and try again.',
-                    ),
-                  )
-                else if (payments.isEmpty)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _EmptyCollections(),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-                    sliver: SliverList.builder(
-                      itemCount: payments.length,
-                      itemBuilder: (context, i) => _CollectionTile(
-                        payment: payments[i],
-                        propertyId: propertyId,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+        // Local StatefulBuilder so filter taps rebuild sheet content even when
+        // DraggableScrollableSheet does not re-run parent setState reliably.
+        return _CollectionBreakdownBody(
+          propertyId: propertyId,
+          payments: payments,
+          loading: loading,
+          loadError: loadError,
+          scrollController: scrollController,
         );
       },
     );
   }
 }
 
+class _CollectionBreakdownBody extends StatefulWidget {
+  final String propertyId;
+  final List<_CollectionPayment> payments;
+  final bool loading;
+  final bool loadError;
+  final ScrollController scrollController;
+
+  const _CollectionBreakdownBody({
+    required this.propertyId,
+    required this.payments,
+    required this.loading,
+    required this.loadError,
+    required this.scrollController,
+  });
+
+  @override
+  State<_CollectionBreakdownBody> createState() =>
+      _CollectionBreakdownBodyState();
+}
+
+class _CollectionBreakdownBodyState extends State<_CollectionBreakdownBody> {
+  String activeFilter = 'All';
+
+  void _toggleFilter(String filter) {
+    setState(() {
+      activeFilter = activeFilter == filter ? 'All' : filter;
+    });
+  }
+
+  List<_CollectionPayment> get _filtered {
+    switch (activeFilter) {
+      case 'Cash':
+        return widget.payments.where((p) => p.isCash).toList();
+      case 'UPI':
+        return widget.payments.where((p) => !p.isCash).toList();
+      default:
+        return widget.payments;
+    }
+  }
+
+  String get _emptyMessage {
+    if (widget.payments.isEmpty) {
+      return 'No collections recorded this month yet.';
+    }
+    switch (activeFilter) {
+      case 'Cash':
+        return 'No cash payments this month.';
+      case 'UPI':
+        return 'No Online/UPI payments this month.';
+      default:
+        return 'No collections recorded this month yet.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+
+    return Material(
+      color: AppColors.surface,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: CustomScrollView(
+          controller: widget.scrollController,
+          slivers: [
+            const SliverToBoxAdapter(child: SizedBox(height: 10)),
+            SliverToBoxAdapter(
+              child: Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.hairline,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
+                child: Text(
+                  "This Month's Collections",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                child: _SplitSummaryRow(
+                  payments: widget.payments,
+                  activeFilter: activeFilter,
+                  onCashTap: () => _toggleFilter('Cash'),
+                  onUpiTap: () => _toggleFilter('UPI'),
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: Divider(height: 1),
+              ),
+            ),
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 4),
+                child: Text(
+                  'Recent transactions',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.slate,
+                  ),
+                ),
+              ),
+            ),
+            if (widget.loading)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _accent,
+                    ),
+                  ),
+                ),
+              )
+            else if (widget.loadError)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: _EmptyCollections(
+                  message:
+                      'Could not load collections. Pull to close and try again.',
+                ),
+              )
+            else if (filtered.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _EmptyCollections(message: _emptyMessage),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+                sliver: SliverList.builder(
+                  itemCount: filtered.length,
+                  itemBuilder: (context, i) => _CollectionTile(
+                    payment: filtered[i],
+                    propertyId: widget.propertyId,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SplitSummaryRow extends StatelessWidget {
   final List<_CollectionPayment> payments;
+  final String activeFilter;
+  final VoidCallback onCashTap;
+  final VoidCallback onUpiTap;
 
-  const _SplitSummaryRow({required this.payments});
+  const _SplitSummaryRow({
+    required this.payments,
+    required this.activeFilter,
+    required this.onCashTap,
+    required this.onUpiTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -183,6 +275,9 @@ class _SplitSummaryRow extends StatelessWidget {
             amount: cash,
             color: AppColors.positive,
             bg: const Color(0xFFDCFCE7),
+            selected: activeFilter == 'Cash',
+            dimmed: activeFilter == 'UPI',
+            onTap: onCashTap,
           ),
         ),
         const SizedBox(width: 10),
@@ -192,6 +287,9 @@ class _SplitSummaryRow extends StatelessWidget {
             amount: online,
             color: _accent,
             bg: AppColors.primarySoft,
+            selected: activeFilter == 'UPI',
+            dimmed: activeFilter == 'Cash',
+            onTap: onUpiTap,
           ),
         ),
       ],
@@ -204,45 +302,71 @@ class _SplitChip extends StatelessWidget {
   final double amount;
   final Color color;
   final Color bg;
+  final bool selected;
+  final bool dimmed;
+  final VoidCallback onTap;
 
   const _SplitChip({
     required this.label,
     required this.amount,
     required this.color,
     required this.bg,
+    required this.selected,
+    required this.dimmed,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: dimmed ? 0.5 : 1,
+      child: Material(
         color: bg,
+        elevation: selected ? 2 : 0,
+        shadowColor: color.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: color,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          // Opaque hit target so DraggableScrollableSheet does not swallow taps.
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected ? color : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    billingCurrency.format(amount),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            billingCurrency.format(amount),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -669,6 +793,8 @@ class _CollectionPayment {
         return 'Paid via Cash';
       case 'upi':
         return 'Paid via UPI';
+      case 'bank':
+        return 'Paid via Bank';
       case 'online':
         return 'Paid via Online';
       default:
@@ -683,11 +809,14 @@ String _normalizeMethod(String? raw) {
   final m = (raw ?? '').toLowerCase().trim();
   if (m.isEmpty || m.contains('cash')) return 'cash';
   if (m.contains('upi')) return 'upi';
-  if (m.contains('card') ||
-      m.contains('online') ||
-      m.contains('bank') ||
+  if (m.contains('bank') ||
       m.contains('neft') ||
       m.contains('imps') ||
+      m.contains('rtgs')) {
+    return 'bank';
+  }
+  if (m.contains('card') ||
+      m.contains('online') ||
       m.contains('razor')) {
     return 'online';
   }

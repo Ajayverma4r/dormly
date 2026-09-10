@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/presentation/create_invoice_screen.dart';
 import '../../structure/domain/hierarchy_level.dart';
@@ -56,9 +57,9 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   Future<void> _pickMoveInDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      initialDate: _moveInDate ?? DateTime.now(),
       firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
+      lastDate: DateTime(2030),
     );
     if (picked != null) setState(() => _moveInDate = picked);
   }
@@ -78,6 +79,17 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
       return;
     }
     if (!_formKey.currentState!.validate()) return;
+    if (_moveInDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '⚠️ Move-in Date is mandatory for billing purposes.',
+          ),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
 
     setState(() {
       _saving = true;
@@ -102,7 +114,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
             aadhaarNumber: _aadhaarController.text.trim().isEmpty
                 ? null
                 : _aadhaarController.text.trim(),
-            moveInAt: _moveInDate?.toIso8601String(),
+            moveInAt: _moveInDate!.toIso8601String(),
             securityDeposit: double.tryParse(_depositController.text.trim()),
             notes: _notesController.text.trim().isEmpty
                 ? null
@@ -305,8 +317,8 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(_moveInDate == null
-                    ? 'Move-in Date'
-                    : 'Move-in: ${_moveInDate!.toLocal().toString().split(' ').first}'),
+                    ? 'Move-in Date *'
+                    : 'Move-in: ${DateFormat('dd MMM yyyy').format(_moveInDate!)}'),
                 trailing: const Icon(Icons.calendar_today_outlined),
                 onTap: _pickMoveInDate,
               ),

@@ -11,6 +11,7 @@ import '../../tenancies/presentation/residents_list_screen.dart'
 import '../data/billing_repository.dart';
 import 'billing_invoice_helpers.dart';
 import 'billing_providers.dart';
+import 'record_payment_dialog.dart';
 import 'whatsapp_reminder.dart';
 
 const _accent = AppColors.primary;
@@ -272,62 +273,24 @@ class _DefaulterTile extends ConsumerWidget {
       return;
     }
 
-    final controller =
-        TextEditingController(text: invoice.remaining.toStringAsFixed(0));
-    final amount = await showDialog<double>(
+    final result = await showRecordPaymentDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Record Payment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              invoice.label,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Outstanding: ${billingCurrency.format(invoice.remaining)}',
-              style: const TextStyle(color: AppColors.slate, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                prefixText: '₹ ',
-                labelText: 'Amount received',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
-            style: FilledButton.styleFrom(backgroundColor: _accent),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      headline: invoice.label,
+      outstandingLabel:
+          'Outstanding: ${billingCurrency.format(invoice.remaining)}',
+      initialAmount: invoice.remaining,
+      maxAmount: invoice.remaining,
     );
-    if (amount == null || amount <= 0 || !context.mounted) return;
+    if (result == null || result.amount <= 0 || !context.mounted) return;
 
-    final pay = amount > invoice.remaining ? invoice.remaining : amount;
+    final pay =
+        result.amount > invoice.remaining ? invoice.remaining : result.amount;
     try {
       await ref.read(billingRepositoryProvider).recordPayment(
             propertyId,
             invoice.id,
             pay,
-            'cash',
+            result.method,
           );
       ref.invalidate(invoicesProvider(propertyId));
       ref.invalidate(propertyDashboardProvider(propertyId));
