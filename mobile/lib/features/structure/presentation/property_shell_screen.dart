@@ -66,6 +66,24 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
 
   void _goToTab(int i) => setState(() => _index = i);
 
+  void _handleSystemBack(BuildContext context) {
+    // A. Nested screens / prior routes — pop one step on the stack.
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    // B. On a non-home tab at its root — return to Dashboard.
+    if (_index != 0) {
+      setState(() => _index = 0);
+      return;
+    }
+
+    // C. Absolute root (Dashboard tab) — confirm exit.
+    _showExitDialog(context);
+  }
+
   Future<void> _showExitDialog(BuildContext context) async {
     if (_exitDialogOpen) return;
     _exitDialogOpen = true;
@@ -251,7 +269,7 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
               canPop: false,
               onPopInvokedWithResult: (didPop, _) {
                 if (didPop) return;
-                _showExitDialog(context);
+                _handleSystemBack(context);
               },
               child: Scaffold(
                 key: const ValueKey('property-bottom-nav-v2'),
