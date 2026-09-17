@@ -10,6 +10,7 @@ import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../complaints/data/complaints_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
+import '../../notifications/presentation/notifications_providers.dart';
 import 'request_move_out_sheet.dart';
 
 final myTenancyProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
@@ -34,8 +35,51 @@ final _hasOwnerContextProvider = FutureProvider.autoDispose<bool>((ref) async {
 final _dtFmt = DateFormat('d MMM yyyy, h:mm a');
 final _dFmt = DateFormat('d MMM yyyy');
 
-class TenantDashboardScreen extends ConsumerWidget {
-  const TenantDashboardScreen({super.key});
+class TenantDashboardScreen extends ConsumerStatefulWidget {
+  /// Optional deep-link target, e.g. `payments` from rent reminders.
+  final String? focusSection;
+
+  const TenantDashboardScreen({super.key, this.focusSection});
+
+  @override
+  ConsumerState<TenantDashboardScreen> createState() =>
+      _TenantDashboardScreenState();
+}
+
+class _TenantDashboardScreenState extends ConsumerState<TenantDashboardScreen> {
+  final _scrollController = ScrollController();
+  final _paymentsKey = GlobalKey();
+  bool _handledFocus = false;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_handledFocus) return;
+    final focus = widget.focusSection?.toLowerCase();
+    if (focus != 'payments' && focus != 'rent') return;
+    _handledFocus = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      final ctx = _paymentsKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        await Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          alignment: 0.1,
+        );
+      }
+      if (!mounted || !context.mounted) return;
+      await showTenantRentPaymentsSheet(context: context, ref: ref);
+    });
+  }
 
   String? _fmtDate(dynamic raw) {
     if (raw == null || raw.toString().trim().isEmpty) return null;
@@ -63,7 +107,7 @@ class TenantDashboardScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final tenancyAsync = ref.watch(myTenancyProvider);
     final hasOwnerContext = ref.watch(_hasOwnerContextProvider).valueOrNull ?? false;
 
@@ -74,6 +118,52 @@ class TenantDashboardScreen extends ConsumerWidget {
         elevation: 0,
         title: const Text('My Home', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w800)),
         actions: [
+          Builder(
+            builder: (context) {
+              final unreadAsync =
+                  ref.watch(unreadNotificationsCountProvider);
+              final unread = unreadAsync.valueOrNull ?? 0;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton(
+                    tooltip: 'Notifications',
+                    onPressed: () async {
+                      await context.push('/notifications');
+                      ref.invalidate(unreadNotificationsCountProvider);
+                    },
+                    icon: const Icon(Icons.notifications_outlined,
+                        color: Colors.black87),
+                  ),
+                  if (unread > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: IgnorePointer(
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: AppColors.danger,
+                            shape: BoxShape.circle,
+                          ),
+                          constraints: const BoxConstraints(
+                              minWidth: 16, minHeight: 16),
+                          child: Text(
+                            unread > 9 ? '9+' : '$unread',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
           if (hasOwnerContext)
             TextButton(
               onPressed: () => switchWorkspaceRole(context, ref, toTenant: false),
@@ -107,6 +197,7 @@ class TenantDashboardScreen extends ConsumerWidget {
               t['move_out_is_emergency']?.toString() == 'true';
 
           return ListView(
+            controller: _scrollController,
             padding: const EdgeInsets.all(20),
             children: [
               Text('Welcome, ${t['full_name']} 👋', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
@@ -201,13 +292,59 @@ class TenantDashboardScreen extends ConsumerWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      Text(
-                        'Status: ${status.replaceAll('_', ' ')}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade700,
+                      const SizedBox(height: 10),
+                      if (status == 'approved' ||
+                          status == 'modified_by_mutual_agreement') ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981)
+                                .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF10B981)
+                                  .withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.check_circle,
+                                      color: Color(0xFF10B981), size: 18),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Approved by Owner',
+                                    style: TextStyle(
+                                      color: Color(0xFF10B981),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Your move-out request for ${proposed ?? 'the proposed date'} has been confirmed by the owner.',
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                  color: Color(0xFF065F46),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
+                      ] else
+                        Text(
+                          'Status: ${status.replaceAll('_', ' ')}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -287,7 +424,13 @@ class TenantDashboardScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 20),
 
-              const Text('Rent & Payments', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              KeyedSubtree(
+                key: _paymentsKey,
+                child: const Text(
+                  'Rent & Payments',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+              ),
               const SizedBox(height: 10),
               Consumer(builder: (context, ref, _) {
                 final invoicesAsync = ref.watch(myInvoicesProvider);
@@ -303,7 +446,8 @@ class TenantDashboardScreen extends ConsumerWidget {
                       );
                     }
                     return Column(
-                      children: invoices.map((inv) {
+                      children: [
+                        ...invoices.map((inv) {
                         final total = double.tryParse(inv['total_amount'].toString()) ?? 0;
                         final paid = double.tryParse(inv['paid_amount'].toString()) ?? 0;
                         final remaining = total - paid;
@@ -330,7 +474,16 @@ class TenantDashboardScreen extends ConsumerWidget {
                             ],
                           ),
                         );
-                      }).toList(),
+                      }),
+                        TextButton.icon(
+                          onPressed: () => showTenantRentPaymentsSheet(
+                            context: context,
+                            ref: ref,
+                          ),
+                          icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                          label: const Text('View dues summary'),
+                        ),
+                      ],
                     );
                   },
                 );
@@ -463,4 +616,166 @@ class TenantDashboardScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Bottom sheet listing outstanding invoices for the logged-in tenant.
+Future<void> showTenantRentPaymentsSheet({
+  required BuildContext context,
+  required WidgetRef ref,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Consumer(
+            builder: (context, ref, _) {
+              final async = ref.watch(myInvoicesProvider);
+              return async.when(
+                loading: () => const SizedBox(
+                  height: 160,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text('Could not load dues: $e'),
+                data: (invoices) {
+                  final due = invoices.where((inv) {
+                    final total =
+                        double.tryParse(inv['total_amount'].toString()) ?? 0;
+                    final paid =
+                        double.tryParse(inv['paid_amount'].toString()) ?? 0;
+                    return total - paid > 0.009;
+                  }).toList();
+
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.black12,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Rent & Payments',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        due.isEmpty
+                            ? 'You have no outstanding dues.'
+                            : 'Outstanding invoices — please clear them with your owner.',
+                        style: const TextStyle(
+                          color: AppColors.slate,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      if (due.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(
+                            child: Icon(Icons.check_circle,
+                                color: Color(0xFF10B981), size: 40),
+                          ),
+                        )
+                      else
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+                          ),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: due.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (_, i) {
+                              final inv = due[i];
+                              final total = double.tryParse(
+                                      inv['total_amount'].toString()) ??
+                                  0;
+                              final paid = double.tryParse(
+                                      inv['paid_amount'].toString()) ??
+                                  0;
+                              final remaining = total - paid;
+                              final dueDate = inv['due_date']
+                                      ?.toString()
+                                      .split('T')
+                                      .first ??
+                                  '—';
+                              return Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF3C7),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(0xFFF59E0B)
+                                        .withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.payments_outlined,
+                                        color: Color(0xFFD97706)),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Due $dueDate',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                          Text(
+                                            'Pending ₹${remaining.toStringAsFixed(0)}',
+                                            style: const TextStyle(
+                                              color: Color(0xFFB45309),
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          child: const Text('Got it'),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      );
+    },
+  );
 }

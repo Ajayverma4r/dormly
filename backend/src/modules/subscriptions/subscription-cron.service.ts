@@ -82,11 +82,25 @@ export class SubscriptionCronService {
         );
         if (existing.length) continue;
 
-        await query(
-          `INSERT INTO notifications (user_id, property_id, type, title, body)
-           VALUES ($1, NULL, $2, $3, $4)`,
-          [owner.user_id, WARNING_TYPE, WARNING_TITLE, WARNING_BODY],
-        );
+        try {
+          await query(
+            `INSERT INTO notifications (user_id, property_id, type, title, body, data)
+             VALUES ($1, NULL, $2, $3, $4, $5::jsonb)`,
+            [
+              owner.user_id,
+              WARNING_TYPE,
+              WARNING_TITLE,
+              WARNING_BODY,
+              JSON.stringify({ route: '/subscription' }),
+            ],
+          );
+        } catch {
+          await query(
+            `INSERT INTO notifications (user_id, property_id, type, title, body)
+             VALUES ($1, NULL, $2, $3, $4)`,
+            [owner.user_id, WARNING_TYPE, WARNING_TITLE, WARNING_BODY],
+          );
+        }
         inserted += 1;
       }
     }

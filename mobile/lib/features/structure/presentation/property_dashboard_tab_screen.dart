@@ -21,7 +21,7 @@ import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../expenses/presentation/add_expense_sheet.dart';
 import '../../expenses/presentation/expense_history_screen.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
-import '../../notifications/data/notifications_repository.dart';
+import '../../notifications/presentation/notifications_providers.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
@@ -250,11 +250,10 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   void _onNotifications(BuildContext context, WidgetRef ref) async {
     // ignore: avoid_print
     print('>>> NOTIFICATION BELL TAPPED <<<');
-    ref.invalidate(_notificationCountProvider);
     await context.push('/notifications');
-    // Refresh badge after returning from the list (backfill may have added items).
+    // Reconcile badge after returning (reads may have changed).
     if (context.mounted) {
-      ref.invalidate(_notificationCountProvider);
+      ref.invalidate(unreadNotificationsCountProvider);
     }
   }
 
@@ -285,7 +284,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ref.invalidate(activityProvider(propertyId));
     ref.invalidate(propertyDetailProvider(propertyId));
     ref.invalidate(myProfileProvider);
-    ref.invalidate(_notificationCountProvider);
+    ref.invalidate(unreadNotificationsCountProvider);
 
     await Future.wait<Object>([
       ref.read(propertyDashboardProvider(propertyId).future).catchError((_) =>
@@ -317,7 +316,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
             profileComplete: false,
             propertyCount: 0,
           )),
-      ref.read(_notificationCountProvider.future).catchError((_) => 0),
+      ref.read(unreadNotificationsCountProvider.future).catchError((_) => 0),
     ]);
   }
 
@@ -327,7 +326,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     final activityAsync = ref.watch(activityProvider(propertyId));
     final propertyAsync = ref.watch(propertyDetailProvider(propertyId));
     final profileAsync = ref.watch(myProfileProvider);
-    final notificationsAsync = ref.watch(_notificationCountProvider);
+    final notificationsAsync = ref.watch(unreadNotificationsCountProvider);
 
     final property = propertyAsync.valueOrNull;
     final propertyTypeKey = property?['property_type_key'] as String?;
@@ -673,11 +672,6 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     );
   }
 }
-
-final _notificationCountProvider = FutureProvider.autoDispose<int>((ref) async {
-  final list = await ref.watch(notificationsRepositoryProvider).list();
-  return list.length;
-});
 
 class _DashboardHeader extends StatelessWidget {
   final String greeting;

@@ -6,6 +6,7 @@
 // ContextService will find this tenancy and offer it as a login context.
 
 import { query } from '@config/db';
+import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
 
 interface CreateTenancyInput {
   propertyId: string;
@@ -320,7 +321,74 @@ export class TenancyService {
         input.waiveNoticePenalty === undefined ? null : input.waiveNoticePenalty,
       ],
     );
-    return this.getById(tenancyId);
+
+    const updated = await this.getById(tenancyId);
+    if (updated && (input.action === 'approve' || input.action === 'modify')) {
+      await this.notifyTenantOfMoveOutDecision(updated, input.action).catch(
+        (err) =>
+          console.warn('[tenancies] tenant move-out notification failed:', err),
+      );
+    }
+    return updated;
+  }
+
+  /** Notify the tenant user that their move-out date was approved/modified. */
+  private async notifyTenantOfMoveOutDecision(
+    tenancy: any,
+    action: 'approve' | 'modify',
+  ) {
+    const tenantUserId = tenancy.user_id ?? tenancy.userId;
+    const propertyId = tenancy.property_id ?? tenancy.propertyId;
+    const tenancyId = tenancy.id;
+    if (!tenantUserId || !tenancyId) return;
+
+    const exitRaw = tenancy.planned_move_out_at ?? tenancy.plannedMoveOutAt;
+    const exitDate = exitRaw ? new Date(exitRaw) : null;
+    const exitLabel =
+      exitDate && !Number.isNaN(exitDate.getTime())
+        ? exitDate.toLocaleDateString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          })
+        : 'the agreed date';
+
+    const title =
+      action === 'modify'
+        ? 'Move-Out Date Updated'
+        : 'Move-Out Notice Approved';
+    const body =
+      action === 'modify'
+        ? `Owner updated your move-out date to ${exitLabel}.`
+        : `Owner has confirmed your move-out date for ${exitLabel}.`;
+    const payload = JSON.stringify({
+      tenancy_id: String(tenancyId),
+      tenancyId: String(tenancyId),
+      property_id: propertyId ? String(propertyId) : null,
+      propertyId: propertyId ? String(propertyId) : null,
+      route: '/tenant-home',
+      action,
+    });
+
+    await ensureNotificationsSchema().catch(() => false);
+
+    try {
+      await query(
+        `INSERT INTO notifications (user_id, property_id, type, title, body, data)
+         VALUES ($1, $2, 'move_out_approved', $3, $4, $5::jsonb)`,
+        [tenantUserId, propertyId ?? null, title, body, payload],
+      );
+      console.log(
+        `>>> INSERTING NOTIFICATION FOR USER: ${tenantUserId} <<< type=move_out_approved`,
+      );
+    } catch (err) {
+      console.error('>>> tenant move_out_approved insert failed <<<', err);
+      await query(
+        `INSERT INTO notifications (user_id, property_id, type, title, body)
+         VALUES ($1, $2, 'move_out_approved', $3, $4)`,
+        [tenantUserId, propertyId ?? null, title, body],
+      );
+    }
   }
 
   async setAgreementUrl(tenancyId: string, url: string) {

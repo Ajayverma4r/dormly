@@ -270,11 +270,30 @@ export class BillingService {
     const body = `Hi ${tenancy.full_name}, your payment of ₹${pending} is due on ${
       new Date((invoice as any).due_date).toLocaleDateString()
     }. Please pay as soon as possible.`;
+    const payload = JSON.stringify({
+      route: '/tenant/dashboard?focus=payments',
+      invoice_id: invoiceId,
+      invoiceId,
+      tenancy_id: (invoice as any).tenancy_id,
+      tenancyId: (invoice as any).tenancy_id,
+      property_id: (invoice as any).property_id,
+      propertyId: (invoice as any).property_id,
+      amount_due: pending,
+    });
 
-    await query(
-      `INSERT INTO notifications (user_id, property_id, type, title, body) VALUES ($1,$2,$3,$4,$5)`,
-      [tenancy.user_id, (invoice as any).property_id, 'rent_reminder', title, body],
-    );
+    try {
+      await query(
+        `INSERT INTO notifications (user_id, property_id, type, title, body, data)
+         VALUES ($1,$2,'rent_reminder',$3,$4,$5::jsonb)`,
+        [tenancy.user_id, (invoice as any).property_id, title, body, payload],
+      );
+    } catch {
+      await query(
+        `INSERT INTO notifications (user_id, property_id, type, title, body)
+         VALUES ($1,$2,'rent_reminder',$3,$4)`,
+        [tenancy.user_id, (invoice as any).property_id, title, body],
+      );
+    }
 
     // eslint-disable-next-line no-console
     console.log(`[REMINDER] -> ${tenancy.phone}: ${title} — ${body}`);

@@ -6,6 +6,7 @@
 
 import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/splash_screen.dart';
+import '../../features/auth/presentation/onboarding_screen.dart';
 import '../../features/auth/presentation/phone_login_screen.dart';
 import '../../features/auth/presentation/otp_verify_screen.dart';
 import '../../features/properties/presentation/empty_dashboard_screen.dart';
@@ -25,6 +26,10 @@ final appRouter = GoRouter(
   initialLocation: '/splash',
   routes: [
     GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
+    GoRoute(
+      path: '/onboarding',
+      builder: (context, state) => const OnboardingScreen(),
+    ),
     GoRoute(path: '/login', builder: (context, state) => const PhoneLoginScreen()),
     GoRoute(
       path: '/otp',
@@ -86,6 +91,11 @@ final appRouter = GoRouter(
       ),
     ),
 
-    GoRoute(path: '/tenant/dashboard', builder: (context, state) => const TenantDashboardScreen()),
+    GoRoute(
+      path: '/tenant/dashboard',
+      builder: (context, state) => TenantDashboardScreen(
+        focusSection: state.uri.queryParameters['focus'],
+      ),
+    ),
   ],
 );

@@ -2,22 +2,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../data/notifications_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../subscription/presentation/paywall_screen.dart';
 import '../../tenancies/presentation/tenant_profile_screen.dart';
-
-final notificationsProvider =
-    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  final items = await ref.watch(notificationsRepositoryProvider).list();
-  // ignore: avoid_print
-  print('>>> FETCHED NOTIFICATIONS COUNT: ${items.length} <<<');
-  // ignore: avoid_print
-  print(
-    '>>> NOTIFICATION TYPES: ${items.map((e) => e['type']).join(' | ')} <<<',
-  );
-  return items;
-});
+import 'notifications_providers.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -31,19 +22,15 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   List<Map<String, dynamic>>? _items;
   Object? _error;
   bool _loading = true;
+  bool _markingAll = false;
 
   @override
   void initState() {
     super.initState();
-    // Force a fresh network fetch immediately — do not rely on cached provider.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadFresh();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFresh());
   }
 
   Future<void> _loadFresh() async {
-    // ignore: avoid_print
-    print('>>> NOTIFICATIONS SCREEN FORCE FETCH <<<');
     setState(() {
       _loading = true;
       _error = null;
@@ -51,20 +38,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     try {
       ref.invalidate(notificationsProvider);
       final list = await ref.read(notificationsRepositoryProvider).list();
-      // ignore: avoid_print
-      print('>>> FETCHED NOTIFICATIONS COUNT: ${list.length} <<<');
-      for (final n in list) {
-        // ignore: avoid_print
-        print('>>> NOTIF: type=${n['type']} title=${n['title']} <<<');
-      }
+      await ref.read(unreadNotificationsCountProvider.notifier).refresh();
       if (!mounted) return;
       setState(() {
         _items = list;
         _loading = false;
       });
-    } catch (e, st) {
-      // ignore: avoid_print
-      print('>>> NOTIFICATIONS FETCH ERROR: $e\n$st <<<');
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e;
@@ -113,6 +93,176 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         type == 'move_out';
   }
 
+  bool _isMoveOutApproved(Map<String, dynamic> n) {
+    final type = (n['type'] ?? '').toString();
+    return type == 'move_out_approved' || type == 'move_out_modified';
+  }
+
+  bool _isSubscription(Map<String, dynamic> n) {
+    final type = (n['type'] ?? '').toString().toLowerCase();
+    return type == 'subscription_ending_soon' ||
+        type == 'subscription_expiry_warning' ||
+        type == 'subscription' ||
+        type.startsWith('subscription_');
+  }
+
+  bool _isRentReminder(Map<String, dynamic> n) {
+    final type = (n['type'] ?? '').toString().toLowerCase();
+    final title = (n['title'] ?? '').toString().toLowerCase();
+    return type == 'rent_reminder' ||
+        type == 'payment_reminder' ||
+        title.contains('rent reminder');
+  }
+
+  /// True when this notification has a known deep-link target.
+  bool _isRoutable(Map<String, dynamic> n) {
+    if (_isMoveOut(n)) {
+      return (_tenancyIdFrom(n)?.isNotEmpty ?? false) &&
+          (_propertyIdFrom(n)?.isNotEmpty ?? false);
+    }
+    if (_isMoveOutApproved(n)) return true;
+    if (_isSubscription(n)) return true;
+    if (_isRentReminder(n)) return true;
+    final data = _asMap(n['data']);
+    final route = data['route']?.toString();
+    return route != null && route.isNotEmpty;
+  }
+
+  IconData _iconFor(Map<String, dynamic> n) {
+    if (_isMoveOutApproved(n)) return Icons.check_circle_rounded;
+    if (_isMoveOut(n)) return Icons.logout_rounded;
+    if (_isSubscription(n)) return Icons.workspace_premium_outlined;
+    if (_isRentReminder(n)) return Icons.payments_outlined;
+    return Icons.notifications_active_outlined;
+  }
+
+  Color _iconColorFor(Map<String, dynamic> n) {
+    if (_isMoveOutApproved(n)) return const Color(0xFF10B981);
+    if (_isRentReminder(n)) return const Color(0xFFD97706);
+    return AppColors.blueprint;
+  }
+
+  Future<void> _routeNotification(
+    BuildContext context,
+    Map<String, dynamic> n,
+  ) async {
+    final type = (n['type'] ?? '').toString();
+    final data = _asMap(n['data']);
+
+    if (_isRentReminder(n) ||
+        type == 'rent_reminder' ||
+        data['route']?.toString().contains('payments') == true) {
+      if (!context.mounted) return;
+      // Land on My Home Rent & Payments (opens dues sheet).
+      context.go('/tenant/dashboard?focus=payments');
+      return;
+    }
+
+    if (_isMoveOutApproved(n)) {
+      // Tenant confirmation — return to My Home.
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(n['body']?.toString() ?? 'Move-out notice confirmed.'),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+      if (context.mounted) context.go('/tenant/dashboard');
+      return;
+    }
+
+    if (_isMoveOut(n) || type == 'move_out_request') {
+      final tenancyId = _tenancyIdFrom(n);
+      final propertyId = _propertyIdFrom(n);
+      if (tenancyId == null ||
+          tenancyId.isEmpty ||
+          propertyId == null ||
+          propertyId.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not open tenant profile for this request.'),
+            ),
+          );
+        }
+        return;
+      }
+      if (!context.mounted) return;
+      await Navigator.of(context).push(
+        TenantProfileScreen.route(
+          propertyId: propertyId,
+          tenancyId: tenancyId,
+        ),
+      );
+      return;
+    }
+
+    if (_isSubscription(n)) {
+      if (!context.mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const PaywallScreen(
+            reason: 'Your subscription is ending soon. Renew to keep Premium.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Generic payload route (e.g. data.route = '/subscription' or named path).
+    final route = data['route']?.toString();
+    if (route == null || route.isEmpty) return;
+
+    if (!context.mounted) return;
+    if (route == '/subscription' ||
+        route == '/paywall' ||
+        route == '/pricing') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+      );
+      return;
+    }
+    if (route.contains('payments') ||
+        route.contains('tenant/dashboard')) {
+      context.go(route.startsWith('/') ? route : '/$route');
+      return;
+    }
+    if (route == '/tenant-profile') {
+      final tenancyId = _tenancyIdFrom(n);
+      final propertyId = _propertyIdFrom(n);
+      if (tenancyId != null &&
+          tenancyId.isNotEmpty &&
+          propertyId != null &&
+          propertyId.isNotEmpty) {
+        await Navigator.of(context).push(
+          TenantProfileScreen.route(
+            propertyId: propertyId,
+            tenancyId: tenancyId,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Fall through: try go_router-style named path via Navigator if registered.
+    try {
+      await Navigator.of(context).pushNamed(route);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No screen for route: $route')),
+        );
+      }
+    }
+  }
+
+  Future<void> _onTap(BuildContext context, Map<String, dynamic> n) async {
+    // Mark read immediately, then deep-link.
+    await _markReadOptimistic(n);
+    if (!context.mounted) return;
+    await _routeNotification(context, n);
+  }
+
   String? _formatTimestamp(dynamic raw) {
     if (raw == null) return null;
     final dt = DateTime.tryParse(raw.toString());
@@ -120,35 +270,65 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     return DateFormat('dd MMM yyyy · hh:mm a').format(dt.toLocal());
   }
 
-  Future<void> _onTap(BuildContext context, Map<String, dynamic> n) async {
-    if (!_isMoveOut(n)) return;
-    final tenancyId = _tenancyIdFrom(n);
-    final propertyId = _propertyIdFrom(n);
-    // ignore: avoid_print
-    print(
-      '>>> MOVE-OUT NOTIF TAP <<< tenancyId=$tenancyId propertyId=$propertyId',
-    );
-    if (tenancyId == null ||
-        tenancyId.isEmpty ||
-        propertyId == null ||
-        propertyId.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not open tenant profile for this request.'),
-          ),
-        );
-      }
-      return;
-    }
+  Future<void> _markReadOptimistic(Map<String, dynamic> n) async {
+    final id = n['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    if (NotificationsRepository.isRead(n)) return;
 
-    await Navigator.of(context).push(
-      TenantProfileScreen.route(
-        propertyId: propertyId,
-        tenancyId: tenancyId,
-      ),
-    );
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    setState(() {
+      _items = [
+        for (final item in _items ?? const <Map<String, dynamic>>[])
+          if (item['id']?.toString() == id)
+            {
+              ...item,
+              'read_at': nowIso,
+              'is_read': true,
+              'isRead': true,
+            }
+          else
+            item,
+      ];
+    });
+    ref.read(unreadNotificationsCountProvider.notifier).optimisticDecrement();
+
+    try {
+      await ref.read(notificationsRepositoryProvider).markRead(id);
+    } catch (_) {
+      // Keep optimistic state; next refresh will reconcile.
+    }
   }
+
+  Future<void> _markAllRead() async {
+    if (_markingAll) return;
+    final unread = (_items ?? const [])
+        .where((n) => !NotificationsRepository.isRead(n))
+        .toList();
+    if (unread.isEmpty) return;
+
+    setState(() {
+      _markingAll = true;
+      final nowIso = DateTime.now().toUtc().toIso8601String();
+      _items = [
+        for (final item in _items ?? const <Map<String, dynamic>>[])
+          {
+            ...item,
+            'read_at': item['read_at'] ?? nowIso,
+            'is_read': true,
+            'isRead': true,
+          },
+      ];
+    });
+    ref.read(unreadNotificationsCountProvider.notifier).optimisticClear();
+
+    try {
+      await ref.read(notificationsRepositoryProvider).markAllRead();
+    } catch (_) {}
+    if (mounted) setState(() => _markingAll = false);
+  }
+
+  bool get _hasUnread =>
+      (_items ?? const []).any((n) => !NotificationsRepository.isRead(n));
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +338,17 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
+          if (_hasUnread)
+            TextButton(
+              onPressed: _markingAll ? null : _markAllRead,
+              child: _markingAll
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Mark all as read'),
+            ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loading ? null : _loadFresh,
@@ -210,21 +401,19 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                               const SizedBox(height: 10),
                           itemBuilder: (context, i) {
                             final n = _items![i];
-                            final tappable = _isMoveOut(n) &&
-                                (_tenancyIdFrom(n)?.isNotEmpty ?? false) &&
-                                (_propertyIdFrom(n)?.isNotEmpty ?? false);
+                            final unread = !NotificationsRepository.isRead(n);
+                            final routable = _isRoutable(n);
                             final ts = _formatTimestamp(
                                 n['created_at'] ?? n['createdAt']);
-                            final icon = _isMoveOut(n)
-                                ? Icons.logout_rounded
-                                : Icons.notifications_active_outlined;
+                            final icon = _iconFor(n);
 
                             return Material(
-                              color: AppColors.surface,
+                              color: unread
+                                  ? AppColors.primarySoft.withValues(alpha: 0.35)
+                                  : AppColors.surface,
                               borderRadius: BorderRadius.circular(14),
                               child: InkWell(
-                                onTap:
-                                    tappable ? () => _onTap(context, n) : null,
+                                onTap: () => _onTap(context, n),
                                 borderRadius: BorderRadius.circular(14),
                                 child: Padding(
                                   padding: const EdgeInsets.all(14),
@@ -232,7 +421,26 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Icon(icon, color: AppColors.blueprint),
+                                      Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          Icon(icon,
+                                              color: _iconColorFor(n)),
+                                          if (unread)
+                                            Positioned(
+                                              right: -2,
+                                              top: -2,
+                                              child: Container(
+                                                width: 8,
+                                                height: 8,
+                                                decoration: const BoxDecoration(
+                                                  color: AppColors.danger,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                       const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(
@@ -241,8 +449,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                           children: [
                                             Text(
                                               n['title']?.toString() ?? '',
-                                              style:
-                                                  theme.textTheme.titleMedium,
+                                              style: theme
+                                                  .textTheme.titleMedium
+                                                  ?.copyWith(
+                                                fontWeight: unread
+                                                    ? FontWeight.w800
+                                                    : FontWeight.w600,
+                                              ),
                                             ),
                                             const SizedBox(height: 2),
                                             Text(
@@ -268,7 +481,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                           ],
                                         ),
                                       ),
-                                      if (tappable)
+                                      if (routable)
                                         const Padding(
                                           padding:
                                               EdgeInsets.only(left: 4, top: 2),

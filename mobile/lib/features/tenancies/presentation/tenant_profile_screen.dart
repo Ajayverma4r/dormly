@@ -1,7 +1,10 @@
 // features/tenancies/presentation/tenant_profile_screen.dart
 //
-// Guest/tenant profile opened from the Guests list. Works for both active
-// and checked-out tenancies (historical stay, ledger, KYC, settlement).
+// Primary tenant details opened from the Guests list (and deep-links).
+// Focused on daily ops: contact, stay, rent history, payment actions, KYC.
+// Checkout / final settlement is available via AppBar ⋮ or a discreet
+// text action at the bottom — not as a dominating primary CTA.
+// Move-out banner appears only when a pending/approved notice exists.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
 import '../../billing/presentation/tenant_ledger_sheet.dart';
+import '../../billing/presentation/whatsapp_reminder.dart';
 import '../data/tenancy_repository.dart';
 import 'add_tenant_screen.dart';
 import 'checkout_settlement_sheet.dart';
@@ -113,6 +117,36 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
     });
   }
 
+  Future<void> _openSettlement(Map<String, dynamic> tenancy) async {
+    final done = await showCheckoutSettlementSheet(
+      context: context,
+      ref: ref,
+      propertyId: widget.propertyId,
+      tenancy: tenancy,
+      isEmergencyExit: _ProfileBody.isEmergencyRequest(tenancy),
+    );
+    if (done) await _refresh();
+  }
+
+  List<Widget>? _appBarActions(Map<String, dynamic> tenancy) {
+    final ended = tenancy['status']?.toString() == 'ended';
+    if (ended) return null;
+    return [
+      PopupMenuButton<String>(
+        tooltip: 'More',
+        onSelected: (value) {
+          if (value == 'checkout') _openSettlement(tenancy);
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'checkout',
+            child: Text('Initiate Move-Out / Settlement'),
+          ),
+        ],
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(
@@ -124,13 +158,20 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
         if (widget.initialTenancy != null) {
           _maybeOpenDues(widget.initialTenancy!);
         }
+        final t = widget.initialTenancy;
         return Scaffold(
-          appBar: AppBar(title: const Text('Guest profile')),
-          body: widget.initialTenancy != null
+          backgroundColor: AppColors.canvas,
+          appBar: AppBar(
+            title: Text(t?['full_name']?.toString() ?? 'Tenant details'),
+            backgroundColor: AppColors.surface,
+            actions: t != null ? _appBarActions(t) : null,
+          ),
+          body: t != null
               ? _ProfileBody(
                   propertyId: widget.propertyId,
-                  tenancy: widget.initialTenancy!,
+                  tenancy: t,
                   onRefresh: _refresh,
+                  onCheckout: () => _openSettlement(t),
                 )
               : const Center(child: CircularProgressIndicator()),
         );
@@ -139,13 +180,20 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
         if (widget.initialTenancy != null) {
           _maybeOpenDues(widget.initialTenancy!);
         }
+        final t = widget.initialTenancy;
         return Scaffold(
-          appBar: AppBar(title: const Text('Guest profile')),
-          body: widget.initialTenancy != null
+          backgroundColor: AppColors.canvas,
+          appBar: AppBar(
+            title: Text(t?['full_name']?.toString() ?? 'Tenant details'),
+            backgroundColor: AppColors.surface,
+            actions: t != null ? _appBarActions(t) : null,
+          ),
+          body: t != null
               ? _ProfileBody(
                   propertyId: widget.propertyId,
-                  tenancy: widget.initialTenancy!,
+                  tenancy: t,
                   onRefresh: _refresh,
+                  onCheckout: () => _openSettlement(t),
                 )
               : Center(child: Text('Could not load profile: $e')),
         );
@@ -155,13 +203,15 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
         return Scaffold(
           backgroundColor: AppColors.canvas,
           appBar: AppBar(
-            title: Text(tenancy['full_name']?.toString() ?? 'Guest profile'),
+            title: Text(tenancy['full_name']?.toString() ?? 'Tenant details'),
             backgroundColor: AppColors.surface,
+            actions: _appBarActions(tenancy),
           ),
           body: _ProfileBody(
             propertyId: widget.propertyId,
             tenancy: tenancy,
             onRefresh: _refresh,
+            onCheckout: () => _openSettlement(tenancy),
           ),
         );
       },
@@ -186,11 +236,13 @@ class _ProfileBody extends ConsumerWidget {
   final String propertyId;
   final Map<String, dynamic> tenancy;
   final Future<void> Function() onRefresh;
+  final Future<void> Function() onCheckout;
 
   const _ProfileBody({
     required this.propertyId,
     required this.tenancy,
     required this.onRefresh,
+    required this.onCheckout,
   });
 
   String get _tenancyId => tenancy['id']?.toString() ?? '';
@@ -227,12 +279,18 @@ class _ProfileBody extends ConsumerWidget {
     final emergency = _emergencyContact(tenancy);
     final room =
         (tenancy['node_name'] ?? tenancy['nodeName'])?.toString() ?? '—';
+    final bed = (tenancy['bed_label'] ??
+            tenancy['bedLabel'] ??
+            tenancy['bed_number'] ??
+            tenancy['bedNumber'])
+        ?.toString();
     final moveIn = _fmtDate(tenancy['move_in_at'] ?? tenancy['moveInAt']);
     final moveOut = _fmtDate(tenancy['move_out_at'] ?? tenancy['moveOutAt']);
     final deposit = _amount(
       tenancy['security_deposit'] ?? tenancy['securityDeposit'],
     );
     final photoUrl = _photoUrl(tenancy, baseUrl);
+    final hasMoveOut = _hasMoveOutRequest(tenancy);
 
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -247,7 +305,7 @@ class _ProfileBody extends ConsumerWidget {
             statusColor: _statusColor,
             photoUrl: photoUrl,
           ),
-          if (!_isEnded && _hasMoveOutRequest(tenancy)) ...[
+          if (!_isEnded && hasMoveOut) ...[
             const SizedBox(height: 12),
             _MoveOutRequestCard(
               tenancy: tenancy,
@@ -260,11 +318,13 @@ class _ProfileBody extends ConsumerWidget {
             title: 'Stay details',
             child: Column(
               children: [
-                _kv('Room', room),
+                _kv('Room / unit', room),
+                if (bed != null && bed.trim().isNotEmpty && bed != room)
+                  _kv('Bed', bed),
                 _kv('Move-in', moveIn ?? '—'),
                 if (_isEnded) _kv('Move-out', moveOut ?? '—'),
                 if (!_isEnded) _kv('Move-out', '— (still residing)'),
-                if (_hasMoveOutRequest(tenancy)) ...[
+                if (hasMoveOut) ...[
                   _kv(
                     'Request submitted',
                     _fmtDateTime(
@@ -287,10 +347,10 @@ class _ProfileBody extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           _SectionCard(
-            title: 'Financial ledger',
+            title: 'Rent & payments',
             trailing: TextButton(
               onPressed: () => _openLedger(context, ref),
-              child: const Text('View ledger'),
+              child: const Text('View history'),
             ),
             child: totalsAsync.when(
               loading: () => const Padding(
@@ -300,7 +360,6 @@ class _ProfileBody extends ConsumerWidget {
               error: (e, _) => Text('Could not load totals: $e'),
               data: (t) {
                 final outstanding = t.outstanding;
-                final refundEstimate = deposit - outstanding;
                 return Column(
                   children: [
                     _kv('Total rent billed', _currency.format(t.billed)),
@@ -312,53 +371,54 @@ class _ProfileBody extends ConsumerWidget {
                     ),
                     const Divider(height: 20),
                     _kv('Security deposit', _currency.format(deposit)),
-                    _kv(
-                      'Est. refund (deposit − dues)',
-                      _currency.format(refundEstimate),
-                      valueColor: refundEstimate >= 0
-                          ? AppColors.positive
-                          : AppColors.danger,
-                    ),
                     if (_isEnded)
                       _kv(
-                        'Refund status',
-                        refundEstimate >= 0
-                            ? 'Settled (see notes / NOC)'
-                            : 'Settled (tenant owed)',
-                      )
-                    else
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: const Text(
-                            'Refund status',
-                            style: TextStyle(
-                              color: AppColors.slate,
-                              fontSize: 13,
+                        'Est. refund (deposit − dues)',
+                        _currency.format(deposit - outstanding),
+                        valueColor: (deposit - outstanding) >= 0
+                            ? AppColors.positive
+                            : AppColors.danger,
+                      ),
+                    if (!_isEnded) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.blueprint,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size.fromHeight(44),
+                              ),
+                              onPressed: () => _openLedger(context, ref),
+                              icon: const Icon(Icons.payments_outlined,
+                                  size: 18),
+                              label: const Text('Record Payment'),
                             ),
                           ),
-                          subtitle: const Text(
-                            'Pending — initiate final settlement to checkout',
-                            style: TextStyle(fontSize: 12),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: whatsAppGreen,
+                                side: const BorderSide(color: whatsAppGreen),
+                                minimumSize: const Size.fromHeight(44),
+                              ),
+                              onPressed: outstanding <= 0.009
+                                  ? null
+                                  : () => sendWhatsAppReminder(
+                                        context,
+                                        phone: phone,
+                                        name: name,
+                                        amount: outstanding,
+                                      ),
+                              icon: const Icon(Icons.chat, size: 18),
+                              label: const Text('Send Reminder'),
+                            ),
                           ),
-                          trailing: const Icon(
-                            Icons.chevron_right,
-                            color: AppColors.blueprint,
-                          ),
-                          onTap: () async {
-                            final done = await showCheckoutSettlementSheet(
-                              context: context,
-                              ref: ref,
-                              propertyId: propertyId,
-                              tenancy: tenancy,
-                              isEmergencyExit: _isEmergencyRequest(tenancy),
-                            );
-                            if (done) await onRefresh();
-                          },
-                        ),
+                        ],
                       ),
+                    ],
                   ],
                 );
               },
@@ -366,7 +426,7 @@ class _ProfileBody extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           _SectionCard(
-            title: 'KYC documents',
+            title: 'KYC & personal details',
             child: docsAsync.when(
               loading: () => const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
@@ -384,24 +444,38 @@ class _ProfileBody extends ConsumerWidget {
                 final kyc = (tenancy['kyc_status'] ?? tenancy['kycStatus'])
                         ?.toString() ??
                     'pending';
-
-                if (docs.isEmpty &&
-                    (agreement == null || agreement.toString().isEmpty) &&
-                    (aadhaar == null || aadhaar.isEmpty)) {
-                  return const Text(
-                    'No KYC documents uploaded yet.',
-                    style: TextStyle(color: AppColors.slate),
-                  );
-                }
+                final email = tenancy['email']?.toString();
+                final address = tenancy['address']?.toString();
+                final occupation = (tenancy['occupation'] ??
+                        tenancy['company_name'] ??
+                        tenancy['companyName'])
+                    ?.toString();
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (email != null && email.trim().isNotEmpty)
+                      _kv('Email', email),
+                    if (address != null && address.trim().isNotEmpty)
+                      _kv('Address', address),
+                    if (occupation != null && occupation.trim().isNotEmpty)
+                      _kv('Occupation', occupation),
                     _kv('KYC status', kyc),
                     if (idType != null && idType.isNotEmpty)
                       _kv('ID type', idType),
                     if (aadhaar != null && aadhaar.isNotEmpty)
                       _kv('Aadhaar', _maskAadhaar(aadhaar)),
+                    if (docs.isEmpty &&
+                        (agreement == null ||
+                            agreement.toString().trim().isEmpty) &&
+                        (aadhaar == null || aadhaar.isEmpty))
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          'No KYC documents uploaded yet.',
+                          style: TextStyle(color: AppColors.slate),
+                        ),
+                      ),
                     ...docs.map((d) {
                       final type =
                           (d['doc_type'] ?? d['docType'])?.toString() ??
@@ -440,31 +514,21 @@ class _ProfileBody extends ConsumerWidget {
               },
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 28),
           if (!_isEnded)
-            SizedBox(
-              height: 52,
-              child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.blueprint,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: () async {
-                  final done = await showCheckoutSettlementSheet(
-                    context: context,
-                    ref: ref,
-                    propertyId: propertyId,
-                    tenancy: tenancy,
-                    isEmergencyExit: _isEmergencyRequest(tenancy),
-                  );
-                  if (done) await onRefresh();
-                },
-                icon: const Icon(Icons.receipt_long_outlined),
-                label: Text(
-                  _isEmergencyRequest(tenancy)
-                      ? 'Proceed to Emergency Settlement'
-                      : 'Initiate Final Settlement',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+            Align(
+              alignment: Alignment.center,
+              child: TextButton(
+                onPressed: onCheckout,
+                style: TextButton.styleFrom(foregroundColor: AppColors.slate),
+                child: const Text(
+                  'Check Out / Final Settlement',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                    decorationColor: AppColors.slate,
+                  ),
                 ),
               ),
             )
@@ -500,7 +564,7 @@ class _ProfileBody extends ConsumerWidget {
     return notice != null && notice.toString().trim().isNotEmpty;
   }
 
-  static bool _isEmergencyRequest(Map<String, dynamic> t) {
+  static bool isEmergencyRequest(Map<String, dynamic> t) {
     return t['move_out_is_emergency'] == true ||
         t['move_out_is_emergency']?.toString() == 'true';
   }
@@ -870,27 +934,55 @@ class _MoveOutRequestCard extends ConsumerWidget {
             'Logged on: $reqLabel',
             style: const TextStyle(fontSize: 12, color: AppColors.slate),
           ),
-          Text(
-            'Status: ${status.replaceAll('_', ' ')}',
-            style: const TextStyle(fontSize: 12, color: AppColors.slate),
-          ),
+          const SizedBox(height: 8),
+          _MoveOutStatusPill(status: status),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.positive,
-                  foregroundColor: Colors.white,
+              if (status == 'pending')
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.positive,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => _review(context, ref, 'approve'),
+                  child: const Text('Approve Notice Date'),
+                )
+              else if (status == 'approved' ||
+                  status == 'modified_by_mutual_agreement')
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check_circle, color: Color(0xFF10B981), size: 18),
+                      SizedBox(width: 6),
+                      Text(
+                        'Notice Approved',
+                        style: TextStyle(
+                          color: Color(0xFF10B981),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                onPressed: () => _review(context, ref, 'approve'),
-                child: const Text('Approve Notice Date'),
-              ),
-              OutlinedButton(
-                onPressed: () => _modifyDate(context, ref),
-                child: const Text('Modify Exit Date'),
-              ),
+              if (status != 'rejected')
+                OutlinedButton(
+                  onPressed: () => _modifyDate(context, ref),
+                  child: const Text('Modify Exit Date'),
+                ),
               if (_isEmergency)
                 FilledButton(
                   style: FilledButton.styleFrom(
@@ -964,6 +1056,74 @@ class _MoveOutRequestCard extends ConsumerWidget {
       ref,
       'modify',
       proposedExitDate: picked.toIso8601String(),
+    );
+  }
+}
+
+class _MoveOutStatusPill extends StatelessWidget {
+  final String status;
+  const _MoveOutStatusPill({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = status.toLowerCase();
+    final isApproved = normalized == 'approved' ||
+        normalized == 'modified_by_mutual_agreement';
+    final label = status.replaceAll('_', ' ');
+
+    if (isApproved) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFF10B981).withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: const Color(0xFF10B981).withValues(alpha: 0.35),
+          ),
+        ),
+        child: Text(
+          'Status: $label',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF10B981),
+          ),
+        ),
+      );
+    }
+
+    if (normalized == 'rejected') {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: AppColors.danger.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          'Status: $label',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppColors.danger,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.caution.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        'Status: $label',
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFFB45309),
+        ),
+      ),
     );
   }
 }
