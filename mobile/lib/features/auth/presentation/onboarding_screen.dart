@@ -12,6 +12,8 @@ const _brandPurple = Color(0xFF6D28D9);
 const _brandPurpleDeep = Color(0xFF5B21B6);
 const _ink = Color(0xFF111827);
 const _muted = Color(0xFF6B7280);
+const _onboardingBg = Color(0xFFF4F0FD);
+
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -56,11 +58,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark.copyWith(
         statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.white,
+        systemNavigationBarColor: _onboardingBg,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: _onboardingBg,
         body: SafeArea(
           child: Column(
             children: [
@@ -69,10 +71,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 child: TextButton(
                   onPressed: _finish,
                   style: TextButton.styleFrom(
-                    foregroundColor: _brandPurple,
+                    foregroundColor: _ink,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
-                      vertical: 12,
+                      vertical: 8,
                     ),
                   ),
                   child: const Text(
@@ -96,17 +98,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
                 child: Column(
                   children: [
                     _PageDots(count: _pageCount, index: _page),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
-                      height: 54,
+                      height: 56,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(28),
                           boxShadow: [
                             BoxShadow(
                               color: _brandPurple.withValues(alpha: 0.35),
@@ -122,7 +124,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             foregroundColor: Colors.white,
                             elevation: 0,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(28),
                             ),
                           ),
                           child: Text(
@@ -151,56 +153,72 @@ class _WelcomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 8),
-          RichText(
-            text: const TextSpan(
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-                color: _ink,
-              ),
-              children: [
-                TextSpan(text: 'Your Home,\n'),
-                TextSpan(
-                  text: 'Made Simple',
-                  style: TextStyle(color: _brandPurple),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Manage stay, payments, complaints and more — all in one app.',
-            style: TextStyle(
-              fontSize: 15,
-              height: 1.45,
-              color: _muted,
-              fontWeight: FontWeight.w400,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Image.asset(
-                  'assets/images/onboarding1.png',
-                  fit: BoxFit.contain,
+    return Column(
+      children: [
+        // Texts sit above the illustration (24px side padding only here).
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
+          child: Column(
+            children: [
+              RichText(
+                textAlign: TextAlign.center,
+                text: const TextSpan(
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                    color: _ink,
+                  ),
+                  children: [
+                    TextSpan(text: 'Your Home,\n'),
+                    TextSpan(
+                      text: 'Made Simple',
+                      style: TextStyle(color: _brandPurple),
+                    ),
+                  ],
                 ),
               ),
-            ),
+              const SizedBox(height: 12),
+              const Text(
+                'Manage stay, payments, complaints and more — all in one app.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: _muted,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+        // Full-bleed image under the text: edge-to-edge width, crop empty top of PNG.
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return ClipRect(
+                child: OverflowBox(
+                  maxWidth: constraints.maxWidth,
+                  maxHeight: double.infinity,
+                  alignment: Alignment.bottomCenter,
+                  child: Image.asset(
+                    'assets/images/onboarding1.png',
+                    width: constraints.maxWidth,
+                    fit: BoxFit.fitWidth,
+                    alignment: Alignment.bottomCenter,
+                    excludeFromSemantics: true,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
+
 
 class _FeaturesPage extends StatelessWidget {
   const _FeaturesPage();
@@ -389,11 +407,11 @@ class _PageDots extends StatelessWidget {
         return AnimatedContainer(
           duration: const Duration(milliseconds: 220),
           margin: const EdgeInsets.symmetric(horizontal: 4),
-          width: active ? 22 : 8,
+          width: 8,
           height: 8,
           decoration: BoxDecoration(
             color: active ? _brandPurple : const Color(0xFFD1D5DB),
-            borderRadius: BorderRadius.circular(8),
+            shape: BoxShape.circle,
           ),
         );
       }),
