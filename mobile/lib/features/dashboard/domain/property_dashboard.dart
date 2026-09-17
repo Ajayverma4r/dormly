@@ -102,15 +102,28 @@ class ActionableInsights {
   final List<DashboardDefaulter> defaulters;
   final int pendingKycCount;
   final int upcomingVacancies;
+  final List<UpcomingVacancy> upcomingVacancyItems;
 
   const ActionableInsights({
     required this.defaulters,
     required this.pendingKycCount,
     required this.upcomingVacancies,
+    this.upcomingVacancyItems = const [],
   });
 
   factory ActionableInsights.fromJson(Map<String, dynamic> json) {
     final raw = json['defaulters'];
+    final rawVacancies =
+        json['upcoming_vacancy_items'] ?? json['upcomingVacancyItems'];
+    final items = rawVacancies is List
+        ? rawVacancies
+            .map((e) => UpcomingVacancy.fromJson(
+                  Map<String, dynamic>.from(e as Map),
+                ))
+            .toList()
+        : const <UpcomingVacancy>[];
+    final count =
+        _asInt(json['upcoming_vacancies'] ?? json['upcomingVacancies']);
     return ActionableInsights(
       defaulters: raw is List
           ? raw
@@ -121,8 +134,43 @@ class ActionableInsights {
           : const [],
       pendingKycCount:
           _asInt(json['pending_kyc_count'] ?? json['pendingKycCount']),
-      upcomingVacancies:
-          _asInt(json['upcoming_vacancies'] ?? json['upcomingVacancies']),
+      upcomingVacancies: count > 0 ? count : items.length,
+      upcomingVacancyItems: items,
+    );
+  }
+}
+
+class UpcomingVacancy {
+  final String tenancyId;
+  final String name;
+  final String room;
+  final String plannedMoveOutAt;
+  final bool isEmergency;
+  final int daysRemaining;
+
+  const UpcomingVacancy({
+    required this.tenancyId,
+    required this.name,
+    required this.room,
+    required this.plannedMoveOutAt,
+    this.isEmergency = false,
+    this.daysRemaining = 0,
+  });
+
+  factory UpcomingVacancy.fromJson(Map<String, dynamic> json) {
+    return UpcomingVacancy(
+      tenancyId:
+          json['tenancy_id']?.toString() ?? json['tenancyId']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      room: json['room']?.toString() ?? '',
+      plannedMoveOutAt: json['planned_move_out_at']?.toString() ??
+          json['plannedMoveOutAt']?.toString() ??
+          '',
+      isEmergency: json['is_emergency'] == true ||
+          json['isEmergency'] == true ||
+          json['is_emergency']?.toString() == 'true',
+      daysRemaining:
+          _asInt(json['days_remaining'] ?? json['daysRemaining']),
     );
   }
 }
@@ -134,6 +182,7 @@ class DashboardDefaulter {
   final String unitDetails;
   final double amountDue;
   final String invoiceId;
+  final String phone;
 
   const DashboardDefaulter({
     required this.tenancyId,
@@ -142,6 +191,7 @@ class DashboardDefaulter {
     required this.unitDetails,
     required this.amountDue,
     required this.invoiceId,
+    this.phone = '',
   });
 
   factory DashboardDefaulter.fromJson(Map<String, dynamic> json) {
@@ -155,6 +205,7 @@ class DashboardDefaulter {
           '',
       amountDue: _asDouble(json['amount_due'] ?? json['amountDue']),
       invoiceId: json['invoice_id']?.toString() ?? json['invoiceId']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
     );
   }
 }

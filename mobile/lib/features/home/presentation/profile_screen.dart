@@ -5,12 +5,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/network/api_config.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user_profile.dart';
 import '../../auth/presentation/profile_creation_screen.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../subscription/presentation/subscription_provider.dart';
-import '../../../core/theme/app_theme.dart';
 
 final myProfileProvider = FutureProvider.autoDispose<UserProfile>((ref) {
   return ref.watch(authRepositoryProvider).fetchMe();
@@ -22,11 +23,7 @@ class ProfileScreen extends ConsumerWidget {
   String _resolveAvatarUrl(String? path) {
     if (path == null || path.isEmpty) return '';
     if (path.startsWith('http')) return path;
-    const base = String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://dormly-backend.onrender.com',
-    );
-    return '$base$path';
+    return '${resolveApiBaseUrl()}$path';
   }
 
   @override

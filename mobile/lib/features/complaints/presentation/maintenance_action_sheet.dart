@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/network/api_config.dart';
 import '../../billing/presentation/whatsapp_reminder.dart' show whatsAppGreen;
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../expenses/presentation/add_expense_sheet.dart';
@@ -651,10 +652,7 @@ String _dialogTitle(Map<String, dynamic> c) {
   return 'Maintenance request';
 }
 
-const _apiBase = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'https://dormly-backend.onrender.com',
-);
+final _apiBase = resolveApiBaseUrl();
 
 String? _complaintImageUrl(Map<String, dynamic> c) {
   for (final key in [

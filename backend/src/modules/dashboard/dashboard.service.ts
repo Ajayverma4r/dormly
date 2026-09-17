@@ -15,6 +15,16 @@ export interface DashboardDefaulter {
   unit_details: string;
   amount_due: number;
   invoice_id: string;
+  phone: string;
+}
+
+export interface UpcomingVacancy {
+  tenancy_id: string;
+  name: string;
+  room: string;
+  planned_move_out_at: string;
+  is_emergency: boolean;
+  days_remaining: number;
 }
 
 export interface PropertyDashboard {
@@ -37,6 +47,7 @@ export interface PropertyDashboard {
     defaulters: DashboardDefaulter[];
     pending_kyc_count: number;
     upcoming_vacancies: number;
+    upcoming_vacancy_items: UpcomingVacancy[];
   };
 }
 
@@ -265,19 +276,148 @@ export class DashboardService {
   }
 
   private async getActionableInsights(propertyId: string) {
-    const [counts, defaulters] = await Promise.all([
+    const [counts, defaulters, upcomingItems] = await Promise.all([
       this.getInsightCounts(propertyId),
       this.getDefaulters(propertyId).catch((err) => {
         console.warn('[dashboard] defaulters query failed:', err);
         return [] as DashboardDefaulter[];
       }),
+      this.getUpcomingVacancies(propertyId).catch((err) => {
+        console.warn('[dashboard] upcoming vacancies list failed:', err);
+        return [] as UpcomingVacancy[];
+      }),
     ]);
+
+    // Backfill owner notifications for pending move-outs (idempotent).
+    void this.backfillMoveOutNotifications(propertyId, upcomingItems).catch(
+      (err) =>
+        console.warn('[dashboard] move-out notification backfill failed:', err),
+    );
 
     return {
       defaulters,
       pending_kyc_count: counts.pending_kyc_count,
-      upcoming_vacancies: counts.upcoming_vacancies,
+      upcoming_vacancies: Math.max(
+        counts.upcoming_vacancies,
+        upcomingItems.length,
+      ),
+      upcoming_vacancy_items: upcomingItems,
     };
+  }
+
+  /** Ensure owners see a move-out notification for each upcoming vacancy. */
+  private async backfillMoveOutNotifications(
+    propertyId: string,
+    items: UpcomingVacancy[],
+  ) {
+    if (!items.length) return;
+
+    const recipients = await query<{ user_id: string }>(
+      `SELECT DISTINCT u.user_id FROM (
+         SELECT o.owner_user_id AS user_id
+         FROM properties p
+         JOIN organizations o ON o.id = p.organization_id
+         WHERE p.id = $1
+         UNION
+         SELECT m.user_id
+         FROM properties p
+         JOIN memberships m ON m.organization_id = p.organization_id
+         WHERE p.id = $1 AND m.role IN ('owner', 'admin')
+       ) u`,
+      [propertyId],
+    );
+    if (!recipients.length) return;
+
+    let hasDataColumn = true;
+    try {
+      const cols = await query<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'notifications' AND column_name = 'data'
+         ) AS exists`,
+      );
+      hasDataColumn = cols[0]?.exists === true;
+    } catch {
+      hasDataColumn = false;
+    }
+
+    for (const item of items) {
+      const title = `Move-Out Request: ${item.name}`;
+      const exitDate = item.planned_move_out_at
+        ? new Date(item.planned_move_out_at)
+        : null;
+      const exitLabel =
+        exitDate && !Number.isNaN(exitDate.getTime())
+          ? exitDate.toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })
+          : 'TBD';
+      const emergencyTag = item.is_emergency ? ' • Emergency' : '';
+      const body = `Proposed exit: ${exitLabel} • Room ${item.room}${emergencyTag}`;
+      const payload = JSON.stringify({
+        tenancyId: item.tenancy_id,
+        propertyId,
+        isEmergency: item.is_emergency,
+      });
+
+      for (const r of recipients) {
+        const existing = await query<{ id: string }>(
+          `SELECT id FROM notifications
+           WHERE user_id = $1
+             AND property_id = $2
+             AND (
+               type = 'move_out_request'
+               OR type = $3
+             )
+             AND (
+               title = $4
+               OR body LIKE $5
+             )
+           LIMIT 1`,
+          [
+            r.user_id,
+            propertyId,
+            `move_out_request:${item.tenancy_id}`,
+            title,
+            `%Room ${item.room}%`,
+          ],
+        );
+        if (existing.length) continue;
+
+        if (hasDataColumn) {
+          const byData = await query<{ id: string }>(
+            `SELECT id FROM notifications
+             WHERE user_id = $1
+               AND property_id = $2
+               AND type = 'move_out_request'
+               AND data->>'tenancyId' = $3
+             LIMIT 1`,
+            [r.user_id, propertyId, item.tenancy_id],
+          );
+          if (byData.length) continue;
+
+          await query(
+            `INSERT INTO notifications (user_id, property_id, type, title, body, data)
+             VALUES ($1, $2, 'move_out_request', $3, $4, $5::jsonb)`,
+            [r.user_id, propertyId, title, body, payload],
+          );
+        } else {
+          await query(
+            `INSERT INTO notifications (user_id, property_id, type, title, body)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              r.user_id,
+              propertyId,
+              `move_out_request:${item.tenancy_id}`,
+              title,
+              body,
+            ],
+          );
+        }
+      }
+    }
   }
 
   private async getInsightCounts(propertyId: string) {
@@ -353,6 +493,7 @@ export class DashboardService {
       node_code: string | null;
       amount_due: string;
       invoice_id: string;
+      phone: string | null;
     }>(
       `WITH overdue_invoices AS (
          SELECT
@@ -382,10 +523,12 @@ export class DashboardService {
          n.name AS room,
          n.code AS node_code,
          tb.amount_due::text,
-         tb.invoice_id::text
+         tb.invoice_id::text,
+         u.phone AS phone
        FROM tenant_balances tb
        JOIN tenancies t ON t.id = tb.tenancy_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
+       JOIN users u ON u.id = t.user_id
        ORDER BY tb.amount_due DESC
        LIMIT 10`,
       [propertyId],
@@ -398,6 +541,100 @@ export class DashboardService {
       unit_details: r.node_code ? `${r.node_code} · ${r.room}` : r.room,
       amount_due: Number(r.amount_due),
       invoice_id: r.invoice_id,
+      phone: r.phone ?? '',
     }));
+  }
+
+  private async getUpcomingVacancies(
+    propertyId: string,
+  ): Promise<UpcomingVacancy[]> {
+    // Prefer full query (emergency flag). Fall back if migration 015 not applied.
+    try {
+      const rows = await query<{
+        tenancy_id: string;
+        name: string;
+        room: string;
+        planned_move_out_at: string;
+        is_emergency: boolean;
+        days_remaining: string;
+      }>(
+        `SELECT
+           t.id AS tenancy_id,
+           t.full_name AS name,
+           n.name AS room,
+           t.planned_move_out_at::text,
+           COALESCE(t.move_out_is_emergency, false) AS is_emergency,
+           GREATEST(
+             0,
+             CEIL(EXTRACT(EPOCH FROM (t.planned_move_out_at - now())) / 86400)
+           )::text AS days_remaining
+         FROM tenancies t
+         JOIN hierarchy_nodes n ON n.id = t.node_id
+         WHERE t.property_id = $1
+           AND t.status = 'active'
+           AND t.planned_move_out_at IS NOT NULL
+           AND t.planned_move_out_at >= now()
+           AND t.planned_move_out_at <= now() + interval '30 days'
+         ORDER BY t.planned_move_out_at ASC
+         LIMIT 10`,
+        [propertyId],
+      );
+
+      return rows.map((r) => ({
+        tenancy_id: r.tenancy_id,
+        name: r.name,
+        room: r.room,
+        planned_move_out_at: r.planned_move_out_at,
+        is_emergency: r.is_emergency === true,
+        days_remaining: Number(r.days_remaining ?? 0),
+      }));
+    } catch (err) {
+      console.warn(
+        '[dashboard] upcoming vacancies v2 failed, trying legacy list:',
+        err,
+      );
+    }
+
+    try {
+      const rows = await query<{
+        tenancy_id: string;
+        name: string;
+        room: string;
+        planned_move_out_at: string;
+        days_remaining: string;
+      }>(
+        `SELECT
+           t.id AS tenancy_id,
+           t.full_name AS name,
+           n.name AS room,
+           t.planned_move_out_at::text,
+           GREATEST(
+             0,
+             CEIL(EXTRACT(EPOCH FROM (t.planned_move_out_at - now())) / 86400)
+           )::text AS days_remaining
+         FROM tenancies t
+         JOIN hierarchy_nodes n ON n.id = t.node_id
+         WHERE t.property_id = $1
+           AND t.status = 'active'
+           AND t.planned_move_out_at IS NOT NULL
+           AND t.planned_move_out_at >= now()
+           AND t.planned_move_out_at <= now() + interval '30 days'
+         ORDER BY t.planned_move_out_at ASC
+         LIMIT 10`,
+        [propertyId],
+      );
+
+      return rows.map((r) => ({
+        tenancy_id: r.tenancy_id,
+        name: r.name,
+        room: r.room,
+        planned_move_out_at: r.planned_move_out_at,
+        is_emergency: false,
+        days_remaining: Number(r.days_remaining ?? 0),
+      }));
+    } catch (err) {
+      console.warn('[dashboard] upcoming vacancies legacy list failed:', err);
+      return [];
+    }
   }
 }

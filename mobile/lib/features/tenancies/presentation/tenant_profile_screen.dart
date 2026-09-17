@@ -62,18 +62,22 @@ class TenantProfileScreen extends ConsumerStatefulWidget {
   final String propertyId;
   final String tenancyId;
   final Map<String, dynamic>? initialTenancy;
+  /// When true, opens the dues / ledger sheet once profile data is ready.
+  final bool openDuesSheet;
 
   const TenantProfileScreen({
     super.key,
     required this.propertyId,
     required this.tenancyId,
     this.initialTenancy,
+    this.openDuesSheet = false,
   });
 
   static Route<void> route({
     required String propertyId,
     required String tenancyId,
     Map<String, dynamic>? initialTenancy,
+    bool openDuesSheet = false,
   }) {
     return MaterialPageRoute(
       settings: const RouteSettings(name: 'tenant-profile'),
@@ -81,6 +85,7 @@ class TenantProfileScreen extends ConsumerStatefulWidget {
         propertyId: propertyId,
         tenancyId: tenancyId,
         initialTenancy: initialTenancy,
+        openDuesSheet: openDuesSheet,
       ),
     );
   }
@@ -91,6 +96,23 @@ class TenantProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
+  bool _duesSheetOpened = false;
+
+  void _maybeOpenDues(Map<String, dynamic> tenancy) {
+    if (!widget.openDuesSheet || _duesSheetOpened) return;
+    _duesSheetOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _ProfileBody.openLedgerStatic(
+        context: context,
+        ref: ref,
+        propertyId: widget.propertyId,
+        tenancy: tenancy,
+        onRefresh: _refresh,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(
@@ -98,38 +120,51 @@ class _TenantProfileScreenState extends ConsumerState<TenantProfileScreen> {
     );
 
     return async.when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: const Text('Guest profile')),
-        body: widget.initialTenancy != null
-            ? _ProfileBody(
-                propertyId: widget.propertyId,
-                tenancy: widget.initialTenancy!,
-                onRefresh: _refresh,
-              )
-            : const Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => Scaffold(
-        appBar: AppBar(title: const Text('Guest profile')),
-        body: widget.initialTenancy != null
-            ? _ProfileBody(
-                propertyId: widget.propertyId,
-                tenancy: widget.initialTenancy!,
-                onRefresh: _refresh,
-              )
-            : Center(child: Text('Could not load profile: $e')),
-      ),
-      data: (tenancy) => Scaffold(
-        backgroundColor: AppColors.canvas,
-        appBar: AppBar(
-          title: Text(tenancy['full_name']?.toString() ?? 'Guest profile'),
-          backgroundColor: AppColors.surface,
-        ),
-        body: _ProfileBody(
-          propertyId: widget.propertyId,
-          tenancy: tenancy,
-          onRefresh: _refresh,
-        ),
-      ),
+      loading: () {
+        if (widget.initialTenancy != null) {
+          _maybeOpenDues(widget.initialTenancy!);
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('Guest profile')),
+          body: widget.initialTenancy != null
+              ? _ProfileBody(
+                  propertyId: widget.propertyId,
+                  tenancy: widget.initialTenancy!,
+                  onRefresh: _refresh,
+                )
+              : const Center(child: CircularProgressIndicator()),
+        );
+      },
+      error: (e, _) {
+        if (widget.initialTenancy != null) {
+          _maybeOpenDues(widget.initialTenancy!);
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('Guest profile')),
+          body: widget.initialTenancy != null
+              ? _ProfileBody(
+                  propertyId: widget.propertyId,
+                  tenancy: widget.initialTenancy!,
+                  onRefresh: _refresh,
+                )
+              : Center(child: Text('Could not load profile: $e')),
+        );
+      },
+      data: (tenancy) {
+        _maybeOpenDues(tenancy);
+        return Scaffold(
+          backgroundColor: AppColors.canvas,
+          appBar: AppBar(
+            title: Text(tenancy['full_name']?.toString() ?? 'Guest profile'),
+            backgroundColor: AppColors.surface,
+          ),
+          body: _ProfileBody(
+            propertyId: widget.propertyId,
+            tenancy: tenancy,
+            onRefresh: _refresh,
+          ),
+        );
+      },
     );
   }
 
@@ -471,6 +506,24 @@ class _ProfileBody extends ConsumerWidget {
   }
 
   Future<void> _openLedger(BuildContext context, WidgetRef ref) async {
+    await openLedgerStatic(
+      context: context,
+      ref: ref,
+      propertyId: propertyId,
+      tenancy: tenancy,
+      onRefresh: onRefresh,
+    );
+  }
+
+  static Future<void> openLedgerStatic({
+    required BuildContext context,
+    required WidgetRef ref,
+    required String propertyId,
+    required Map<String, dynamic> tenancy,
+    required Future<void> Function() onRefresh,
+  }) async {
+    final tenancyId = tenancy['id']?.toString() ?? '';
+    if (tenancyId.isEmpty) return;
     List<Map<String, dynamic>> invoices = const [];
     try {
       invoices =
@@ -481,7 +534,7 @@ class _ProfileBody extends ConsumerWidget {
       context: context,
       ref: ref,
       propertyId: propertyId,
-      tenancyId: _tenancyId,
+      tenancyId: tenancyId,
       tenantName: tenancy['full_name']?.toString() ?? 'Tenant',
       roomLabel:
           (tenancy['node_name'] ?? tenancy['nodeName'])?.toString() ?? 'Room',

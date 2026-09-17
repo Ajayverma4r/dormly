@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../storage/auth_storage.dart';
+import 'api_config.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
@@ -13,10 +14,8 @@ class ApiClient {
   bool _refreshing = false;
 
   ApiClient() {
-    final baseUrl = const String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://dormly-backend.onrender.com',
-    );
+    final baseUrl = resolveApiBaseUrl();
+    debugPrint('>>> API BASE URL: $baseUrl <<<');
 
     final baseOptions = BaseOptions(
       baseUrl: baseUrl,

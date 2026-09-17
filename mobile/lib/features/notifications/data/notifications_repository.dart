@@ -12,6 +12,13 @@ class NotificationsRepository {
 
   Future<List<Map<String, dynamic>>> list() async {
     final res = await _client.dio.get('/v1/notifications');
-    return List<Map<String, dynamic>>.from(res.data['data']);
+    final raw = res.data;
+    final list = raw is Map ? raw['data'] : null;
+    if (list is! List) return const [];
+    return list.map((e) {
+      if (e is Map<String, dynamic>) return e;
+      if (e is Map) return Map<String, dynamic>.from(e);
+      return <String, dynamic>{};
+    }).where((e) => e.isNotEmpty).toList();
   }
 }

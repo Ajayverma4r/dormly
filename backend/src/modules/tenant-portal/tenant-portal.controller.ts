@@ -25,18 +25,26 @@ export class TenantPortalController {
 
   requestMoveOut = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
+      console.log(
+        `>>> POST /v1/tenant-portal/move-out-request <<< ctxId=${req.ctxId} userId=${req.userId}`,
+      );
       const body = moveOutRequestSchema.parse(req.body);
       const tenancy = await service.requestMoveOut(req.ctxId!, {
         proposedExitDate: body.proposedExitDate,
         isEmergency: body.isEmergency,
         reason: body.reason,
       });
+      console.log(
+        `>>> move-out-request OK <<< tenancy=${tenancy?.id} owner=${tenancy?.owner_user_id}`,
+      );
       res.json({ data: tenancy });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: err.errors[0]?.message ?? 'Invalid request' });
       }
       const message = err instanceof Error ? err.message : 'Could not submit move-out request';
+      console.warn(`>>> move-out-request error <<< ${message}`);
+      if (err instanceof Error && err.stack) console.warn(err.stack);
       const status = message.includes('already') || message.includes('past') || message.includes('ended')
         ? 400
         : 500;

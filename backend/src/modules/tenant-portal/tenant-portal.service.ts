@@ -5,6 +5,7 @@
 // scoped token (req.ctxId) — and never accepts a tenancyId from the request.
 
 import { query } from '@config/db';
+import { notifyOwnersOfMoveOut } from '@modules/notifications/move-out-notifications';
 
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -20,6 +21,8 @@ export class TenantPortalService {
          p.name AS property_name,
          p.address AS property_address,
          p.city AS property_city,
+         o.id AS organization_id,
+         o.owner_user_id AS owner_user_id,
          o.name AS organization_name,
          owner_u.phone AS owner_phone,
          owner_u.name AS owner_name
@@ -38,6 +41,7 @@ export class TenantPortalService {
    * Tenant submits a move-out request.
    * - notice_given_at (requestedAt) is set once and never overwritten.
    * - planned_move_out_at is the proposed exit date (must be >= today).
+   * - Always ensures owner notifications exist (even if request was already pending).
    */
   async requestMoveOut(
     tenancyId: string,
@@ -48,9 +52,21 @@ export class TenantPortalService {
     if (existing.status !== 'active') {
       throw new Error('Only active tenancies can request move-out.');
     }
-    if (existing.move_out_request_status === 'pending' ||
-        existing.move_out_request_status === 'approved' ||
-        existing.move_out_request_status === 'modified_by_mutual_agreement') {
+
+    const alreadyFiled =
+      existing.move_out_request_status === 'pending' ||
+      existing.move_out_request_status === 'approved' ||
+      existing.move_out_request_status === 'modified_by_mutual_agreement';
+
+    // If already on file, still ensure the owner notification exists, then return.
+    if (alreadyFiled) {
+      console.log(
+        `[tenant-portal] move-out already on file tenancy=${tenancyId}; ensuring notifications`,
+      );
+      const ensured = await notifyOwnersOfMoveOut(existing);
+      console.log(
+        `[tenant-portal] ensured move-out notifications count=${ensured}`,
+      );
       throw new Error('A move-out request is already on file for this tenancy.');
     }
 
@@ -88,6 +104,27 @@ export class TenantPortalService {
       ],
     );
     if (!rows[0]) throw new Error('Could not save move-out request.');
-    return this.getMyTenancy(tenancyId);
+
+    const updated = await this.getMyTenancy(tenancyId);
+    if (!updated) throw new Error('Could not reload tenancy after move-out request.');
+
+    console.log(
+      `[tenant-portal] move-out saved tenancy=${tenancyId} owner=${updated.owner_user_id}`,
+    );
+    try {
+      const ensured = await notifyOwnersOfMoveOut(updated);
+      console.log(
+        `[tenant-portal] move-out notifications ensured=${ensured} owner=${updated.owner_user_id}`,
+      );
+      if (!ensured) {
+        console.error(
+          '[tenant-portal] CRITICAL: move-out saved but zero notifications written',
+        );
+      }
+    } catch (err) {
+      console.error('[tenant-portal] move-out notification threw:', err);
+    }
+
+    return updated;
   }
 }

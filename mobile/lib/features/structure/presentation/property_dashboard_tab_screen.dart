@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/network/api_config.dart';
 import '../../billing/presentation/billing_insights_sheet.dart';
 import '../../billing/presentation/billing_providers.dart';
 import '../../billing/presentation/collection_breakdown_sheet.dart';
@@ -26,6 +27,9 @@ import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 import '../../tenancies/presentation/add_tenant_screen.dart';
 import '../../tenancies/presentation/pending_kyc_sheet.dart';
+import '../../billing/presentation/whatsapp_reminder.dart';
+import '../../tenancies/data/tenancy_repository.dart';
+import '../../tenancies/presentation/tenant_profile_screen.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show activityProvider;
 import 'property_shell_screen.dart' show propertyDetailProvider;
 
@@ -70,11 +74,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   String _resolveAvatarUrl(String? path) {
     if (path == null || path.isEmpty) return '';
     if (path.startsWith('http')) return path;
-    const base = String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://dormly-backend.onrender.com',
-    );
-    return '$base$path';
+    return '${resolveApiBaseUrl()}$path';
   }
 
   String _propertySubtitle(Map<String, dynamic>? property) {
@@ -247,8 +247,15 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     }
   }
 
-  void _onNotifications(BuildContext context) {
-    context.push('/notifications');
+  void _onNotifications(BuildContext context, WidgetRef ref) async {
+    // ignore: avoid_print
+    print('>>> NOTIFICATION BELL TAPPED <<<');
+    ref.invalidate(_notificationCountProvider);
+    await context.push('/notifications');
+    // Refresh badge after returning from the list (backfill may have added items).
+    if (context.mounted) {
+      ref.invalidate(_notificationCountProvider);
+    }
   }
 
   void _onProfileTap(BuildContext context) {
@@ -345,7 +352,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                 notificationCount: notificationCount,
                 profile: null,
                 avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context),
+                onNotifications: () => _onNotifications(context, ref),
                 onProfile: () => _onProfileTap(context),
               ),
               error: (_, __) => _DashboardHeader(
@@ -354,7 +361,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                 notificationCount: notificationCount,
                 profile: null,
                 avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context),
+                onNotifications: () => _onNotifications(context, ref),
                 onProfile: () => _onProfileTap(context),
               ),
               data: (p) => _DashboardHeader(
@@ -363,7 +370,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                 notificationCount: notificationCount,
                 profile: p,
                 avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context),
+                onNotifications: () => _onNotifications(context, ref),
                 onProfile: () => _onProfileTap(context),
               ),
             ),
@@ -503,12 +510,18 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                     const SizedBox(height: 28),
                     const _SectionTitle('Rent Defaulters'),
                     const SizedBox(height: 12),
-                    _RentDefaultersSection(defaulters: insights.defaulters),
+                    _RentDefaultersSection(
+                      propertyId: propertyId,
+                      defaulters: insights.defaulters,
+                    ),
                     const SizedBox(height: 28),
                     const _SectionTitle('Upcoming Vacancies'),
                     const SizedBox(height: 12),
+                    // Explicit tap target — no AbsorbPointer/IgnorePointer ancestors.
                     _UpcomingVacanciesCard(
+                      propertyId: propertyId,
                       noticeCount: insights.upcomingVacancies,
+                      items: insights.upcomingVacancyItems,
                     ),
                   ],
                 );
@@ -710,8 +723,13 @@ class _DashboardHeader extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 IconButton(
+                  tooltip: 'Notifications',
                   visualDensity: VisualDensity.compact,
-                  onPressed: onNotifications,
+                  onPressed: () {
+                    // ignore: avoid_print
+                    print('>>> NOTIFICATION BELL TAPPED <<<');
+                    onNotifications();
+                  },
                   icon: const Icon(Icons.notifications_outlined,
                       color: AppColors.ink),
                 ),
@@ -719,21 +737,25 @@ class _DashboardHeader extends StatelessWidget {
                   Positioned(
                     right: 6,
                     top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: AppColors.danger,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints:
-                          const BoxConstraints(minWidth: 16, minHeight: 16),
-                      child: Text(
-                        notificationCount > 9 ? '9+' : '$notificationCount',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: AppColors.danger,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints:
+                            const BoxConstraints(minWidth: 16, minHeight: 16),
+                        child: Text(
+                          notificationCount > 9
+                              ? '9+'
+                              : '$notificationCount',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
@@ -1615,15 +1637,45 @@ class _NeedsAttentionSection extends StatelessWidget {
 }
 
 class _RentDefaultersSection extends StatelessWidget {
+  final String propertyId;
   final List<DashboardDefaulter> defaulters;
 
-  const _RentDefaultersSection({required this.defaulters});
+  const _RentDefaultersSection({
+    required this.propertyId,
+    required this.defaulters,
+  });
 
   String _formatCurrency(double value) => '₹${value.toStringAsFixed(0)}';
 
-  void _sendReminder(BuildContext context, DashboardDefaulter d) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Payment reminder sent to ${d.name}')),
+  Future<void> _openProfile(
+    BuildContext context,
+    DashboardDefaulter d, {
+    bool openDues = true,
+  }) async {
+    if (d.tenancyId.isEmpty) return;
+    await Navigator.of(context).push(
+      TenantProfileScreen.route(
+        propertyId: propertyId,
+        tenancyId: d.tenancyId,
+        openDuesSheet: openDues,
+        initialTenancy: {
+          'id': d.tenancyId,
+          'full_name': d.name,
+          'node_name': d.room,
+          'phone': d.phone,
+          'has_due': true,
+          'status': 'active',
+        },
+      ),
+    );
+  }
+
+  Future<void> _sendReminder(BuildContext context, DashboardDefaulter d) {
+    return sendWhatsAppReminder(
+      context,
+      phone: d.phone,
+      name: d.name,
+      amount: d.amountDue,
     );
   }
 
@@ -1669,45 +1721,54 @@ class _RentDefaultersSection extends StatelessWidget {
         children: [
           for (var i = 0; i < top.length; i++) ...[
             if (i > 0) const Divider(height: 1, indent: 16, endIndent: 16),
-            ListTile(
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              leading: CircleAvatar(
-                backgroundColor: const Color(0xFFFEE2E2),
-                child: Text(
-                  top[i].name.isNotEmpty ? top[i].name[0].toUpperCase() : '?',
-                  style: const TextStyle(
-                    color: Color(0xFFDC2626),
-                    fontWeight: FontWeight.w800,
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => _openProfile(context, top[i]),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  leading: CircleAvatar(
+                    backgroundColor: const Color(0xFFFEE2E2),
+                    child: Text(
+                      top[i].name.isNotEmpty
+                          ? top[i].name[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Color(0xFFDC2626),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              title: Text(
-                top[i].name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                  color: AppColors.ink,
-                ),
-              ),
-              subtitle: Text(
-                '${top[i].unitDetails.isNotEmpty ? top[i].unitDetails : top[i].room} · ${_formatCurrency(top[i].amountDue)} due',
-                style: const TextStyle(fontSize: 12, color: AppColors.slate),
-              ),
-              trailing: IconButton(
-                tooltip: 'In-app remind',
-                onPressed: () => _sendReminder(context, top[i]),
-                icon: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: PropertyDashboardTabScreen._brandPurple
-                        .withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
+                  title: Text(
+                    top[i].name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: AppColors.ink,
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.notifications_active_outlined,
-                    color: PropertyDashboardTabScreen._brandPurple,
-                    size: 20,
+                  subtitle: Text(
+                    '${top[i].unitDetails.isNotEmpty ? top[i].unitDetails : top[i].room} · ${_formatCurrency(top[i].amountDue)} due',
+                    style:
+                        const TextStyle(fontSize: 12, color: AppColors.slate),
+                  ),
+                  trailing: IconButton(
+                    tooltip: 'WhatsApp reminder',
+                    onPressed: () => _sendReminder(context, top[i]),
+                    icon: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: PropertyDashboardTabScreen._brandPurple
+                            .withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.notifications_active_outlined,
+                        color: PropertyDashboardTabScreen._brandPurple,
+                        size: 20,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1719,14 +1780,222 @@ class _RentDefaultersSection extends StatelessWidget {
   }
 }
 
-class _UpcomingVacanciesCard extends StatelessWidget {
+class _UpcomingVacanciesCard extends ConsumerWidget {
+  final String propertyId;
   final int noticeCount;
+  final List<UpcomingVacancy> items;
 
-  const _UpcomingVacanciesCard({required this.noticeCount});
+  const _UpcomingVacanciesCard({
+    required this.propertyId,
+    required this.noticeCount,
+    this.items = const [],
+  });
+
+  Future<List<UpcomingVacancy>> _resolveItems(WidgetRef ref) async {
+    if (items.isNotEmpty) return items;
+    try {
+      final rows = await ref
+          .read(tenancyRepositoryProvider)
+          .listByProperty(propertyId);
+      final now = DateTime.now();
+      final horizon = now.add(const Duration(days: 30));
+      final resolved = <UpcomingVacancy>[];
+      for (final r in rows) {
+        if (r['status']?.toString() != 'active') continue;
+        final raw = r['planned_move_out_at'] ?? r['plannedMoveOutAt'];
+        if (raw == null) continue;
+        final exit = DateTime.tryParse(raw.toString());
+        if (exit == null) continue;
+        if (exit.isBefore(now.subtract(const Duration(days: 1)))) continue;
+        if (exit.isAfter(horizon)) continue;
+        final days = exit.difference(now).inDays.clamp(0, 999);
+        resolved.add(
+          UpcomingVacancy(
+            tenancyId: r['id']?.toString() ?? '',
+            name: r['full_name']?.toString() ??
+                r['fullName']?.toString() ??
+                'Tenant',
+            room: (r['node_name'] ?? r['nodeName'] ?? '—').toString(),
+            plannedMoveOutAt: exit.toIso8601String(),
+            isEmergency: r['move_out_is_emergency'] == true ||
+                r['move_out_is_emergency']?.toString() == 'true',
+            daysRemaining: days,
+          ),
+        );
+      }
+      resolved.sort(
+        (a, b) => a.plannedMoveOutAt.compareTo(b.plannedMoveOutAt),
+      );
+      return resolved;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _openVacancy(
+    BuildContext context,
+    UpcomingVacancy item,
+  ) async {
+    // ignore: avoid_print
+    print('>>> VACANCY CLICKED <<< tenancyId=${item.tenancyId}');
+    if (item.tenancyId.isEmpty) return;
+    await Navigator.of(context).push(
+      TenantProfileScreen.route(
+        propertyId: propertyId,
+        tenancyId: item.tenancyId,
+        initialTenancy: {
+          'id': item.tenancyId,
+          'full_name': item.name,
+          'node_name': item.room,
+          'status': 'active',
+          'planned_move_out_at': item.plannedMoveOutAt,
+          'move_out_request_status': 'pending',
+          'move_out_is_emergency': item.isEmergency,
+        },
+      ),
+    );
+  }
+
+  Future<void> _onTap(BuildContext context, WidgetRef ref) async {
+    // ignore: avoid_print
+    print('>>> VACANCY CLICKED <<< propertyId=$propertyId');
+    final resolved = await _resolveItems(ref);
+    // ignore: avoid_print
+    print(
+      '>>> VACANCY RESOLVED <<< count=${resolved.length} '
+      'ids=${resolved.map((e) => e.tenancyId).join(",")}',
+    );
+
+    if (resolved.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No move-out details available yet. Pull to refresh.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+
+    if (resolved.length == 1) {
+      await _openVacancy(context, resolved.first);
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Upcoming Vacancies',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${resolved.length} tenants moving out in the next 30 days',
+                  style: const TextStyle(color: AppColors.slate, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(ctx).height * 0.5,
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: resolved.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final v = resolved[i];
+                      final days = v.daysRemaining;
+                      final dayLabel = days <= 0
+                          ? 'today'
+                          : days == 1
+                              ? 'in 1 day'
+                              : 'in $days days';
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEDE9FE),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: const Icon(
+                            Icons.meeting_room_outlined,
+                            color: PropertyDashboardTabScreen._brandPurple,
+                          ),
+                        ),
+                        title: Text(
+                          v.name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                        subtitle: Text(
+                          'Room ${v.room} · moving out $dayLabel'
+                          '${v.isEmergency ? ' · Emergency' : ''}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.slate,
+                          ),
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          _openVacancy(context, v);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _headline() {
+    if (items.isEmpty) {
+      return '$noticeCount Tenant${noticeCount == 1 ? '' : 's'} moving out in 30 days';
+    }
+    if (items.length == 1) {
+      final v = items.first;
+      final days = v.daysRemaining;
+      final dayLabel = days <= 0
+          ? 'today'
+          : days == 1
+              ? 'in 1 day'
+              : 'in $days days';
+      return '${v.name} • Room ${v.room} moving out $dayLabel';
+    }
+    final first = items.first;
+    return '${first.name} • Room ${first.room} +${items.length - 1} more moving out';
+  }
 
   @override
-  Widget build(BuildContext context) {
-    if (noticeCount == 0) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (noticeCount == 0 && items.isEmpty) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -1754,46 +2023,63 @@ class _UpcomingVacanciesCard extends StatelessWidget {
       );
     }
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primaryMuted),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEDE9FE),
-              borderRadius: BorderRadius.circular(14),
+    // Bare GestureDetector — no Material/InkWell that can interfere with hits.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        // ignore: avoid_print
+        print('>>> VACANCY CLICKED <<<');
+        _onTap(context, ref);
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.primaryMuted),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
             ),
-            alignment: Alignment.center,
-            child: const Text('🚪', style: TextStyle(fontSize: 24)),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              '🚪 $noticeCount Tenant${noticeCount == 1 ? '' : 's'} moving out in 30 days',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: AppColors.ink,
-                height: 1.35,
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEDE9FE),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(
+                Icons.meeting_room_outlined,
+                color: PropertyDashboardTabScreen._brandPurple,
+                size: 26,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                _headline(),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.ink,
+                  height: 1.35,
+                ),
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.slate,
+            ),
+          ],
+        ),
       ),
     );
   }
