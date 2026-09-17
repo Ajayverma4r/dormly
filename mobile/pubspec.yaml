@@ -46,14 +46,18 @@ flutter_launcher_icons:
   remove_alpha_ios: true
 
 # Generate native splash: dart run flutter_native_splash:create
+# Pre-12: full login_bg. Android 12+: solid top-blue + white logo (API limits).
+# Do not set top-level `color` together with `background_image` — only one applies.
 flutter_native_splash:
-  color: "#2451B4"
-  image: assets/images/logo.png
+  background_image: "assets/images/login_bg.png"
+  fullscreen: true
   android: true
   ios: true
+  # Sampled from login_bg.png top-center pixel (#0127C6). White logo is
+  # transparent so the system color shows through the building cutouts.
   android_12:
-    color: "#2451B4"
-    image: assets/images/logo.png
+    color: "#0127C6"
+    image: "assets/images/splash_logo_white.png"
   web: false
 
 flutter:

@@ -1,13 +1,12 @@
 // features/auth/presentation/splash_screen.dart
 //
-// Branded opening screen. Shown for at least ~1.8s while we restore a stored
-// session in the background, then routes to dashboard / onboarding / login.
+// Premium splash: full-screen login_bg.png, staggered logo + tagline fade,
+// then session restore or login.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/theme/app_theme.dart';
 import '../data/auth_repository.dart';
 import 'login_flow.dart';
 
@@ -18,50 +17,37 @@ class SplashScreen extends ConsumerStatefulWidget {
   ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends ConsumerState<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  static const _minDisplay = Duration(milliseconds: 1800);
-
-  late final AnimationController _anim;
-  late final Animation<double> _fade;
-  late final Animation<double> _scale;
+class _SplashScreenState extends ConsumerState<SplashScreen> {
+  // Start visible so Android 12+ system splash (logo on blue) does not blink
+  // off when the Flutter splash takes over.
+  bool _showLogo = true;
+  bool _showTagline = false;
 
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
-    _fade = CurvedAnimation(parent: _anim, curve: Curves.easeOut);
-    _scale = Tween<double>(begin: 0.92, end: 1.0).animate(
-      CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic),
-    );
-    _anim.forward();
-    _bootstrap();
+    _runSequence();
   }
 
-  @override
-  void dispose() {
-    _anim.dispose();
-    super.dispose();
-  }
-
-  Future<void> _bootstrap() async {
-    final started = DateTime.now();
+  Future<void> _runSequence() async {
     final authRepo = ref.read(authRepositoryProvider);
     var hasSession = false;
 
-    try {
-      hasSession = await authRepo.hasPersistedSession();
-    } catch (e) {
+    final sessionFuture = authRepo.hasPersistedSession().then((v) {
+      hasSession = v;
+    }).catchError((Object e) {
       debugPrint('Splash session read failed (non-fatal): $e');
-    }
+    });
 
-    final remaining = _minDisplay - DateTime.now().difference(started);
-    if (remaining > Duration.zero) {
-      await Future.delayed(remaining);
-    }
+    // Logo is already visible (matches Android 12 native splash icon).
+    // Tagline fades in at ~1200ms.
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (!mounted) return;
+    setState(() => _showTagline = true);
+
+    // Navigate at ~3000ms total.
+    await Future.delayed(const Duration(milliseconds: 1800));
+    await sessionFuture;
     if (!mounted) return;
 
     if (hasSession) {
@@ -88,81 +74,83 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         statusBarBrightness: Brightness.dark,
         systemNavigationBarColor: Colors.white,
         systemNavigationBarIconBrightness: Brightness.dark,
-        systemNavigationBarDividerColor: Colors.transparent,
       ),
+      // Opaque blue matches login_bg so there is no gray theme flash
+      // while the background image decodes (native splash already shows it).
       child: Scaffold(
-        backgroundColor: AppColors.logoBlue,
+        backgroundColor: const Color(0xFF0127C6),
         body: Container(
           width: double.infinity,
+          height: double.infinity,
           decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.logoBlueDark, AppColors.logoBlue],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+            image: DecorationImage(
+              image: AssetImage('assets/images/login_bg.png'),
+              fit: BoxFit.cover,
             ),
           ),
           child: SafeArea(
-            child: FadeTransition(
-              opacity: _fade,
-              child: ScaleTransition(
-                scale: _scale,
-                child: Column(
-                  children: [
-                    const Spacer(flex: 3),
-                    Container(
-                      width: 112,
-                      height: 112,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.22),
-                            blurRadius: 24,
-                            offset: const Offset(0, 10),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedOpacity(
+                    opacity: _showLogo ? 1 : 0,
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOut,
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 110,
+                          height: 110,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(28),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                blurRadius: 24,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          fit: BoxFit.cover,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: Image.asset(
+                              'assets/images/logo.png',
+                              fit: BoxFit.cover,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 24),
+                        const Text(
+                          'Dormly',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 42,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.6,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 28),
-                    const Text(
-                      'Dormly',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 42,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.6,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'One platform, every property.',
+                  ),
+                  const SizedBox(height: 12),
+                  AnimatedOpacity(
+                    opacity: _showTagline ? 1 : 0,
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOut,
+                    child: Text(
+                      'One property. Every property.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Colors.white70,
+                        color: Colors.white.withValues(alpha: 0.78),
                         fontSize: 16,
-                        height: 1.4,
+                        fontStyle: FontStyle.italic,
                         fontWeight: FontWeight.w400,
+                        height: 1.35,
                       ),
                     ),
-                    const Spacer(flex: 2),
-                    const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: Colors.white70,
-                      ),
-                    ),
-                    const SizedBox(height: 40),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),

@@ -20,18 +20,53 @@ import 'widgets/unit_selection_cascade.dart';
 /// Result popped when the user chooses to create a room from the empty state.
 const addTenantCreateRoomResult = 'create_room';
 
+/// Prefill for Re-Admit / Assign New Room from a past tenancy.
+class TenantPrefill {
+  final String? fullName;
+  final String? phone;
+  final String? email;
+  final String? address;
+  final String? companyName;
+  final String? aadhaarNumber;
+  final String? notes;
+
+  const TenantPrefill({
+    this.fullName,
+    this.phone,
+    this.email,
+    this.address,
+    this.companyName,
+    this.aadhaarNumber,
+    this.notes,
+  });
+
+  factory TenantPrefill.fromTenancy(Map<String, dynamic> t) {
+    return TenantPrefill(
+      fullName: t['full_name']?.toString(),
+      phone: t['phone']?.toString(),
+      email: t['email']?.toString(),
+      address: t['address']?.toString(),
+      companyName: (t['company_name'] ?? t['companyName'])?.toString(),
+      aadhaarNumber: (t['aadhaar_number'] ?? t['aadhaarNumber'])?.toString(),
+      notes: t['notes']?.toString(),
+    );
+  }
+}
+
 /// Opens Add Tenant; if the user taps "Create Room Now", opens the room sheet.
 Future<void> openAddTenantFlow({
   required BuildContext context,
   required WidgetRef ref,
   required String propertyId,
   String? nodeId,
+  TenantPrefill? prefill,
 }) async {
   final result = await Navigator.of(context).push<Object?>(
     MaterialPageRoute(
       builder: (_) => AddTenantScreen(
         propertyId: propertyId,
         nodeId: nodeId,
+        prefill: prefill,
       ),
     ),
   );
@@ -51,10 +86,14 @@ class AddTenantScreen extends ConsumerStatefulWidget {
   /// When opened from a specific room/bed card, pre-select that unit.
   final String? nodeId;
 
+  /// When re-admitting a checked-out guest, pre-fill identity fields.
+  final TenantPrefill? prefill;
+
   const AddTenantScreen({
     super.key,
     required this.propertyId,
     this.nodeId,
+    this.prefill,
   });
 
   @override
@@ -81,6 +120,23 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   void initState() {
     super.initState();
     _selectedNodeId = widget.nodeId;
+    final p = widget.prefill;
+    if (p != null) {
+      if (p.fullName != null) _nameController.text = p.fullName!;
+      if (p.phone != null) {
+        final digits = p.phone!.replaceAll(RegExp(r'\D'), '');
+        _phoneController.text = digits.length > 10
+            ? digits.substring(digits.length - 10)
+            : digits;
+      }
+      if (p.email != null) _emailController.text = p.email!;
+      if (p.address != null) _addressController.text = p.address!;
+      if (p.companyName != null) _companyController.text = p.companyName!;
+      if (p.aadhaarNumber != null) {
+        _aadhaarController.text = p.aadhaarNumber!;
+      }
+      if (p.notes != null) _notesController.text = p.notes!;
+    }
   }
 
   Future<void> _pickMoveInDate() async {
@@ -353,7 +409,13 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
         _phoneController.text.trim().isNotEmpty;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Tenant')),
+      appBar: AppBar(
+        title: Text(
+          widget.prefill != null
+              ? 'Re-Admit Guest'
+              : 'Add Tenant',
+        ),
+      ),
       body: levelsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Could not load structure: $e')),

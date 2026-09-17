@@ -12,6 +12,7 @@ tenancyRouter.get('/:tenancyId/documents', controller.listDocuments);
 tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.create);
 tenancyRouter.patch('/:tenancyId', requireRole('owner', 'admin', 'manager'), controller.update);
 tenancyRouter.post('/:tenancyId/end', requireRole('owner', 'admin', 'manager'), controller.endTenancy);
+tenancyRouter.post('/:tenancyId/move-out-request/review', requireRole('owner', 'admin', 'manager'), controller.reviewMoveOutRequest);
 tenancyRouter.post('/:tenancyId/agreement', requireRole('owner', 'admin', 'manager'), uploadAgreementMiddleware, controller.uploadAgreement);
 tenancyRouter.post('/:tenancyId/profile-photo', requireRole('owner', 'admin', 'manager'), uploadProfilePhotoMiddleware, controller.uploadProfilePhoto);
 tenancyRouter.post('/:tenancyId/documents', requireRole('owner', 'admin', 'manager'), uploadTenantDocumentMiddleware, controller.uploadDocument);

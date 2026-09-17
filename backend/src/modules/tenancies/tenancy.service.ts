@@ -257,6 +257,72 @@ export class TenancyService {
     return this.update(tenancyId, { status: 'ended', moveOutAt: new Date().toISOString() });
   }
 
+  /**
+   * Owner reviews a tenant move-out request.
+   * Never overwrites notice_given_at (immutable audit timestamp).
+   */
+  async reviewMoveOutRequest(
+    tenancyId: string,
+    input: {
+      action: 'approve' | 'modify' | 'reject';
+      proposedExitDate?: string;
+      waiveNoticePenalty?: boolean;
+    },
+  ) {
+    const existing = await this.getById(tenancyId);
+    if (!existing) throw new Error('Tenancy not found.');
+    if (!existing.move_out_request_status && !existing.notice_given_at) {
+      throw new Error('No move-out request on file for this tenancy.');
+    }
+
+    if (input.action === 'reject') {
+      await query(
+        `UPDATE tenancies SET
+           move_out_request_status = 'rejected',
+           updated_at = now()
+         WHERE id = $1`,
+        [tenancyId],
+      );
+      return this.getById(tenancyId);
+    }
+
+    let proposedIso: string | null = null;
+    if (input.action === 'modify') {
+      if (!input.proposedExitDate) {
+        throw new Error('proposedExitDate is required when modifying.');
+      }
+      const proposed = new Date(input.proposedExitDate);
+      if (Number.isNaN(proposed.getTime())) throw new Error('Invalid proposed exit date.');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const day = new Date(proposed);
+      day.setHours(0, 0, 0, 0);
+      if (day < today) {
+        throw new Error('Modified exit date cannot be in the past.');
+      }
+      proposedIso = day.toISOString();
+    }
+
+    const status =
+      input.action === 'approve' ? 'approved' : 'modified_by_mutual_agreement';
+
+    await query(
+      `UPDATE tenancies SET
+         move_out_request_status = $2::move_out_request_status,
+         planned_move_out_at = COALESCE($3::timestamptz, planned_move_out_at),
+         move_out_waive_notice_penalty = COALESCE($4, move_out_waive_notice_penalty),
+         updated_at = now()
+       WHERE id = $1`,
+      [
+        tenancyId,
+        status,
+        proposedIso,
+        input.waiveNoticePenalty === undefined ? null : input.waiveNoticePenalty,
+      ],
+    );
+    return this.getById(tenancyId);
+  }
+
   async setAgreementUrl(tenancyId: string, url: string) {
     const [tenancy] = await query(
       `UPDATE tenancies SET agreement_pdf_url = $1, updated_at = now() WHERE id = $2 RETURNING *`,

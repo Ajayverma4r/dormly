@@ -12,6 +12,7 @@ export const tenantPortalRouter = Router();
 
 tenantPortalRouter.use(authGuard, requireContext, requireRole('tenant'));
 tenantPortalRouter.get('/me', controller.getMe);
+tenantPortalRouter.post('/move-out-request', controller.requestMoveOut);
 tenantPortalRouter.get('/invoices', billingController.myInvoices);
 tenantPortalRouter.get('/complaints', complaintController.myComplaints);
 tenantPortalRouter.post('/complaints', complaintController.createMine);

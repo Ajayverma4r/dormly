@@ -1,21 +1,19 @@
 // features/tenancies/presentation/residents_list_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import '../data/tenancy_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import 'add_tenant_screen.dart';
-import 'node_detail_screen.dart';
+import 'tenant_profile_screen.dart';
+import 'tenancy_providers.dart';
+
+export 'tenancy_providers.dart' show propertyResidentsProvider;
 
 enum _GuestStatusFilter { all, active, due, checkedOut }
 
 const _pageSize = 10;
 const _accent = AppColors.blueprint;
-
-final propertyResidentsProvider = FutureProvider.autoDispose
-    .family<List<Map<String, dynamic>>, String>(
-  (ref, propertyId) =>
-      ref.watch(tenancyRepositoryProvider).listByProperty(propertyId),
-);
 
 class ResidentsListScreen extends ConsumerStatefulWidget {
   final String propertyId;
@@ -35,7 +33,8 @@ class ResidentsListScreen extends ConsumerStatefulWidget {
 class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
-  _GuestStatusFilter _filter = _GuestStatusFilter.all;
+  // Default to Active so checked-out guests don't pollute the primary list.
+  _GuestStatusFilter _filter = _GuestStatusFilter.active;
   int _currentPage = 1;
 
   @override
@@ -62,28 +61,20 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
   }
 
   Future<void> _openGuestDetail(Map<String, dynamic> r) async {
-    final nodeId = (r['node_id'] ?? r['nodeId'])?.toString() ?? '';
-    if (nodeId.isEmpty) {
+    final tenancyId = r['id']?.toString() ?? '';
+    if (tenancyId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'This tenant is not linked to a unit. Re-assign them from Rooms.',
-          ),
-        ),
+        const SnackBar(content: Text('Could not open guest profile.')),
       );
       return;
     }
-    final nodeName =
-        (r['node_name'] ?? r['nodeName'])?.toString() ?? 'Unit';
-    final levelName =
-        (r['level_name'] ?? r['levelName'])?.toString() ?? 'Room';
 
+    // Always open the guest profile — never the room detail screen.
     await Navigator.of(context).push(
-      NodeDetailScreen.route(
+      TenantProfileScreen.route(
         propertyId: widget.propertyId,
-        nodeId: nodeId,
-        nodeName: nodeName,
-        levelName: levelName,
+        tenancyId: tenancyId,
+        initialTenancy: r,
       ),
     );
     ref.invalidate(propertyResidentsProvider(widget.propertyId));
@@ -553,6 +544,8 @@ class _GuestListRow extends StatelessWidget {
     final status = _resolveDisplayStatus(resident);
     final photoUrl = _photoUrl(resident, baseUrl);
     final initials = _initials(name);
+    final isCheckedOut = status == _GuestDisplayStatus.checkedOut;
+    final staySummary = isCheckedOut ? _checkedOutStaySummary(resident) : null;
 
     return Material(
       color: AppColors.surface,
@@ -613,39 +606,56 @@ class _GuestListRow extends StatelessWidget {
                   ],
                 ),
               ),
-              Expanded(
-                flex: 2,
-                child: Row(
-                  children: [
-                    const Icon(Icons.door_front_door_outlined,
-                        size: 13, color: _accent),
-                    const SizedBox(width: 3),
-                    Expanded(
-                      child: Text(
-                        room,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.ink,
+              if (isCheckedOut)
+                Expanded(
+                  flex: 5,
+                  child: Text(
+                    staySummary ?? 'Stayed in Room $room',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.slate,
+                      height: 1.25,
+                    ),
+                  ),
+                )
+              else ...[
+                Expanded(
+                  flex: 2,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.door_front_door_outlined,
+                          size: 13, color: _accent),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          room,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.ink,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Expanded(
-                flex: 3,
-                child: Text(
-                  floor,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 12,
-                      ),
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    floor,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontSize: 12,
+                        ),
+                  ),
                 ),
-              ),
+              ],
               Expanded(
                 flex: 3,
                 child: Row(
@@ -701,7 +711,7 @@ class _StatusBadge extends StatelessWidget {
         bg = AppColors.slate.withValues(alpha: 0.12);
         fg = AppColors.slate;
         dot = AppColors.slate;
-        label = 'Out';
+        label = 'Checked Out';
     }
 
     return Container(
@@ -782,6 +792,25 @@ String _formatFloor(dynamic raw) {
   final name = raw.toString().trim();
   if (name.toLowerCase().contains('floor')) return name;
   return '$name Floor';
+}
+
+String _checkedOutStaySummary(Map<String, dynamic> r) {
+  final room = (r['node_name'] ?? r['nodeName'])?.toString().trim();
+  final roomLabel =
+      (room == null || room.isEmpty) ? '—' : room;
+  final leftRaw = r['move_out_at'] ?? r['moveOutAt'] ?? r['updated_at'];
+  final leftLabel = _formatShortDate(leftRaw);
+  if (leftLabel == null) {
+    return 'Stayed in Room $roomLabel';
+  }
+  return 'Stayed in Room $roomLabel • Left on $leftLabel';
+}
+
+String? _formatShortDate(dynamic raw) {
+  if (raw == null || raw.toString().trim().isEmpty) return null;
+  final parsed = DateTime.tryParse(raw.toString());
+  if (parsed == null) return null;
+  return DateFormat('d MMM yyyy').format(parsed.toLocal());
 }
 
 class _PaginationFooter extends StatelessWidget {

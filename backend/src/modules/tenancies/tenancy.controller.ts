@@ -208,4 +208,25 @@ export class TenancyController {
       res.json({ data: tenancy });
     } catch (err) { next(err); }
   };
+
+  reviewMoveOutRequest = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const body = z.object({
+        action: z.enum(['approve', 'modify', 'reject']),
+        proposedExitDate: z.string().optional(),
+        waiveNoticePenalty: z.boolean().optional(),
+      }).parse(req.body);
+      const tenancy = await service.reviewMoveOutRequest(req.params.tenancyId, body);
+      res.json({ data: tenancy });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: err.errors[0]?.message ?? 'Invalid request' });
+      }
+      const message = err instanceof Error ? err.message : 'Review failed';
+      if (message.includes('past') || message.includes('No move-out') || message.includes('not found')) {
+        return res.status(400).json({ error: message });
+      }
+      next(err);
+    }
+  };
 }

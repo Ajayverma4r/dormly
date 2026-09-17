@@ -9,6 +9,8 @@ import '../../auth/presentation/login_flow.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../complaints/data/complaints_repository.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
+import 'request_move_out_sheet.dart';
 
 final myTenancyProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   return ref.watch(tenantPortalRepositoryProvider).getMyTenancy();
@@ -29,8 +31,36 @@ final _hasOwnerContextProvider = FutureProvider.autoDispose<bool>((ref) async {
   });
 });
 
+final _dtFmt = DateFormat('d MMM yyyy, h:mm a');
+final _dFmt = DateFormat('d MMM yyyy');
+
 class TenantDashboardScreen extends ConsumerWidget {
   const TenantDashboardScreen({super.key});
+
+  String? _fmtDate(dynamic raw) {
+    if (raw == null || raw.toString().trim().isEmpty) return null;
+    final d = DateTime.tryParse(raw.toString());
+    if (d == null) return null;
+    return _dFmt.format(d.toLocal());
+  }
+
+  String? _fmtDateTime(dynamic raw) {
+    if (raw == null || raw.toString().trim().isEmpty) return null;
+    final d = DateTime.tryParse(raw.toString());
+    if (d == null) return null;
+    return _dtFmt.format(d.toLocal());
+  }
+
+  Future<void> _callOwner(BuildContext context, String? phone) async {
+    final digits = (phone ?? '').replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Owner phone not available.')),
+      );
+      return;
+    }
+    await launchUrl(Uri(scheme: 'tel', path: digits));
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -63,6 +93,19 @@ class TenantDashboardScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(child: Text('Something went wrong: $err')),
         data: (t) {
+          final status = t['move_out_request_status']?.toString();
+          final hasRequest = status != null &&
+              status.isNotEmpty &&
+              status != 'rejected';
+          final requestedAt = _fmtDateTime(
+            t['notice_given_at'] ?? t['noticeGivenAt'],
+          );
+          final proposed = _fmtDate(
+            t['planned_move_out_at'] ?? t['plannedMoveOutAt'],
+          );
+          final isEmergency = t['move_out_is_emergency'] == true ||
+              t['move_out_is_emergency']?.toString() == 'true';
+
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
@@ -91,10 +134,125 @@ class TenantDashboardScreen extends ConsumerWidget {
                 subtitle: t['owner_phone'] ?? '',
                 trailing: IconButton(
                   icon: const Icon(Icons.call_outlined, color: AppColors.blueprint),
-                  onPressed: () {}, // TODO: launch dialer with owner_phone
+                  onPressed: () =>
+                      _callOwner(context, t['owner_phone']?.toString()),
                 ),
               ),
               const SizedBox(height: 20),
+
+              if (hasRequest) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: isEmergency
+                        ? AppColors.caution.withValues(alpha: 0.12)
+                        : AppColors.primarySoft,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isEmergency
+                          ? AppColors.caution
+                          : AppColors.blueprint.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              'Move-Out Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                          if (isEmergency)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.danger.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Text(
+                                'Emergency Exit',
+                                style: TextStyle(
+                                  color: AppColors.danger,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Request Submitted on: ${requestedAt ?? '—'}',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      Text(
+                        'Proposed Move-out: ${proposed ?? '—'}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'Status: ${status.replaceAll('_', ' ')}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ] else if (t['status']?.toString() == 'active') ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.blueprint,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () async {
+                      final ok = await showRequestMoveOutSheet(
+                        context: context,
+                        ref: ref,
+                        tenancy: t,
+                      );
+                      if (ok && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Move-out request submitted. Your submit time is locked in the audit log.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text(
+                      'Request Move-Out',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _callOwner(context, t['owner_phone']?.toString()),
+                  icon: const Icon(Icons.call_outlined),
+                  label: const Text('Call Owner / Manager'),
+                ),
+                const SizedBox(height: 20),
+              ],
 
               const Text('Tenancy Details', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
               const SizedBox(height: 10),

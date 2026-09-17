@@ -3,9 +3,12 @@
 // Deliberately separate from modules/tenancies (the owner-side CRUD). This
 // service only ever looks up ONE tenancy — the one on the caller's own
 // scoped token (req.ctxId) — and never accepts a tenancyId from the request.
-// That's what makes it safe for a tenant role to call directly.
 
 import { query } from '@config/db';
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
 
 export class TenantPortalService {
   async getMyTenancy(tenancyId: string) {
@@ -29,5 +32,62 @@ export class TenantPortalService {
       [tenancyId],
     );
     return rows[0] ?? null;
+  }
+
+  /**
+   * Tenant submits a move-out request.
+   * - notice_given_at (requestedAt) is set once and never overwritten.
+   * - planned_move_out_at is the proposed exit date (must be >= today).
+   */
+  async requestMoveOut(
+    tenancyId: string,
+    input: { proposedExitDate: string; isEmergency?: boolean; reason?: string },
+  ) {
+    const existing = await this.getMyTenancy(tenancyId);
+    if (!existing) throw new Error('Tenancy not found');
+    if (existing.status !== 'active') {
+      throw new Error('Only active tenancies can request move-out.');
+    }
+    if (existing.move_out_request_status === 'pending' ||
+        existing.move_out_request_status === 'approved' ||
+        existing.move_out_request_status === 'modified_by_mutual_agreement') {
+      throw new Error('A move-out request is already on file for this tenancy.');
+    }
+
+    const proposed = new Date(input.proposedExitDate);
+    if (Number.isNaN(proposed.getTime())) {
+      throw new Error('Invalid proposed exit date.');
+    }
+    const today = startOfLocalDay(new Date());
+    const proposedDay = startOfLocalDay(proposed);
+    if (proposedDay < today) {
+      throw new Error('Proposed move-out date cannot be in the past.');
+    }
+    const max = new Date(today);
+    max.setDate(max.getDate() + 90);
+    if (proposedDay > max) {
+      throw new Error('Proposed move-out date cannot be more than 90 days ahead.');
+    }
+
+    // Lock requestedAt: only set notice_given_at when still null.
+    const rows = await query<any>(
+      `UPDATE tenancies SET
+         notice_given_at = COALESCE(notice_given_at, now()),
+         planned_move_out_at = $2,
+         move_out_request_status = 'pending',
+         move_out_is_emergency = $3,
+         move_out_reason = $4,
+         updated_at = now()
+       WHERE id = $1 AND status = 'active'
+       RETURNING id`,
+      [
+        tenancyId,
+        proposedDay.toISOString(),
+        input.isEmergency === true,
+        input.reason?.trim() || null,
+      ],
+    );
+    if (!rows[0]) throw new Error('Could not save move-out request.');
+    return this.getMyTenancy(tenancyId);
   }
 }

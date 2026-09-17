@@ -150,8 +150,51 @@ class TenancyRepository {
     return _parseRow(res.data['data']);
   }
 
-  Future<void> endTenancy(String propertyId, String tenancyId) async {
+  /// Ends a tenancy (sets status=ended + move_out_at).
+  /// Optional [settlementNotes] are written to notes before ending.
+  Future<void> endTenancy(
+    String propertyId,
+    String tenancyId, {
+    String? settlementNotes,
+    String? nodeId,
+  }) async {
+    if (settlementNotes != null && settlementNotes.trim().isNotEmpty) {
+      await update(
+        propertyId,
+        tenancyId,
+        nodeId: nodeId,
+        notes: settlementNotes.trim(),
+      );
+    }
     await _client.dio.post('${_tenancyPatchPath(propertyId, tenancyId)}/end');
+  }
+
+  /// Owner reviews a tenant move-out request (approve / modify / reject).
+  Future<Map<String, dynamic>> reviewMoveOutRequest(
+    String propertyId,
+    String tenancyId, {
+    required String action,
+    String? proposedExitDate,
+    bool? waiveNoticePenalty,
+  }) async {
+    final res = await _client.dio.post(
+      '${_tenancyPatchPath(propertyId, tenancyId)}/move-out-request/review',
+      data: {
+        'action': action,
+        if (proposedExitDate != null) 'proposedExitDate': proposedExitDate,
+        if (waiveNoticePenalty != null)
+          'waiveNoticePenalty': waiveNoticePenalty,
+      },
+    );
+    return _parseRow(res.data['data']);
+  }
+
+  /// Reload one tenancy from the property list (works on all backends).
+  Future<Map<String, dynamic>> getById(
+    String propertyId,
+    String tenancyId,
+  ) async {
+    return _reloadTenancy(propertyId: propertyId, tenancyId: tenancyId);
   }
 
   /// PATCH tenancy profile / financial fields.
