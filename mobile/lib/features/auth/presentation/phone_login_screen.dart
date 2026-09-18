@@ -1,12 +1,19 @@
 // features/auth/presentation/phone_login_screen.dart
+//
+// Clean white login: phone OTP + Google CTA. Matches brand purple onboarding.
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../data/auth_repository.dart';
 
-/// Brand blue for login CTA / cursor — not the app-wide Payments purple.
-const _dormlyBlue = Color(0xFF0127C6);
+const _brandPurple = Color(0xFF6D28D9);
+const _ink = Color(0xFF0F172A);
+const _muted = Color(0xFF64748B);
+const _border = Color(0xFFE2E8F0);
+/// Soft lavender — matches onboarding; no blue login_bg.
+const _scaffoldBg = Color(0xFFF4F0FD);
 
 class PhoneLoginScreen extends ConsumerStatefulWidget {
   const PhoneLoginScreen({super.key});
@@ -51,167 +58,136 @@ class _PhoneLoginScreenState extends ConsumerState<PhoneLoginScreen> {
     }
   }
 
+  void _onGoogle() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Google sign-in coming soon.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final canContinue = !_loading && _controller.text.trim().length >= 10;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Layer 1 — background only (not interactive).
-        Positioned.fill(
-          child: Image.asset(
-            'assets/images/login_bg.png',
-            fit: BoxFit.cover,
-            excludeFromSemantics: true,
-          ),
-        ),
-        // Layer 2 — MUST be last so it receives all taps / focus.
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          resizeToAvoidBottomInset: true,
-          // Explicitly no drawers / FABs that could paint a menu control.
-          drawer: null,
-          endDrawer: null,
-          floatingActionButton: null,
-          body: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(28, 24, 28, 30),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 24),
-                  Center(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(28),
-                      child: Image.asset(
-                        'assets/images/logo.png',
-                        width: 110,
-                        height: 110,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Dormly',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 40,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'One Platform.\nEvery Property.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                      height: 1.3,
-                    ),
-                  ),
-                  const SizedBox(height: 56),
-                  const Text(
-                    'Continue with your phone number',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Theme(
-                    data: Theme.of(context).copyWith(
-                      colorScheme: Theme.of(context).colorScheme.copyWith(
-                        primary: _dormlyBlue,
-                      ),
-                      textSelectionTheme: TextSelectionThemeData(
-                        cursorColor: _dormlyBlue,
-                        selectionHandleColor: _dormlyBlue,
-                        selectionColor: _dormlyBlue.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: TextFormField(
-                      controller: _controller,
-                      focusNode: _phoneFocus,
-                      keyboardType: TextInputType.phone,
-                      textInputAction: TextInputAction.done,
-                      maxLength: 10,
-                      cursorColor: _dormlyBlue,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                      ],
-                      onChanged: (_) => setState(() {}),
-                      onFieldSubmitted: (_) {
-                        if (canContinue) _sendOtp();
-                      },
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: 'Enter phone number',
-                        hintStyle: TextStyle(color: Colors.grey.shade500),
-                        counterText: '',
-                        filled: true,
-                        fillColor: Colors.white,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
-                        prefixIcon: const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text(
-                            '🇮🇳 +91',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black87,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: _scaffoldBg,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: _scaffoldBg,
+        resizeToAvoidBottomInset: true,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Container(
+                          width: 88,
+                          height: 88,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(22),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _brandPurple.withValues(alpha: 0.22),
+                                blurRadius: 24,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(22),
+                            child: Image.asset(
+                              'assets/images/logo.png',
+                              width: 88,
+                              height: 88,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const ColoredBox(
+                                  color: _brandPurple,
+                                  child: Icon(
+                                    Icons.apartment,
+                                    size: 48,
+                                    color: Colors.white,
+                                  ),
+                                );
+                              },
                             ),
                           ),
                         ),
-                        prefixIconConstraints: const BoxConstraints(
-                          minWidth: 88,
-                          minHeight: 48,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          borderSide: BorderSide.none,
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Dormly',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _ink,
+                          fontSize: 32,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.4,
                         ),
                       ),
-                    ),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _error!,
-                      style: const TextStyle(color: Colors.redAccent),
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  // Material (not ElevatedButton) so app purple theme cannot win.
-                  Material(
-                    color: canContinue
-                        ? _dormlyBlue
-                        : _dormlyBlue.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(16),
-                    child: InkWell(
-                      onTap: canContinue ? _sendOtp : null,
-                      borderRadius: BorderRadius.circular(16),
-                      child: SizedBox(
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Welcome back!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Sign in to continue',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _muted,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      const SizedBox(height: 36),
+                      _PhoneField(
+                        controller: _controller,
+                        focusNode: _phoneFocus,
+                        onChanged: (_) => setState(() {}),
+                        onSubmitted: () {
+                          if (canContinue) _sendOtp();
+                        },
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Color(0xFFB91C1C),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      SizedBox(
                         height: 54,
-                        child: Center(
+                        child: FilledButton(
+                          onPressed: canContinue ? _sendOtp : null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _brandPurple,
+                            disabledBackgroundColor:
+                                _brandPurple.withValues(alpha: 0.4),
+                            foregroundColor: Colors.white,
+                            disabledForegroundColor: Colors.white70,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
                           child: _loading
                               ? const SizedBox(
                                   width: 22,
@@ -224,23 +200,274 @@ class _PhoneLoginScreenState extends ConsumerState<PhoneLoginScreen> {
                               : const Text(
                                   'Continue',
                                   style: TextStyle(
-                                    fontSize: 17,
-                                    color: Colors.white,
+                                    fontSize: 16,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 28),
+                      const _OrDivider(),
+                      const SizedBox(height: 20),
+                      _GoogleButton(onPressed: _onGoogle),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'By continuing you agree to our\nTerms of Service & Privacy Policy',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white60, fontSize: 12),
-                  ),
-                ],
+                ),
               ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(24, 8, 24, 20),
+                child: _LegalFooter(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PhoneField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSubmitted;
+
+  const _PhoneField({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+    required this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 14, right: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('🇮🇳', style: TextStyle(fontSize: 18)),
+                const SizedBox(width: 6),
+                const Text(
+                  '+91',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 20,
+                  color: Colors.grey.shade600,
+                ),
+              ],
+            ),
+          ),
+          Container(width: 1, height: 28, color: _border),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              keyboardType: TextInputType.phone,
+              textInputAction: TextInputAction.done,
+              maxLength: 10,
+              cursorColor: _brandPurple,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: onChanged,
+              onSubmitted: (_) => onSubmitted(),
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+              decoration: const InputDecoration(
+                hintText: 'Enter your mobile number',
+                hintStyle: TextStyle(
+                  color: Color(0xFF94A3B8),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w400,
+                ),
+                counterText: '',
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 16,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrDivider extends StatelessWidget {
+  const _OrDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: _border, thickness: 1)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Text(
+            'or',
+            style: TextStyle(
+              color: Colors.grey.shade500,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider(color: _border, thickness: 1)),
+      ],
+    );
+  }
+}
+
+class _GoogleButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _GoogleButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 54,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: _ink,
+          side: const BorderSide(color: _border),
+          elevation: 0,
+          shadowColor: Colors.black12,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _GoogleMark(),
+            SizedBox(width: 12),
+            Text(
+              'Continue with Google',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: _ink,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Simple colored Google "G" mark (no extra package).
+class _GoogleMark extends StatelessWidget {
+  const _GoogleMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 22,
+      height: 22,
+      child: CustomPaint(painter: _GoogleGPainter()),
+    );
+  }
+}
+
+class _GoogleGPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = size.width * 0.18;
+    final rect = Rect.fromLTWH(
+      stroke / 2,
+      stroke / 2,
+      size.width - stroke,
+      size.height - stroke,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.butt;
+
+    // Approximate multicolor G ring.
+    paint.color = const Color(0xFF4285F4);
+    canvas.drawArc(rect, -1.2, 1.8, false, paint);
+    paint.color = const Color(0xFF34A853);
+    canvas.drawArc(rect, 0.6, 1.1, false, paint);
+    paint.color = const Color(0xFFFBBC05);
+    canvas.drawArc(rect, 1.7, 0.8, false, paint);
+    paint.color = const Color(0xFFEA4335);
+    canvas.drawArc(rect, 2.5, 1.0, false, paint);
+
+    final bar = Paint()
+      ..color = const Color(0xFF4285F4)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        size.width * 0.48,
+        size.height * 0.42,
+        size.width * 0.42,
+        stroke,
+      ),
+      bar,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _LegalFooter extends StatelessWidget {
+  const _LegalFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Text(
+          'By continuing, you agree to our',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: _muted,
+            fontSize: 12,
+            height: 1.4,
+          ),
+        ),
+        GestureDetector(
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Terms & Privacy will open here.'),
+              ),
+            );
+          },
+          child: const Text(
+            'Terms of Service & Privacy Policy.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _brandPurple,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.4,
             ),
           ),
         ),

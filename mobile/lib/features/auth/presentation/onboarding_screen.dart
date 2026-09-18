@@ -377,11 +377,29 @@ class _ReadyPage extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.primarySoft,
                   borderRadius: BorderRadius.circular(32),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _brandPurple.withValues(alpha: 0.18),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
-                child: const Icon(
-                  Icons.home_rounded,
-                  size: 64,
-                  color: _brandPurpleDeep,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(32),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 120,
+                    height: 120,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Icon(
+                        Icons.home_rounded,
+                        size: 64,
+                        color: _brandPurpleDeep,
+                      );
+                    },
+                  ),
                 ),
               ),
             ),

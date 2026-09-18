@@ -41,24 +41,21 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/images/logo.png
-  adaptive_icon_background: "#2451B4"
-  adaptive_icon_foreground: assets/images/logo.png
+  image_path: assets/images/logoApk.png
+  adaptive_icon_background: "#5218D1"
+  adaptive_icon_foreground: assets/images/logoApk.png
   remove_alpha_ios: true
 
 # Generate native splash: dart run flutter_native_splash:create
-# Pre-12: full login_bg. Android 12+: solid top-blue + white logo (API limits).
-# Do not set top-level `color` together with `background_image` — only one applies.
+# Color-only native splash (no centered logo) so cold-boot matches Flutter
+# SplashScreen purple immediately — Picture 2 is drawn by Flutter.
 flutter_native_splash:
-  background_image: "assets/images/login_bg.png"
+  color: "#5218D1"
   fullscreen: true
   android: true
   ios: true
-  # Sampled from login_bg.png top-center pixel (#0127C6). White logo is
-  # transparent so the system color shows through the building cutouts.
   android_12:
-    color: "#0127C6"
-    image: "assets/images/splash_logo_white.png"
+    color: "#5218D1"
   web: false
 
 flutter:
