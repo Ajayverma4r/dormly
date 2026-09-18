@@ -20,6 +20,7 @@ class ComplaintsListScreen extends ConsumerWidget {
       case 'resolved': return AppColors.positive;
       case 'closed': return AppColors.slate;
       case 'in_progress': return AppColors.caution;
+      case 'assigned': return const Color(0xFF2563EB);
       default: return AppColors.danger; // open
     }
   }
@@ -47,7 +48,7 @@ class ComplaintsListScreen extends ConsumerWidget {
               const SizedBox(height: 16),
               Wrap(
                 spacing: 8,
-                children: ['open', 'in_progress', 'resolved', 'closed'].map((s) {
+                children: ['open', 'assigned', 'in_progress', 'resolved', 'closed'].map((s) {
                   return ChoiceChip(
                     label: Text(s.replaceAll('_', ' ')),
                     selected: (newStatus ?? complaint['status']) == s,

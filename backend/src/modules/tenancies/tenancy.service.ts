@@ -284,7 +284,14 @@ export class TenancyService {
          WHERE id = $1`,
         [tenancyId],
       );
-      return this.getById(tenancyId);
+      const rejected = await this.getById(tenancyId);
+      if (rejected) {
+        await this.notifyTenantOfMoveOutDecision(rejected, 'reject').catch(
+          (err) =>
+            console.warn('[tenancies] tenant move-out reject notify failed:', err),
+        );
+      }
+      return rejected;
     }
 
     let proposedIso: string | null = null;
@@ -332,10 +339,10 @@ export class TenancyService {
     return updated;
   }
 
-  /** Notify the tenant user that their move-out date was approved/modified. */
+  /** Notify the tenant user that their move-out request was decided. */
   private async notifyTenantOfMoveOutDecision(
     tenancy: any,
-    action: 'approve' | 'modify',
+    action: 'approve' | 'modify' | 'reject',
   ) {
     const tenantUserId = tenancy.user_id ?? tenancy.userId;
     const propertyId = tenancy.property_id ?? tenancy.propertyId;
@@ -354,13 +361,19 @@ export class TenancyService {
         : 'the agreed date';
 
     const title =
-      action === 'modify'
-        ? 'Move-Out Date Updated'
-        : 'Move-Out Notice Approved';
+      action === 'reject'
+        ? 'Move-Out Notice Declined'
+        : action === 'modify'
+          ? 'Move-Out Date Updated'
+          : 'Move-Out Notice Approved';
     const body =
-      action === 'modify'
-        ? `Owner updated your move-out date to ${exitLabel}.`
-        : `Owner has confirmed your move-out date for ${exitLabel}.`;
+      action === 'reject'
+        ? 'Your owner declined this move-out request. You can submit a new date.'
+        : action === 'modify'
+          ? `Owner updated your move-out date to ${exitLabel}.`
+          : `Owner has confirmed your move-out date for ${exitLabel}.`;
+    const notifType =
+      action === 'reject' ? 'move_out_rejected' : 'move_out_approved';
     const payload = JSON.stringify({
       tenancy_id: String(tenancyId),
       tenancyId: String(tenancyId),
@@ -375,18 +388,18 @@ export class TenancyService {
     try {
       await query(
         `INSERT INTO notifications (user_id, property_id, type, title, body, data)
-         VALUES ($1, $2, 'move_out_approved', $3, $4, $5::jsonb)`,
-        [tenantUserId, propertyId ?? null, title, body, payload],
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [tenantUserId, propertyId ?? null, notifType, title, body, payload],
       );
       console.log(
-        `>>> INSERTING NOTIFICATION FOR USER: ${tenantUserId} <<< type=move_out_approved`,
+        `>>> INSERTING NOTIFICATION FOR USER: ${tenantUserId} <<< type=${notifType}`,
       );
     } catch (err) {
-      console.error('>>> tenant move_out_approved insert failed <<<', err);
+      console.error(`>>> tenant ${notifType} insert failed <<<`, err);
       await query(
         `INSERT INTO notifications (user_id, property_id, type, title, body)
-         VALUES ($1, $2, 'move_out_approved', $3, $4)`,
-        [tenantUserId, propertyId ?? null, title, body],
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantUserId, propertyId ?? null, notifType, title, body],
       );
     }
   }

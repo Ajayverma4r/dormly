@@ -17,10 +17,15 @@ export class TenantPortalService {
       `SELECT
          t.*,
          n.name AS node_name,
+         n.id AS node_id,
+         parent_n.name AS parent_node_name,
+         grand_n.name AS grandparent_node_name,
+         hl.internal_key AS node_level_key,
          p.id AS property_id,
          p.name AS property_name,
          p.address AS property_address,
          p.city AS property_city,
+         p.property_type_key AS property_type_key,
          o.id AS organization_id,
          o.owner_user_id AS owner_user_id,
          o.name AS organization_name,
@@ -28,6 +33,9 @@ export class TenantPortalService {
          owner_u.name AS owner_name
        FROM tenancies t
        JOIN hierarchy_nodes n ON n.id = t.node_id
+       LEFT JOIN hierarchy_levels hl ON hl.id = n.level_id
+       LEFT JOIN hierarchy_nodes parent_n ON parent_n.id = n.parent_id
+       LEFT JOIN hierarchy_nodes grand_n ON grand_n.id = parent_n.parent_id
        JOIN properties p ON p.id = t.property_id
        JOIN organizations o ON o.id = p.organization_id
        JOIN users owner_u ON owner_u.id = o.owner_user_id

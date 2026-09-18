@@ -14,6 +14,7 @@ import '../../subscription/presentation/paywall_screen.dart';
 import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../reports/presentation/reports_screen.dart';
 import '../../analytics/presentation/analytics_dashboard_screen.dart';
+import '../../tenant_portal/presentation/owner_mess_menu_screen.dart';
 
 final _hasTenantContextProvider = FutureProvider.autoDispose<bool>((ref) async {
   final contexts = await ref.watch(authRepositoryProvider).listContexts();
@@ -104,6 +105,21 @@ class PropertyMoreScreen extends ConsumerWidget {
               ),
             ),
           ),
+          if (canManage) ...[
+            const SizedBox(height: 10),
+            _tile(
+              context,
+              'Mess Menu',
+              'Publish weekly meals for hostel / PG tenants',
+              Icons.restaurant_menu_outlined,
+              () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) =>
+                      OwnerMessMenuScreen(propertyId: propertyId),
+                ),
+              ),
+            ),
+          ],
           if (canManage) ...[
             const SizedBox(height: 10),
             _tile(

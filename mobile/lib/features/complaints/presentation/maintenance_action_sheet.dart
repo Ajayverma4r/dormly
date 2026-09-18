@@ -633,7 +633,7 @@ class _CategoryStyle {
 
 bool _isOpenComplaint(Map<String, dynamic> c) {
   final status = (c['status'] ?? 'open').toString().toLowerCase();
-  return status == 'open' || status == 'in_progress';
+  return status == 'open' || status == 'assigned' || status == 'in_progress';
 }
 
 String _category(Map<String, dynamic> c) =>
@@ -655,6 +655,15 @@ String _dialogTitle(Map<String, dynamic> c) {
 final _apiBase = resolveApiBaseUrl();
 
 String? _complaintImageUrl(Map<String, dynamic> c) {
+  final photos = c['photo_urls'] ?? c['photoUrls'];
+  if (photos is List && photos.isNotEmpty) {
+    final raw = photos.first?.toString().trim();
+    if (raw != null && raw.isNotEmpty) {
+      if (raw.startsWith('http')) return raw;
+      if (raw.startsWith('/')) return '$_apiBase$raw';
+      return raw;
+    }
+  }
   for (final key in [
     'image_url',
     'imageUrl',
@@ -669,32 +678,7 @@ String? _complaintImageUrl(Map<String, dynamic> c) {
     if (raw.startsWith('/')) return '$_apiBase$raw';
     return raw;
   }
-  return _mockImageForCategory(_category(c));
-}
-
-/// Category-matched Unsplash preview when the complaint has no uploaded photo.
-String _mockImageForCategory(String category) {
-  final c = category.toLowerCase();
-  if (c.contains('plumb') ||
-      c.contains('tap') ||
-      c.contains('water') ||
-      c.contains('leak') ||
-      c.contains('pipe')) {
-    return 'https://images.unsplash.com/photo-1585704032915-c3400ca199c7?auto=format&fit=crop&w=1200&q=80';
-  }
-  if (c.contains('ac') ||
-      c.contains('cool') ||
-      c.contains('hvac') ||
-      c.contains('air')) {
-    return 'https://images.unsplash.com/photo-1581276879432-15e50529f34b?auto=format&fit=crop&w=1200&q=80';
-  }
-  if (c.contains('electr') ||
-      c.contains('light') ||
-      c.contains('wiring') ||
-      c.contains('power')) {
-    return 'https://images.unsplash.com/photo-1473341304170-971dccb5ac1e?auto=format&fit=crop&w=1200&q=80';
-  }
-  return 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=1200&q=80';
+  return null;
 }
 
 String _roomLabel(

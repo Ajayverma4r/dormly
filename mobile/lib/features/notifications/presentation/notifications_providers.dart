@@ -1,4 +1,5 @@
 // features/notifications/presentation/notifications_providers.dart
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/notifications_repository.dart';
@@ -19,8 +20,15 @@ final unreadNotificationsCountProvider =
 );
 
 class UnreadNotificationsCount extends AutoDisposeAsyncNotifier<int> {
+  Timer? _poll;
+
   @override
   Future<int> build() {
+    _poll?.cancel();
+    _poll = Timer.periodic(const Duration(seconds: 15), (_) {
+      refreshQuiet();
+    });
+    ref.onDispose(() => _poll?.cancel());
     return ref.read(notificationsRepositoryProvider).unreadCount();
   }
 
@@ -29,6 +37,16 @@ class UnreadNotificationsCount extends AutoDisposeAsyncNotifier<int> {
     state = AsyncData(
       await ref.read(notificationsRepositoryProvider).unreadCount(),
     );
+  }
+
+  Future<void> refreshQuiet() async {
+    try {
+      final count =
+          await ref.read(notificationsRepositoryProvider).unreadCount();
+      state = AsyncData(count);
+    } catch (_) {
+      /* keep last known */
+    }
   }
 
   void optimisticDecrement([int by = 1]) {

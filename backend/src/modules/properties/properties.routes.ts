@@ -8,6 +8,9 @@ import { tenancyRouter } from '@modules/tenancies/tenancy.routes';
 import { billingRouter } from '@modules/billing/billing.routes';
 import { analyticsRouter } from '@modules/analytics/analytics.routes';
 import { complaintRouter } from '@modules/complaints/complaint.routes';
+import { messMenuRouter } from '@modules/mess-menu/mess-menu.routes';
+import { meterReadingsRouter } from '@modules/meter-readings/meter-readings.routes';
+import { gatePassesRouter } from '@modules/gate-passes/gate-passes.routes';
 import { staffRouter } from '@modules/staff/staff.routes';
 import { reportsRouter } from '@modules/reports/reports.routes';
 import { dashboardRouter } from '@modules/dashboard/dashboard.routes';
@@ -32,5 +35,8 @@ propertiesRouter.use('/:propertyId/analytics', ...propertyGuards, analyticsRoute
 propertiesRouter.use('/:propertyId/dashboard', ...propertyGuards, dashboardRouter);
 propertiesRouter.use('/:propertyId/expenses', ...propertyGuards, expenseRouter);
 propertiesRouter.use('/:propertyId/complaints', ...propertyGuards, complaintRouter);
+propertiesRouter.use('/:propertyId/mess-menu', ...propertyGuards, messMenuRouter);
+propertiesRouter.use('/:propertyId/meter-readings', ...propertyGuards, meterReadingsRouter);
+propertiesRouter.use('/:propertyId/gate-passes', ...propertyGuards, gatePassesRouter);
 propertiesRouter.use('/:propertyId/staff', ...propertyGuards, staffRouter);
 propertiesRouter.use('/:propertyId/reports', ...propertyGuards, reportsRouter);

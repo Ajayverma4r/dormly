@@ -15,6 +15,9 @@ import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscri
 import { scheduleSubscriptionDowngradeJob } from '@shared/jobs/subscription-downgrade.job';
 import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-expiry-warning.job';
 
+import { ensureLiveOpsSchema } from '@modules/notifications/notify';
+import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
+
 export function createApp() {
   const app = express();
 
@@ -52,6 +55,12 @@ export function createApp() {
   // Subscription maintenance jobs
   scheduleSubscriptionDowngradeJob();       // hourly: expire → free (no data delete)
   scheduleSubscriptionExpiryWarningJob();   // daily: 7-day in-app renew reminders
+
+  // Ensure shared live-ops tables exist (complaints photos, mess, meters, gate passes).
+  void ensureNotificationsSchema().catch(() => undefined);
+  void ensureLiveOpsSchema().catch((err) =>
+    console.warn('[boot] live-ops schema ensure failed:', err),
+  );
 
   return app;
 }
