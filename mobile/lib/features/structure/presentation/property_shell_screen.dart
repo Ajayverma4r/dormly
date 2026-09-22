@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/network/network_error.dart';
 import '../../properties/data/properties_repository.dart';
+import '../../properties/domain/property_archetype.dart';
 import '../../properties/domain/property_monetization.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../subscription/presentation/subscription_provider.dart';
@@ -28,24 +29,7 @@ final propertyDetailProvider =
 );
 
 String _peopleLabelFor(String? propertyTypeKey) {
-  switch (propertyTypeKey) {
-    case 'apartment':
-    case 'rental':
-    case 'villa':
-    case 'house':
-      return 'Tenants';
-    case 'office':
-      return 'Employees';
-    case 'hotel':
-    case 'resort':
-      return 'Guests';
-    case 'hospital':
-      return 'Patients';
-    case 'school':
-      return 'Students';
-    default:
-      return 'Residents';
-  }
+  return propertyArchetypeFromKey(propertyTypeKey).peopleLabel;
 }
 
 class PropertyShellScreen extends ConsumerStatefulWidget {

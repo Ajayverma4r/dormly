@@ -129,6 +129,8 @@ class TenancyRepository {
     String? moveInAt,
     double? securityDeposit,
     String? notes,
+    double? monthlyRent,
+    bool? includePastRentArrears,
   }) async {
     final body = <String, dynamic>{
       'nodeId': nodeId,
@@ -142,6 +144,14 @@ class TenancyRepository {
     if (moveInAt != null) body['moveInAt'] = moveInAt;
     if (securityDeposit != null) body['securityDeposit'] = securityDeposit;
     if (notes != null) body['notes'] = notes;
+    if (monthlyRent != null) {
+      body['monthlyRent'] = monthlyRent;
+      body['monthly_rent'] = monthlyRent;
+    }
+    if (includePastRentArrears != null) {
+      body['includePastRentArrears'] = includePastRentArrears;
+      body['include_past_rent_arrears'] = includePastRentArrears;
+    }
 
     final res = await _client.dio.post(
       '/v1/properties/${propertyId.trim()}/tenancies',

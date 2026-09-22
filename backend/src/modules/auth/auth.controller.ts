@@ -2,8 +2,10 @@
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
+import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { env } from '@config/env';
 import { AuthService } from './auth.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 
@@ -105,6 +107,50 @@ export class AuthController {
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
       const profile = await service.updateProfile(req.userId!, { avatarUrl });
       res.json({ data: profile });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * Ensure the caller has an owner organization, then return a scoped
+   * access token (same shape as contexts/select) so property APIs work.
+   */
+  ensureOrganization = async (
+    req: AuthedRequest,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const organizationId = await service.ensureOwnerOrganization(req.userId!);
+      const accessToken = jwt.sign(
+        {
+          sub: req.userId,
+          ctxType: 'organization',
+          ctxId: organizationId,
+          ctxRole: 'owner',
+          ctxPropertyId: null,
+        },
+        env.jwtAccessSecret,
+        { expiresIn: env.jwtAccessTtl } as jwt.SignOptions,
+      );
+
+      const profile = await service.getProfile(req.userId!);
+      res.json({
+        data: {
+          accessToken,
+          context: {
+            type: 'organization',
+            id: organizationId,
+            role: 'owner',
+            label: profile.name
+              ? `${profile.name}'s Workspace`
+              : 'My Workspace',
+            propertyId: null,
+          },
+          organizationId,
+        },
+      });
     } catch (err) {
       next(err);
     }

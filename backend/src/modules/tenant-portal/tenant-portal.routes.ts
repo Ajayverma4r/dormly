@@ -41,3 +41,5 @@ tenantPortalRouter.post(
 );
 tenantPortalRouter.get('/gate-passes', gatePassesController.myList);
 tenantPortalRouter.post('/gate-passes', gatePassesController.createMine);
+tenantPortalRouter.get('/society-notices', controller.societyNotices);
+tenantPortalRouter.get('/lease-details', controller.leaseDetails);

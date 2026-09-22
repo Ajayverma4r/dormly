@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
 import '../data/properties_repository.dart';
+import '../domain/property_archetype.dart';
 import '../domain/property_monetization.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../subscription/presentation/subscription_provider.dart';
@@ -25,12 +26,8 @@ const _levelDescriptions = {
   'room': 'For rooms where residents stay',
   'bed': 'For individual beds',
   'flat': 'For individual flats or units',
-  'department': 'For departments or teams',
-  'cabin': 'For individual cabins',
-  'warehouse': 'For the overall warehouse',
-  'zone': 'For storage zones',
-  'rack': 'For individual racks',
-  'villa': 'For the whole villa',
+  'property': 'The overall property',
+  'unit': 'Rentable units under this property',
 };
 
 class PropertyWizardScreen extends ConsumerStatefulWidget {
@@ -67,9 +64,19 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
   Future<void> _loadTypes() async {
     try {
       final types = await ref.read(propertiesRepositoryProvider).listTypes();
-      setState(() { _propertyTypes = types; _loadingTypes = false; });
-    } catch (e) {
-      setState(() { _loadingTypes = false; _error = 'Could not load property types: $e'; });
+      final filtered = types.where((t) {
+        final key = (t is Map ? t['key'] : null)?.toString() ?? '';
+        return PropertyTypeKeys.allowed.contains(key);
+      }).toList();
+      setState(() {
+        _propertyTypes = filtered;
+        _loadingTypes = false;
+      });
+    } catch (_) {
+      setState(() {
+        _propertyTypes = const [];
+        _loadingTypes = false;
+      });
     }
   }
 
@@ -149,7 +156,15 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
 
     setState(() { _creating = true; _error = null; });
     try {
-      final orgId = await ref.read(authRepositoryProvider).getOrganizationId();
+      // Property APIs require a scoped org JWT — ensure one exists after DB resets.
+      final authRepo = ref.read(authRepositoryProvider);
+      final ctx = await authRepo.ensureOwnerWorkspace();
+      final orgId = ctx['id']?.toString() ??
+          await authRepo.getOrganizationId();
+      if (orgId == null || orgId.isEmpty) {
+        throw Exception('Could not establish a workspace. Please sign in again.');
+      }
+
       final overrides = <String, dynamic>{};
       for (final row in _template) {
         final key = row['internal_key'];
@@ -259,21 +274,19 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         const Text('Property Type *', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
         Text(
-          'Rental, House & Villa stay free forever. Apartment is limited to 1 building + 20 rooms on Free.',
+          'Choose one of three property models. Rental House stays free forever.',
           style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
         ),
         const SizedBox(height: 8),
         _loadingTypes
             ? const Center(child: CircularProgressIndicator())
             : Column(
-                children: _propertyTypes.map((t) {
-                  final key = t['key'] as String;
+                children: PropertyArchetype.values.map((archetype) {
+                  final key = archetype.catalogKey;
                   final selected = _selectedTypeKey == key;
-                  final freeForever = PropertyMonetization.isFreeResidential(key);
-                  final badge = (t['monetization'] is Map
-                          ? t['monetization']['badge'] as String?
-                          : null) ??
-                      PropertyMonetization.badgeFor(key);
+                  final freeForever =
+                      PropertyMonetization.isFreeResidential(key);
+                  final badge = PropertyMonetization.badgeFor(key);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: InkWell(
@@ -284,7 +297,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: selected ? AppColors.blueprint : Colors.grey.shade300,
+                            color: selected
+                                ? AppColors.blueprint
+                                : Colors.grey.shade300,
                             width: selected ? 2 : 1,
                           ),
                           color: selected
@@ -297,8 +312,22 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                               selected
                                   ? Icons.radio_button_checked
                                   : Icons.radio_button_off,
-                              color: selected ? AppColors.blueprint : Colors.grey,
+                              color: selected
+                                  ? AppColors.blueprint
+                                  : Colors.grey,
                               size: 22,
+                            ),
+                            const SizedBox(width: 12),
+                            Icon(
+                              archetype == PropertyArchetype.sharedLiving
+                                  ? Icons.bed_outlined
+                                  : archetype ==
+                                          PropertyArchetype.gatedCommunity
+                                      ? Icons.apartment_outlined
+                                      : Icons.home_outlined,
+                              color: selected
+                                  ? AppColors.blueprint
+                                  : Colors.grey.shade700,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -306,20 +335,19 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    t['display_name'] ?? key,
+                                    archetype.label,
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w700,
                                       fontSize: 15,
                                     ),
                                   ),
-                                  if (t['description'] != null)
-                                    Text(
-                                      t['description'],
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade600,
-                                      ),
+                                  Text(
+                                    archetype.subtitle,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
                                     ),
+                                  ),
                                 ],
                               ),
                             ),

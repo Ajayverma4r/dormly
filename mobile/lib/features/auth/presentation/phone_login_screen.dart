@@ -12,7 +12,7 @@ const _brandPurple = Color(0xFF6D28D9);
 const _ink = Color(0xFF0F172A);
 const _muted = Color(0xFF64748B);
 const _border = Color(0xFFE2E8F0);
-/// Soft lavender — matches onboarding; no blue login_bg.
+/// Soft lavender — matches onboarding.
 const _scaffoldBg = Color(0xFFF4F0FD);
 
 class PhoneLoginScreen extends ConsumerStatefulWidget {

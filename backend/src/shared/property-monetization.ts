@@ -4,9 +4,11 @@
 
 /** Catalog keys that are 100% free forever (unlimited create, ads-supported). */
 export const FREE_RESIDENTIAL_TYPES = [
-  'rental', // Rental Property
-  'house',  // Independent House
-  'villa',  // Villa
+  'rental_house',
+  // Legacy keys remapped by migration 020 — keep for safety during rollout.
+  'rental',
+  'house',
+  'villa',
 ] as const;
 
 /** Apartment is subscription-limited: 1 building + 20 rooms/flats on Free. */

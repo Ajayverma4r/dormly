@@ -1,6 +1,7 @@
 // features/tenant_portal/presentation/tenant_dashboard_screen.dart
 //
-// Modern SaaS tenant portal: Home (Screen 6) + Payments (Screen 7) tabs.
+// Modern SaaS tenant portal: Home + Payments + Services + Community.
+// Property-type UI is driven by TenantSession + QuickActionConfig factory.
 
 import 'dart:async';
 
@@ -10,43 +11,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../../core/theme/app_theme.dart';
-import '../../auth/data/auth_repository.dart';
-import '../../complaints/data/complaints_repository.dart';
 import '../../complaints/presentation/complaint_details_screen.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../notifications/presentation/notifications_providers.dart';
+import '../../properties/domain/property_archetype.dart';
 import '../data/tenant_portal_repository.dart';
-import '../domain/tenant_property_profile.dart';
-import 'gate_pass_screen.dart';
-import 'mess_menu_screen.dart';
-import 'meter_reading_screen.dart';
 import 'move_out_notice_screen.dart';
-import 'request_move_out_sheet.dart';
+import 'tenant_payments_sheet.dart';
+import 'tenant_portal_providers.dart';
 import 'tenant_profile_menu_screen.dart';
+import 'widgets/apartment_gate_pass_widget.dart';
+import 'widgets/hostel_mess_menu_widget.dart';
+import 'widgets/rental_meter_upload_widget.dart';
+import 'widgets/tenant_quick_actions_grid.dart';
 
-final myTenancyProvider =
-    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).getMyTenancy();
-});
-
-final myInvoicesProvider =
-    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).listMyInvoices();
-});
-
-final myComplaintsProvider =
-    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(complaintsRepositoryProvider).myComplaints();
-});
-
-final hasOwnerContextProvider = FutureProvider.autoDispose<bool>((ref) async {
-  final contexts = await ref.watch(authRepositoryProvider).listContexts();
-  return contexts.any((c) {
-    final role = c['role']?.toString();
-    return role == 'owner' || role == 'admin' || role == 'manager';
-  });
-});
+export 'tenant_payments_sheet.dart' show showTenantRentPaymentsSheet;
+export 'tenant_portal_providers.dart';
 
 final _currency =
     NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
@@ -84,10 +64,15 @@ class _TenantDashboardScreenState extends ConsumerState<TenantDashboardScreen> {
     // Live sync without WebSockets: soft-refresh shared state every 20s.
     _livePoll = Timer.periodic(const Duration(seconds: 20), (_) {
       if (!mounted) return;
-      ref.invalidate(myTenancyProvider);
-      ref.invalidate(myComplaintsProvider);
-      ref.invalidate(myInvoicesProvider);
-      ref.read(unreadNotificationsCountProvider.notifier).refresh();
+      final session = ref.read(tenantSessionProvider).valueOrNull;
+      if (session == null) {
+        ref.invalidate(myTenancyProvider);
+        ref.invalidate(tenantSessionProvider);
+        return;
+      }
+      // Property-type-aware channels only (no unused module polls).
+      ref.refreshTenantLiveChannels(session);
+      ref.read(unreadNotificationsCountProvider.notifier).refreshQuiet();
     });
   }
 
@@ -177,24 +162,23 @@ class _TenantHomeTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tenancyAsync = ref.watch(myTenancyProvider);
-    final hasOwnerContext =
-        ref.watch(hasOwnerContextProvider).valueOrNull ?? false;
+    final sessionAsync = ref.watch(tenantSessionProvider);
 
-    return tenancyAsync.when(
+    return sessionAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text('Something went wrong: $e')),
-      data: (t) {
-        final fullName = t['full_name']?.toString() ?? 'there';
+      data: (session) {
+        final t = session.tenancy;
+        final fullName = session.fullName;
         final firstName = fullName.trim().split(RegExp(r'\s+')).first;
         final initial =
             firstName.isNotEmpty ? firstName[0].toUpperCase() : '?';
-        final profile = TenantPropertyProfile.fromTenancy(t);
-        final roomLabel = profile.headerBadge(t);
+        final roomLabel = session.headerBadge;
 
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(myTenancyProvider);
+            ref.invalidate(tenantSessionProvider);
             ref.invalidate(myInvoicesProvider);
             ref.invalidate(myComplaintsProvider);
             ref.invalidate(unreadNotificationsCountProvider);
@@ -251,9 +235,8 @@ class _TenantHomeTab extends ConsumerWidget {
                   delegate: SliverChildListDelegate([
                     _CurrentMonthRentCard(tenancy: t),
                     const SizedBox(height: 22),
-                    _QuickActionsRow(
-                      tenancy: t,
-                      profile: profile,
+                    TenantQuickActionsGrid(
+                      session: session,
                       onSeeAll: onOpenServices,
                     ),
                     const SizedBox(height: 16),
@@ -269,10 +252,6 @@ class _TenantHomeTab extends ConsumerWidget {
       },
     );
   }
-}
-
-String _roomBedLabel(Map<String, dynamic> t) {
-  return TenantPropertyProfile.fromTenancy(t).headerBadge(t);
 }
 
 class _NotificationBell extends ConsumerWidget {
@@ -606,352 +585,6 @@ class _StatusChip extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w800,
           letterSpacing: 0.3,
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickActionsRow extends ConsumerWidget {
-  final Map<String, dynamic> tenancy;
-  final TenantPropertyProfile profile;
-  final VoidCallback onSeeAll;
-
-  const _QuickActionsRow({
-    required this.tenancy,
-    required this.profile,
-    required this.onSeeAll,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final actions = profile.quickActions;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Quick Actions',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  color: _ink,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: onSeeAll,
-              style: TextButton.styleFrom(
-                foregroundColor: _brand,
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text(
-                'See All >',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            for (var i = 0; i < actions.length; i++) ...[
-              if (i > 0) const SizedBox(width: 10),
-              Expanded(
-                child: _QuickActionTile(
-                  label: _actionLabel(actions[i]),
-                  icon: _actionIcon(actions[i]),
-                  tint: _actionTint(actions[i]),
-                  iconColor: _actionColor(actions[i]),
-                  onTap: () => _onAction(context, ref, actions[i]),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-
-  String _actionLabel(TenantQuickActionId id) {
-    switch (id) {
-      case TenantQuickActionId.raiseComplaint:
-        return 'Raise\nComplaint';
-      case TenantQuickActionId.wifi:
-        return 'Wi-Fi\nDetails';
-      case TenantQuickActionId.messMenu:
-        return 'Mess\nMenu';
-      case TenantQuickActionId.moveOut:
-        return 'Move-Out\n/ Notice';
-      case TenantQuickActionId.gatePass:
-        return 'Gate Pass\n/ Delivery';
-      case TenantQuickActionId.societyDues:
-        return 'Society\nDues';
-      case TenantQuickActionId.meterElectricity:
-        return 'Meter /\nElectricity';
-      case TenantQuickActionId.leaseAgreement:
-        return 'Lease\nAgreement';
-      case TenantQuickActionId.gstInvoices:
-        return 'GST\nInvoices';
-      case TenantQuickActionId.commercialEb:
-        return 'Commercial\nEB';
-      case TenantQuickActionId.maintenance:
-        return 'Maintenance';
-      case TenantQuickActionId.leaseTerms:
-        return 'Lease\nTerms';
-    }
-  }
-
-  IconData _actionIcon(TenantQuickActionId id) {
-    switch (id) {
-      case TenantQuickActionId.raiseComplaint:
-        return Icons.build_outlined;
-      case TenantQuickActionId.wifi:
-        return Icons.wifi_rounded;
-      case TenantQuickActionId.messMenu:
-        return Icons.restaurant_outlined;
-      case TenantQuickActionId.moveOut:
-        return Icons.logout_rounded;
-      case TenantQuickActionId.gatePass:
-        return Icons.badge_outlined;
-      case TenantQuickActionId.societyDues:
-        return Icons.account_balance_outlined;
-      case TenantQuickActionId.meterElectricity:
-        return Icons.bolt_rounded;
-      case TenantQuickActionId.leaseAgreement:
-      case TenantQuickActionId.leaseTerms:
-        return Icons.description_outlined;
-      case TenantQuickActionId.gstInvoices:
-        return Icons.receipt_long_outlined;
-      case TenantQuickActionId.commercialEb:
-        return Icons.electrical_services_outlined;
-      case TenantQuickActionId.maintenance:
-        return Icons.handyman_outlined;
-    }
-  }
-
-  Color _actionTint(TenantQuickActionId id) {
-    switch (id) {
-      case TenantQuickActionId.raiseComplaint:
-      case TenantQuickActionId.maintenance:
-        return const Color(0xFFF3E8FF);
-      case TenantQuickActionId.wifi:
-      case TenantQuickActionId.gatePass:
-        return const Color(0xFFDBEAFE);
-      case TenantQuickActionId.messMenu:
-      case TenantQuickActionId.societyDues:
-        return const Color(0xFFD1FAE5);
-      case TenantQuickActionId.moveOut:
-        return const Color(0xFFFFEDD5);
-      case TenantQuickActionId.meterElectricity:
-      case TenantQuickActionId.commercialEb:
-        return const Color(0xFFFEF3C7);
-      case TenantQuickActionId.leaseAgreement:
-      case TenantQuickActionId.leaseTerms:
-      case TenantQuickActionId.gstInvoices:
-        return const Color(0xFFE0E7FF);
-    }
-  }
-
-  Color _actionColor(TenantQuickActionId id) {
-    switch (id) {
-      case TenantQuickActionId.raiseComplaint:
-      case TenantQuickActionId.maintenance:
-        return _brand;
-      case TenantQuickActionId.wifi:
-      case TenantQuickActionId.gatePass:
-        return const Color(0xFF2563EB);
-      case TenantQuickActionId.messMenu:
-      case TenantQuickActionId.societyDues:
-        return const Color(0xFF059669);
-      case TenantQuickActionId.moveOut:
-        return const Color(0xFFEA580C);
-      case TenantQuickActionId.meterElectricity:
-      case TenantQuickActionId.commercialEb:
-        return const Color(0xFFD97706);
-      case TenantQuickActionId.leaseAgreement:
-      case TenantQuickActionId.leaseTerms:
-      case TenantQuickActionId.gstInvoices:
-        return const Color(0xFF4338CA);
-    }
-  }
-
-  Future<void> _onAction(
-    BuildContext context,
-    WidgetRef ref,
-    TenantQuickActionId id,
-  ) async {
-    switch (id) {
-      case TenantQuickActionId.raiseComplaint:
-      case TenantQuickActionId.maintenance:
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => RaiseComplaintScreen(
-              propertyId: tenancy['property_id']?.toString() ?? '',
-              nodeId: tenancy['node_id']?.toString() ?? '',
-            ),
-          ),
-        );
-        ref.invalidate(myComplaintsProvider);
-        return;
-      case TenantQuickActionId.wifi:
-        _showWifiSheet(context, tenancy);
-        return;
-      case TenantQuickActionId.messMenu:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const MessMenuScreen()),
-        );
-        return;
-      case TenantQuickActionId.moveOut:
-        final status = tenancy['move_out_request_status']?.toString() ?? '';
-        final already = status == 'pending' ||
-            status == 'approved' ||
-            status == 'modified_by_mutual_agreement';
-        if (already) {
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => MoveOutNoticeScreen(tenancy: tenancy),
-            ),
-          );
-          return;
-        }
-        final ok = await showRequestMoveOutSheet(
-          context: context,
-          ref: ref,
-          tenancy: tenancy,
-        );
-        if (ok) ref.invalidate(myTenancyProvider);
-        return;
-      case TenantQuickActionId.gatePass:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const GatePassScreen()),
-        );
-        return;
-      case TenantQuickActionId.societyDues:
-        await showTenantRentPaymentsSheet(context: context, ref: ref);
-        return;
-      case TenantQuickActionId.meterElectricity:
-      case TenantQuickActionId.commercialEb:
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const MeterReadingScreen()),
-        );
-        ref.invalidate(myInvoicesProvider);
-        return;
-      case TenantQuickActionId.leaseAgreement:
-      case TenantQuickActionId.leaseTerms:
-        final url = tenancy['agreement_pdf_url']?.toString();
-        if (url == null || url.trim().isEmpty) {
-          _showInfoSheet(
-            context,
-            title: 'Lease',
-            body: 'No lease PDF is on file yet. Ask your owner to upload it.',
-          );
-          return;
-        }
-        final base = ref.read(tenantPortalRepositoryProvider).baseUrl;
-        final full = url.startsWith('http') ? url : '$base$url';
-        final uri = Uri.tryParse(full);
-        if (uri != null) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
-        return;
-      case TenantQuickActionId.gstInvoices:
-        await showTenantRentPaymentsSheet(context: context, ref: ref);
-        return;
-    }
-  }
-}
-
-void _showInfoSheet(
-  BuildContext context, {
-  required String title,
-  required String body,
-}) {
-  showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (ctx) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(body, style: const TextStyle(color: _muted, height: 1.4)),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: FilledButton.styleFrom(backgroundColor: _brand),
-                  child: const Text('Got it'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-class _QuickActionTile extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color tint;
-  final Color iconColor;
-  final VoidCallback onTap;
-
-  const _QuickActionTile({
-    required this.label,
-    required this.icon,
-    required this.tint,
-    required this.iconColor,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: tint,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-          child: Column(
-            children: [
-              Icon(icon, color: iconColor, size: 24),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: iconColor.withValues(alpha: 0.9),
-                  height: 1.2,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1399,17 +1032,37 @@ class _TenantPaymentsTab extends ConsumerWidget {
                   final month = due == null
                       ? 'Invoice'
                       : _monthFmt.format(due.toLocal());
+                  final rawLines =
+                      inv['lineItems'] ?? inv['line_items'] ?? const [];
+                  final lineItems = rawLines is List
+                      ? rawLines
+                          .whereType<Map>()
+                          .map((e) => Map<String, dynamic>.from(e))
+                          .toList()
+                      : <Map<String, dynamic>>[];
+
                   return Container(
                     margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: const Color(0xFFF1F5F9)),
                     ),
-                    child: Row(
-                      children: [
-                        Container(
+                    child: Theme(
+                      data: Theme.of(context)
+                          .copyWith(dividerColor: Colors.transparent),
+                      child: ExpansionTile(
+                        tilePadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 4,
+                        ),
+                        childrenPadding: const EdgeInsets.fromLTRB(
+                          14,
+                          0,
+                          14,
+                          14,
+                        ),
+                        leading: Container(
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
@@ -1424,29 +1077,21 @@ class _TenantPaymentsTab extends ConsumerWidget {
                             size: 20,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                month,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: _ink,
-                                ),
-                              ),
-                              Text(
-                                _currency.format(total),
-                                style: const TextStyle(
-                                  color: _muted,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
+                        title: Text(
+                          month,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: _ink,
                           ),
                         ),
-                        Container(
+                        subtitle: Text(
+                          _currency.format(total),
+                          style: const TextStyle(
+                            color: _muted,
+                            fontSize: 13,
+                          ),
+                        ),
+                        trailing: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 10,
                             vertical: 5,
@@ -1468,7 +1113,75 @@ class _TenantPaymentsTab extends ConsumerWidget {
                             ),
                           ),
                         ),
-                      ],
+                        children: [
+                          if (lineItems.isEmpty)
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'No line-item breakdown available.',
+                                style: TextStyle(
+                                  color: _muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            )
+                          else
+                            ...lineItems.map((li) {
+                              final amt = double.tryParse(
+                                      li['amount']?.toString() ?? '') ??
+                                  0;
+                              final label = (li['description'] ??
+                                      li['charge_type_name'] ??
+                                      'Charge')
+                                  .toString();
+                              return Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        label,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          color: _ink,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      _currency.format(amt),
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          const Divider(height: 20),
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Total',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                _currency.format(total),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }),
@@ -1487,8 +1200,11 @@ class _TenantServicesTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final t = ref.watch(myTenancyProvider).valueOrNull ?? {};
-    final profile = TenantPropertyProfile.fromTenancy(t);
+    final session = ref.watch(tenantSessionProvider).valueOrNull;
+    if (session == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final t = session.tenancy;
     final node = t['node_name']?.toString() ?? 'Room';
     final ssid = 'Dormly_${node.replaceAll(RegExp(r'\s+'), '')}';
     const password = '••••••••';
@@ -1506,76 +1222,20 @@ class _TenantServicesTab extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
-          if (profile.showsWifi) ...[
+          if (session.archetype == PropertyArchetype.sharedLiving) ...[
             _WifiServiceCard(ssid: ssid, password: password, tenancy: t),
             const SizedBox(height: 12),
-          ],
-          if (profile.showsMessMenu) ...[
-            _ServiceLinkCard(
-              icon: Icons.restaurant_outlined,
-              iconColor: const Color(0xFF059669),
-              tint: const Color(0xFFD1FAE5),
-              title: 'Mess Menu',
-              subtitle: "Check today's meals and weekly menu.",
-              action: 'View Menu →',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const MessMenuScreen()),
-                );
-              },
-            ),
+            const HostelMessMenuWidget(),
             const SizedBox(height: 12),
           ],
-          if (profile.showsGatePass) ...[
-            _ServiceLinkCard(
-              icon: Icons.badge_outlined,
-              iconColor: const Color(0xFF2563EB),
-              tint: const Color(0xFFDBEAFE),
-              title: 'Gate Passes & Visitor Log',
-              subtitle: 'Approve deliveries and guest entries for your flat.',
-              action: 'Open →',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const GatePassScreen()),
-                );
-              },
-            ),
+          if (session.archetype == PropertyArchetype.gatedCommunity) ...[
+            const ApartmentGatePassWidget(),
+            const SizedBox(height: 12),
+            const RentalMeterUploadWidget(title: 'Meter / Electricity'),
             const SizedBox(height: 12),
           ],
-          if (profile.kind == TenantPropertyKind.rentalHouse ||
-              profile.kind == TenantPropertyKind.apartment ||
-              profile.kind == TenantPropertyKind.commercial) ...[
-            _ServiceLinkCard(
-              icon: Icons.bolt_rounded,
-              iconColor: const Color(0xFFD97706),
-              tint: const Color(0xFFFEF3C7),
-              title: profile.kind == TenantPropertyKind.commercial
-                  ? 'Commercial EB'
-                  : 'Meter / Electricity',
-              subtitle:
-                  'Submit a reading — dues update on the shared billing ledger.',
-              action: 'Open →',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const MeterReadingScreen(),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
-          if (profile.kind == TenantPropertyKind.commercial) ...[
-            _ServiceLinkCard(
-              icon: Icons.receipt_long_outlined,
-              iconColor: const Color(0xFF4338CA),
-              tint: const Color(0xFFE0E7FF),
-              title: 'GST Invoices',
-              subtitle: 'View commercial invoices and tax documents.',
-              action: 'View →',
-              onTap: () =>
-                  showTenantRentPaymentsSheet(context: context, ref: ref),
-            ),
+          if (session.archetype == PropertyArchetype.individualLease) ...[
+            const RentalMeterUploadWidget(),
             const SizedBox(height: 12),
           ],
           _ServiceLinkCard(
@@ -1605,8 +1265,8 @@ class _TenantServicesTab extends ConsumerWidget {
               await Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => RaiseComplaintScreen(
-                    propertyId: t['property_id']?.toString() ?? '',
-                    nodeId: t['node_id']?.toString() ?? '',
+                    propertyId: session.propertyId,
+                    nodeId: session.nodeId,
                   ),
                 ),
               );
@@ -1955,262 +1615,3 @@ class _SegChip extends StatelessWidget {
   }
 }
 
-// ─── Shared sheets / helpers ─────────────────────────────────────────────────
-
-void _showWifiSheet(BuildContext context, Map<String, dynamic> tenancy) {
-  final property = tenancy['property_name']?.toString() ?? 'Property';
-  final ssid = '$property-Guest';
-  const password = 'Ask your owner';
-
-  showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (ctx) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.black12,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Wi-Fi Details',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 16),
-              _CopyRow(label: 'SSID', value: ssid),
-              const SizedBox(height: 10),
-              _CopyRow(label: 'Password', value: password),
-              const SizedBox(height: 8),
-              const Text(
-                'Confirm the password with your owner if this does not work.',
-                style: TextStyle(fontSize: 12, color: _muted),
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-class _CopyRow extends StatelessWidget {
-  final String label;
-  final String value;
-  const _CopyRow({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: const TextStyle(fontSize: 11, color: _muted)),
-                Text(value,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15)),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Copy',
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: value));
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('$label copied')),
-                );
-              }
-            },
-            icon: const Icon(Icons.copy_rounded, size: 18, color: _brand),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Bottom sheet listing outstanding invoices for the logged-in tenant.
-Future<void> showTenantRentPaymentsSheet({
-  required BuildContext context,
-  required WidgetRef ref,
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: AppColors.surface,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (ctx) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Consumer(
-            builder: (context, ref, _) {
-              final async = ref.watch(myInvoicesProvider);
-              return async.when(
-                loading: () => const SizedBox(
-                  height: 160,
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-                error: (e, _) => Text('Could not load dues: $e'),
-                data: (invoices) {
-                  final due = invoices.where((inv) {
-                    final total =
-                        double.tryParse(inv['total_amount'].toString()) ?? 0;
-                    final paid =
-                        double.tryParse(inv['paid_amount'].toString()) ?? 0;
-                    return total - paid > 0.009;
-                  }).toList();
-
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.black12,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      const Text(
-                        'Pay via UPI / Owner',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        due.isEmpty
-                            ? 'You have no outstanding dues.'
-                            : 'Outstanding invoices — clear them with your owner via UPI.',
-                        style: const TextStyle(
-                          color: AppColors.slate,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      if (due.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Center(
-                            child: Icon(Icons.check_circle,
-                                color: Color(0xFF10B981), size: 40),
-                          ),
-                        )
-                      else
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
-                          ),
-                          child: ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: due.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 8),
-                            itemBuilder: (_, i) {
-                              final inv = due[i];
-                              final total = double.tryParse(
-                                      inv['total_amount'].toString()) ??
-                                  0;
-                              final paid = double.tryParse(
-                                      inv['paid_amount'].toString()) ??
-                                  0;
-                              final remaining = total - paid;
-                              final dueDate = inv['due_date']
-                                      ?.toString()
-                                      .split('T')
-                                      .first ??
-                                  '—';
-                              return Container(
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF3E8FF),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.payments_outlined,
-                                        color: _brand),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Due $dueDate',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          Text(
-                                            'Pending ${_currency.format(remaining)}',
-                                            style: const TextStyle(
-                                              color: _brand,
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () => Navigator.of(ctx).pop(),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: _brand,
-                          ),
-                          child: const Text('Got it'),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      );
-    },
-  );
-}

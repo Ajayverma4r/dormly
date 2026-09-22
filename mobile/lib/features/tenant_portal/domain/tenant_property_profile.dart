@@ -1,42 +1,31 @@
 // features/tenant_portal/domain/tenant_property_profile.dart
 //
-// Resolves property_type_key into UX families for the tenant dashboard
-// ("One Platform. Every Property.").
+// Thin adapter over PropertyArchetype for tenant portal surfaces.
 
-enum TenantPropertyKind {
-  hostelPg,
-  apartment,
-  rentalHouse,
-  commercial,
-}
+import '../../properties/domain/property_archetype.dart';
+import 'tenant_unit_details.dart';
 
-enum TenantQuickActionId {
-  raiseComplaint,
-  wifi,
-  messMenu,
-  moveOut,
-  gatePass,
-  societyDues,
-  meterElectricity,
-  leaseAgreement,
-  gstInvoices,
-  commercialEb,
-  maintenance,
-  leaseTerms,
-}
+/// @Deprecated — prefer [PropertyArchetype]. Kept as a typedef alias for
+/// call sites that still say "kind".
+typedef TenantPropertyKind = PropertyArchetype;
 
 class TenantPropertyProfile {
-  final TenantPropertyKind kind;
+  final PropertyArchetype archetype;
   final String rawTypeKey;
 
   const TenantPropertyProfile({
-    required this.kind,
+    required this.archetype,
     required this.rawTypeKey,
   });
+
+  /// Back-compat getter used across tenant portal.
+  PropertyArchetype get kind => archetype;
 
   factory TenantPropertyProfile.fromTenancy(Map<String, dynamic> t) {
     final raw = (t['property_type_key'] ??
             t['propertyTypeKey'] ??
+            t['property_type'] ??
+            t['propertyType'] ??
             t['unit_type'] ??
             t['unitType'] ??
             '')
@@ -44,123 +33,58 @@ class TenantPropertyProfile {
         .trim()
         .toLowerCase();
     return TenantPropertyProfile(
-      kind: resolveKind(raw),
+      archetype: propertyArchetypeFromKey(raw),
       rawTypeKey: raw,
     );
   }
 
-  static TenantPropertyKind resolveKind(String raw) {
-    // Accept both seed keys and product aliases from the UX brief.
-    switch (raw) {
-      case 'hostel':
-      case 'pg':
-      case 'hostel_pg':
-      case 'coliving':
-      case 'staff_housing':
-      case 'hotel':
-        return TenantPropertyKind.hostelPg;
-      case 'apartment':
-      case 'flat':
-        return TenantPropertyKind.apartment;
-      case 'rental':
-      case 'rental_house':
-      case 'house':
-      case 'villa':
-      case 'independent':
-        return TenantPropertyKind.rentalHouse;
-      case 'office':
-      case 'warehouse':
-      case 'factory':
-      case 'parking':
-      case 'school':
-      case 'hospital':
-      case 'resort':
-      case 'commercial':
-      case 'custom':
-        return TenantPropertyKind.commercial;
-      default:
-        if (raw.isEmpty) return TenantPropertyKind.hostelPg;
-        return TenantPropertyKind.commercial;
-    }
-  }
+  /// Canonical catalog key for this archetype.
+  String get canonicalType => archetype.catalogKey;
+
+  bool get isHostel => archetype == PropertyArchetype.sharedLiving;
+  bool get isApartment => archetype == PropertyArchetype.gatedCommunity;
+  bool get isRentalHouse => archetype == PropertyArchetype.individualLease;
+
+  /// Legacy commercial UX collapsed into individual lease.
+  bool get isCommercial => false;
+
+  bool get showsMessMenu => archetype.showsMessMenu;
+  bool get showsWifi => archetype.showsWifi;
+  bool get showsGatePass => archetype.showsGatePass;
+  bool get showsMeterUpload => archetype.showsMeterUpload;
+
+  static PropertyArchetype resolveKind(String raw) =>
+      propertyArchetypeFromKey(raw);
 
   /// Subtitle under "Hi [Name]" on the tenant home header.
-  String headerBadge(Map<String, dynamic> t) {
-    final node = (t['node_name'] ?? t['nodeName'])?.toString().trim() ?? '';
-    final parent =
-        (t['parent_node_name'] ?? t['parentNodeName'])?.toString().trim() ??
-            '';
-    final grand = (t['grandparent_node_name'] ?? t['grandparentNodeName'])
-            ?.toString()
-            .trim() ??
-        '';
-    final level =
-        (t['node_level_key'] ?? t['nodeLevelKey'])?.toString().toLowerCase() ??
-            '';
-    final property = t['property_name']?.toString().trim() ?? '';
+  String headerBadge(
+    Map<String, dynamic> t, [
+    TenantUnitDetails? details,
+  ]) {
+    final u = details ?? TenantUnitDetails.fromTenancy(t);
 
-    switch (kind) {
-      case TenantPropertyKind.hostelPg:
-        if ((level == 'bed' || parent.isNotEmpty) && parent.isNotEmpty) {
-          return 'Room $parent • Bed $node';
+    switch (archetype) {
+      case PropertyArchetype.sharedLiving:
+        if (u.roomNo != null && u.bedId != null) {
+          return 'Room ${u.roomNo} • Bed ${u.bedId}';
         }
-        if (node.isNotEmpty) return 'Room $node';
-        return property.isNotEmpty ? property : 'Your stay';
+        if (u.roomNo != null) return 'Room ${u.roomNo}';
+        if (u.bedId != null) return 'Bed ${u.bedId}';
+        return u.propertyName?.isNotEmpty == true
+            ? u.propertyName!
+            : 'Your stay';
 
-      case TenantPropertyKind.apartment:
-        final tower = grand.isNotEmpty
-            ? grand
-            : (parent.isNotEmpty ? parent : property);
-        final flat = node.isNotEmpty ? node : '—';
-        if (tower.isNotEmpty) return 'Tower $tower • Flat $flat';
+      case PropertyArchetype.gatedCommunity:
+        final tower = u.tower;
+        final flat = u.flatNo ?? '—';
+        if (tower != null && tower.isNotEmpty) {
+          return 'Tower $tower • Flat $flat';
+        }
         return 'Flat $flat';
 
-      case TenantPropertyKind.rentalHouse:
-        final unit =
-            node.isNotEmpty ? node : (property.isNotEmpty ? property : 'Home');
-        return 'Unit $unit • Full House';
-
-      case TenantPropertyKind.commercial:
-        final unit = node.isNotEmpty ? node : 'Unit';
-        if (property.isNotEmpty) return '$property • $unit';
-        return unit;
+      case PropertyArchetype.individualLease:
+        final unit = u.unitName ?? u.propertyName ?? 'Home';
+        return 'Unit $unit';
     }
   }
-
-  List<TenantQuickActionId> get quickActions {
-    switch (kind) {
-      case TenantPropertyKind.hostelPg:
-        return const [
-          TenantQuickActionId.raiseComplaint,
-          TenantQuickActionId.wifi,
-          TenantQuickActionId.messMenu,
-          TenantQuickActionId.moveOut,
-        ];
-      case TenantPropertyKind.apartment:
-        return const [
-          TenantQuickActionId.raiseComplaint,
-          TenantQuickActionId.gatePass,
-          TenantQuickActionId.societyDues,
-          TenantQuickActionId.moveOut,
-        ];
-      case TenantPropertyKind.rentalHouse:
-        return const [
-          TenantQuickActionId.raiseComplaint,
-          TenantQuickActionId.meterElectricity,
-          TenantQuickActionId.leaseAgreement,
-          TenantQuickActionId.moveOut,
-        ];
-      case TenantPropertyKind.commercial:
-        return const [
-          TenantQuickActionId.gstInvoices,
-          TenantQuickActionId.commercialEb,
-          TenantQuickActionId.maintenance,
-          TenantQuickActionId.leaseTerms,
-        ];
-    }
-  }
-
-  bool get showsMessMenu => kind == TenantPropertyKind.hostelPg;
-  bool get showsWifi => kind == TenantPropertyKind.hostelPg;
-  bool get showsGatePass => kind == TenantPropertyKind.apartment;
 }

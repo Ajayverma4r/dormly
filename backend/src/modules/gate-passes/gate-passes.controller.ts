@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { GatePassesService } from './gate-passes.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import { TenantPortalService } from '@modules/tenant-portal/tenant-portal.service';
+import { assertFeatureAllowed } from '@modules/tenant-portal/property-type-access';
 
 const service = new GatePassesService();
 const tenantPortal = new TenantPortalService();
@@ -39,6 +40,7 @@ export class GatePassesController {
     try {
       const tenancy = await tenantPortal.getMyTenancy(req.ctxId!);
       if (!tenancy) return res.status(404).json({ error: 'No active tenancy' });
+      assertFeatureAllowed(tenancy, 'gate_pass');
       res.json({
         data: await service.listMine(req.userId!, String(tenancy.id)),
       });
@@ -51,6 +53,7 @@ export class GatePassesController {
     try {
       const tenancy = await tenantPortal.getMyTenancy(req.ctxId!);
       if (!tenancy) return res.status(404).json({ error: 'No active tenancy' });
+      assertFeatureAllowed(tenancy, 'gate_pass');
       const body = z
         .object({
           visitorName: z.string().min(1),

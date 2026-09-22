@@ -1,6 +1,22 @@
--- seed_property_types.sql
--- 3-archetype catalog only. Copied into hierarchy_levels at property create.
+-- 020_three_archetype_property_types.sql
+-- Pivot catalog + existing properties to hostel_pg / apartment / rental_house.
 
+-- 1) Remap live properties to the 3 canonical keys (before deleting old catalog rows).
+UPDATE properties SET property_type_key = 'hostel_pg'
+WHERE lower(property_type_key) IN (
+  'hostel', 'pg', 'hostel_pg', 'coliving', 'staff_housing', 'hotel'
+);
+
+UPDATE properties SET property_type_key = 'apartment'
+WHERE lower(property_type_key) IN ('apartment', 'flat');
+
+UPDATE properties SET property_type_key = 'rental_house'
+WHERE lower(property_type_key) NOT IN ('hostel_pg', 'apartment', 'rental_house');
+
+-- 2) Clear old templates (parent FKs first via delete all)
+DELETE FROM property_type_level_templates;
+
+-- 3) Ensure the 3 archetype rows exist; drop everything else
 INSERT INTO property_types (key, display_name, description, icon) VALUES
     ('hostel_pg',    'Hostel / PG',     'Shared living — hostels, PGs, and co-living', 'bed'),
     ('apartment',    'Flat / Apartment','Gated community — towers, floors, and flats', 'building'),
@@ -9,6 +25,11 @@ ON CONFLICT (key) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     description  = EXCLUDED.description,
     icon         = EXCLUDED.icon;
+
+DELETE FROM property_types
+WHERE key NOT IN ('hostel_pg', 'apartment', 'rental_house');
+
+-- 4) Seed hierarchy templates
 
 -- hostel_pg: Building > Floor > Room > Bed
 WITH b AS (

@@ -5,7 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/tenant_portal_repository.dart';
-import 'tenant_dashboard_screen.dart' show myTenancyProvider;
+import 'tenant_portal_providers.dart';
 
 final _dateFmt = DateFormat('d MMM yyyy');
 final _dateTimeFmt = DateFormat('d MMM yyyy, h:mm a');
@@ -91,6 +91,7 @@ class _RequestMoveOutSheetState extends ConsumerState<RequestMoveOutSheet> {
             reason: _isEmergency ? _reason : 'Standard Move-out (Regular Notice)',
           );
       ref.invalidate(myTenancyProvider);
+      ref.invalidate(tenantSessionProvider);
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {

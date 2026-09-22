@@ -13,9 +13,12 @@ billingRouter.delete('/charge-types/:chargeTypeId', controller.deleteChargeType)
 
 billingRouter.get('/cashflow-summary', controller.cashflowSummary);
 billingRouter.get('/payments', controller.listPayments);
+billingRouter.get('/tenancies/:tenancyId/arrears-preview', controller.arrearsPreview);
 billingRouter.get('/invoices', controller.listInvoices);
+billingRouter.post('/invoices/generate-monthly', controller.generateMonthlyInvoice);
 billingRouter.get('/invoices/:invoiceId', controller.getInvoice);
 billingRouter.post('/invoices', controller.createInvoice);
 billingRouter.patch('/invoices/:invoiceId', controller.updateInvoice);
 billingRouter.post('/invoices/:invoiceId/payments', controller.recordPayment);
+billingRouter.post('/invoices/:invoiceId/pending-charges', controller.addPendingCharges);
 billingRouter.post('/invoices/:invoiceId/remind', controller.sendReminder);

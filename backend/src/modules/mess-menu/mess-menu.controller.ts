@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { MessMenuService } from './mess-menu.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import { TenantPortalService } from '@modules/tenant-portal/tenant-portal.service';
+import { assertFeatureAllowed } from '@modules/tenant-portal/property-type-access';
 
 const service = new MessMenuService();
 const tenantPortal = new TenantPortalService();
@@ -58,6 +59,7 @@ export class MessMenuController {
     try {
       const tenancy = await tenantPortal.getMyTenancy(req.ctxId!);
       if (!tenancy) return res.status(404).json({ error: 'No active tenancy' });
+      assertFeatureAllowed(tenancy, 'mess_menu');
       res.json({
         data: await service.listByProperty(String(tenancy.property_id)),
       });

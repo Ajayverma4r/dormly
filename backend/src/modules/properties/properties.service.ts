@@ -53,18 +53,24 @@ export class PropertiesService {
   }
 
   async listPropertyTypes() {
+    const order = ['hostel_pg', 'apartment', 'rental_house'] as const;
     const rows = await query<{
       key: string;
       display_name: string;
       description: string | null;
       icon: string | null;
-    }>(`SELECT * FROM property_types ORDER BY display_name`);
+    }>(`SELECT * FROM property_types WHERE key = ANY($1::text[])`, [
+      [...order],
+    ]);
 
-    // Annotate monetization metadata for the Flutter wizard badges.
-    return rows.map((t) => ({
-      ...t,
-      monetization: monetizationMetaForType(t.key),
-    }));
+    const byKey = new Map(rows.map((t) => [t.key, t]));
+    return order
+      .map((key) => byKey.get(key))
+      .filter((t): t is NonNullable<typeof t> => Boolean(t))
+      .map((t) => ({
+        ...t,
+        monetization: monetizationMetaForType(t.key),
+      }));
   }
 
   async previewTemplate(propertyTypeKey: string) {
@@ -106,14 +112,21 @@ export class PropertiesService {
 
   /**
    * Enforces monetization before insert:
-   *  - rental / house / villa → always allowed
-   *  - apartment + commercial → 1 free; 2nd+ requires paid plan
+   *  - rental_house → always allowed
+   *  - apartment + hostel_pg → 1 free; 2nd+ requires paid plan
    */
   async assertCanCreateProperty(organizationId: string, propertyTypeKey: string): Promise<void> {
+    const allowed = new Set(['hostel_pg', 'apartment', 'rental_house']);
+    if (!allowed.has(propertyTypeKey)) {
+      throw new Error(
+        `Invalid property type "${propertyTypeKey}". Choose Hostel / PG, Flat / Apartment, or Rental House.`,
+      );
+    }
+
     if (isFreeResidentialType(propertyTypeKey)) return;
 
     const limitedCount = await this.countCommercialProperties(organizationId);
-    if (limitedCount < 1) return; // first apartment/commercial property is free
+    if (limitedCount < 1) return; // first apartment/hostel property is free
 
     const entitlements = await entitlementService.getOrgEntitlements(organizationId);
     const paid = isPaidSubscription(
@@ -124,7 +137,7 @@ export class PropertiesService {
       throw new SubscriptionRequiredError(
         propertyTypeKey === 'apartment'
           ? 'Free plan includes 1 Apartment (1 building + 20 rooms). Upgrade to Pro for more.'
-          : 'Your free plan includes 1 commercial property (Hostel, PG, Hotel, etc.). Upgrade to Pro to add more.',
+          : 'Your free plan includes 1 Hostel / PG. Upgrade to Pro to add more.',
       );
     }
   }

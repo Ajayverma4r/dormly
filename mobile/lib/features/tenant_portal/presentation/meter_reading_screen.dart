@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../data/tenant_portal_repository.dart';
+import 'tenant_portal_providers.dart';
 
 const _brand = Color(0xFF6D28D9);
 const _ink = Color(0xFF0F172A);
@@ -17,7 +18,7 @@ const _bg = Color(0xFFF8FAFC);
 
 final myMeterReadingsProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).myMeterReadings();
+  return ref.watch(tenantMeterReadingsProvider.future);
 });
 
 class MeterReadingScreen extends ConsumerStatefulWidget {

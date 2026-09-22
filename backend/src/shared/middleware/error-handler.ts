@@ -3,10 +3,19 @@ import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { StructureValidationError } from '@core/structure-engine/services/structure.service';
 import { SubscriptionRequiredError } from '@shared/property-monetization';
+import { FeatureNotAllowedError } from '@modules/tenant-portal/property-type-access';
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ZodError) {
     return res.status(400).json({ error: 'Validation failed', details: err.errors });
+  }
+  if (err instanceof FeatureNotAllowedError) {
+    return res.status(403).json({
+      error: err.message,
+      code: err.code,
+      feature: err.feature,
+      propertyKind: err.kind,
+    });
   }
   if (err instanceof StructureValidationError) {
     return res.status(409).json({ error: err.message });

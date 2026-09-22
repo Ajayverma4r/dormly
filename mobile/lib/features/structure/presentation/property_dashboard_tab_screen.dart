@@ -853,16 +853,14 @@ class _HeroCard extends ConsumerWidget {
                       height: 72,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
-                        color: Colors.white.withValues(alpha: 0.15),
-                        image: const DecorationImage(
-                          image: AssetImage('assets/images/login_bg.png'),
-                          fit: BoxFit.cover,
-                          opacity: 0.85,
+                        color: Colors.white.withValues(alpha: 0.18),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.28),
                         ),
                       ),
                       child: Icon(
                         Icons.apartment_rounded,
-                        color: Colors.white.withValues(alpha: 0.9),
+                        color: Colors.white.withValues(alpha: 0.95),
                         size: 32,
                       ),
                     ),

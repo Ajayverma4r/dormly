@@ -77,7 +77,25 @@ const createSchema = z.object({
   moveInAt: z.string().optional(),
   securityDeposit: z.number().optional(),
   notes: z.string().optional(),
-});
+  monthlyRent: z.number().min(0).optional(),
+  monthly_rent: z.number().min(0).optional(),
+  includePastRentArrears: z.boolean().optional(),
+  include_past_rent_arrears: z.boolean().optional(),
+}).transform((data) => ({
+  nodeId: data.nodeId,
+  phone: data.phone,
+  fullName: data.fullName,
+  email: data.email,
+  address: data.address,
+  companyName: data.companyName,
+  aadhaarNumber: data.aadhaarNumber,
+  moveInAt: data.moveInAt,
+  securityDeposit: data.securityDeposit,
+  notes: data.notes,
+  monthlyRent: data.monthlyRent ?? data.monthly_rent,
+  includePastRentArrears:
+    data.includePastRentArrears ?? data.include_past_rent_arrears,
+}));
 
 const updateSchema = z
   .object({

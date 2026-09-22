@@ -115,6 +115,8 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   String? _error;
   String? _selectedNodeId;
   bool _useSearchPicker = false;
+  /// Default true — roll unbilled months into the first invoice.
+  bool _includePastRentArrears = true;
 
   @override
   void initState() {
@@ -155,6 +157,14 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
     if (digits.length == 12 && digits.startsWith('91')) return '+$digits';
     if (raw.startsWith('+')) return raw;
     return '+$digits';
+  }
+
+  bool get _moveInIsBackdated {
+    if (_moveInDate == null) return false;
+    final now = DateTime.now();
+    final moveMonth = DateTime(_moveInDate!.year, _moveInDate!.month);
+    final currentMonth = DateTime(now.year, now.month);
+    return moveMonth.isBefore(currentMonth);
   }
 
   Future<void> _save() async {
@@ -204,6 +214,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
             notes: _notesController.text.trim().isEmpty
                 ? null
                 : _notesController.text.trim(),
+            includePastRentArrears: _includePastRentArrears,
           );
       if (!mounted) return;
 
@@ -235,6 +246,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
             roomId: roomId,
             preSelectedRoomName: selectedUnit?.pathLabel,
             isFromOnboarding: true,
+            includePastRentArrears: _includePastRentArrears,
           ),
         ),
       );
@@ -469,6 +481,31 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                     trailing: const Icon(Icons.calendar_today_outlined),
                     onTap: _pickMoveInDate,
                   ),
+                  if (_moveInIsBackdated) ...[
+                    const SizedBox(height: 4),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _includePastRentArrears,
+                      onChanged: (v) => setState(
+                        () => _includePastRentArrears = v ?? true,
+                      ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text(
+                        'Add unbilled past rent to the first invoice?',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Unbilled months since move-in will appear as Previous Dues on the first invoice.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   _field('Security Deposit', _depositController,
                       type: TextInputType.number),

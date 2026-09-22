@@ -5,7 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import '../data/tenant_portal_repository.dart';
+import 'tenant_portal_providers.dart';
 
 const _brand = Color(0xFF6D28D9);
 const _ink = Color(0xFF0F172A);
@@ -16,7 +16,8 @@ final _dateFmt = DateFormat('d MMM yyyy');
 
 final messMenuProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).getMessMenu();
+  // Alias → type-gated provider (skips API for non-hostel).
+  return ref.watch(tenantMessMenuProvider.future);
 });
 
 List<String> _splitMeals(String? raw) {

@@ -6,6 +6,7 @@
 
 import { query } from '@config/db';
 import { notifyOwnersOfMoveOut } from '@modules/notifications/move-out-notifications';
+import { assertFeatureAllowed } from './property-type-access';
 
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -134,5 +135,52 @@ export class TenantPortalService {
     }
 
     return updated;
+  }
+
+  /** Apartment society notices — property-scoped notification feed. */
+  async listSocietyNotices(tenancyId: string, userId: string) {
+    const tenancy = await this.getMyTenancy(tenancyId);
+    if (!tenancy) throw new Error('Tenancy not found');
+    assertFeatureAllowed(tenancy, 'society_notices');
+
+    return query(
+      `SELECT id, type, title, body, data, read_at, created_at, property_id
+       FROM notifications
+       WHERE user_id = $1
+         AND (
+           property_id = $2
+           OR property_id IS NULL
+         )
+         AND type IN (
+           'society_notice',
+           'society_notices',
+           'rent_reminder',
+           'general',
+           'announcement'
+         )
+       ORDER BY created_at DESC
+       LIMIT 40`,
+      [userId, tenancy.property_id],
+    );
+  }
+
+  /** Lease PDF / dates for rental & commercial (and apartments when present). */
+  async getLeaseDetails(tenancyId: string) {
+    const tenancy = await this.getMyTenancy(tenancyId);
+    if (!tenancy) throw new Error('Tenancy not found');
+    assertFeatureAllowed(tenancy, 'lease_details');
+
+    return {
+      tenancy_id: tenancy.id,
+      property_id: tenancy.property_id,
+      agreement_pdf_url: tenancy.agreement_pdf_url ?? null,
+      move_in_at: tenancy.move_in_at ?? null,
+      move_out_at: tenancy.move_out_at ?? null,
+      security_deposit: tenancy.security_deposit ?? null,
+      full_name: tenancy.full_name ?? null,
+      node_name: tenancy.node_name ?? null,
+      property_name: tenancy.property_name ?? null,
+      property_type_key: tenancy.property_type_key ?? null,
+    };
   }
 }

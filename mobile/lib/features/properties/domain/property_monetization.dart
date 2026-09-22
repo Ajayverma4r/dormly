@@ -4,9 +4,11 @@
 
 /// Free forever (unlimited create, ads-supported).
 const kFreeResidentialTypes = {
-  'rental', // Rental Property
-  'house', // Independent House
-  'villa', // Villa
+  'rental_house',
+  // Legacy keys remapped by migration 020.
+  'rental',
+  'house',
+  'villa',
 };
 
 const kApartmentType = 'apartment';

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../data/tenant_portal_repository.dart';
+import 'tenant_portal_providers.dart';
 
 const _brand = Color(0xFF6D28D9);
 const _ink = Color(0xFF0F172A);
@@ -12,7 +13,7 @@ const _bg = Color(0xFFF8FAFC);
 
 final myGatePassesProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).myGatePasses();
+  return ref.watch(tenantGatePassesProvider.future);
 });
 
 class GatePassScreen extends ConsumerStatefulWidget {

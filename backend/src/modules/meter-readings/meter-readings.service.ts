@@ -5,7 +5,7 @@ import {
   ensureLiveOpsSchema,
   notifyPropertyOwners,
 } from '@modules/notifications/notify';
-import { BillingService } from '@modules/billing/billing.service';
+import { BillingService, ensureBillingSchema } from '@modules/billing/billing.service';
 
 const billing = new BillingService();
 
@@ -63,6 +63,7 @@ export class MeterReadingsService {
     notifyTenantUserId?: string | null;
   }) {
     await ensureLiveOpsSchema();
+    await ensureBillingSchema();
 
     const cycle = input.billingCycle?.trim() || defaultBillingCycle();
     const prevRows = await query<{ meter_reading_value: string }>(
@@ -132,10 +133,12 @@ export class MeterReadingsService {
       const lineDesc = `Electricity (${cycle}): ${units} units @ ₹${rate}`;
 
       if (existingInv[0]) {
+        // Attach immediately to the open cycle invoice.
         invoiceId = existingInv[0].id;
         const [li] = await query<{ id: string }>(
-          `INSERT INTO invoice_line_items (invoice_id, charge_type_id, description, amount)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
+          `INSERT INTO invoice_line_items
+             (invoice_id, charge_type_id, description, amount, charge_kind)
+           VALUES ($1, $2, $3, $4, 'electricity') RETURNING id`,
           [invoiceId, electricity?.id ?? null, lineDesc, amount],
         );
         lineItemId = li.id;
@@ -145,28 +148,9 @@ export class MeterReadingsService {
            WHERE id = $2`,
           [amount, invoiceId],
         );
-      } else {
-        const inv = await billing.createInvoice({
-          tenancyId,
-          propertyId: input.propertyId,
-          periodStart: bounds.start,
-          periodEnd: bounds.end,
-          dueDate: bounds.due,
-          lineItems: [
-            {
-              chargeTypeId: electricity?.id,
-              description: lineDesc,
-              amount,
-            },
-          ],
-        });
-        invoiceId = (inv as any).id;
-        const lines = await query<{ id: string }>(
-          `SELECT id FROM invoice_line_items WHERE invoice_id = $1 ORDER BY id DESC LIMIT 1`,
-          [invoiceId],
-        );
-        lineItemId = lines[0]?.id ?? null;
       }
+      // Otherwise leave invoice_id NULL — picked up by addPendingChargesToInvoice
+      // when the owner generates / finalizes the monthly invoice.
     }
 
     const [row] = await query<any>(
@@ -206,7 +190,9 @@ export class MeterReadingsService {
         title: `Meter reading: ${unitName}`,
         body:
           amount > 0
-            ? `${input.readingValue} units • ₹${amount} added to ${cycle} dues`
+            ? invoiceId
+              ? `${input.readingValue} units • ₹${amount} added to ${cycle} dues`
+              : `${input.readingValue} units • ₹${amount} pending for next invoice`
             : `New reading ${input.readingValue} recorded for ${cycle}`,
         data: {
           meter_reading_id: String(row.id),

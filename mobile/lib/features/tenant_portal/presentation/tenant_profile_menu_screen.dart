@@ -12,8 +12,7 @@ import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../domain/tenant_property_profile.dart';
 import 'mess_menu_screen.dart';
 import 'move_out_notice_screen.dart';
-import 'tenant_dashboard_screen.dart'
-    show myComplaintsProvider, myTenancyProvider, hasOwnerContextProvider;
+import 'tenant_portal_providers.dart';
 
 const _brand = Color(0xFF6D28D9);
 const _ink = Color(0xFF0F172A);

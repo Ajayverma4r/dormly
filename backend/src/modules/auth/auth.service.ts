@@ -80,34 +80,10 @@ export class AuthService {
         `INSERT INTO users (phone) VALUES ($1) RETURNING id`,
         [phone],
       ))[0];
-
-      const org = (await query<{ id: string }>(
-        `INSERT INTO organizations (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
-        [`${phone}'s Organization`, user.id],
-      ))[0];
-      organizationId = org.id;
-
-      await query(
-        `INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')`,
-        [user.id, organizationId],
-      );
-
-      try {
-        await new SubscriptionService().createTrialSubscription(
-          organizationId,
-          user.id,
-        );
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[auth] createTrialSubscription failed:', err);
-      }
-    } else {
-      const membership = (await query<{ organization_id: string }>(
-        `SELECT organization_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1`,
-        [user.id],
-      ))[0];
-      organizationId = membership?.organization_id;
     }
+
+    // Always ensure an owner workspace exists (covers DB truncates / orphaned users).
+    organizationId = await this.ensureOwnerOrganization(user.id, phone);
 
     const accessToken = jwt.sign({ sub: user.id }, env.jwtAccessSecret, {
       expiresIn: env.jwtAccessTtl,
@@ -125,6 +101,69 @@ export class AuthService {
       organizationId,
       user: profile,
     };
+  }
+
+  /**
+   * Idempotent: returns existing owner/admin org, or creates
+   * "[Name]'s Workspace" + membership + free trial.
+   */
+  async ensureOwnerOrganization(
+    userId: string,
+    phoneFallback?: string,
+  ): Promise<string> {
+    const existing = (await query<{ organization_id: string }>(
+      `SELECT organization_id FROM memberships
+       WHERE user_id = $1 AND role IN ('owner', 'admin')
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [userId],
+    ))[0];
+    if (existing?.organization_id) return existing.organization_id;
+
+    // Also reclaim orgs still owned by this user with a missing membership row.
+    const owned = (await query<{ id: string }>(
+      `SELECT id FROM organizations WHERE owner_user_id = $1 ORDER BY created_at ASC LIMIT 1`,
+      [userId],
+    ))[0];
+    if (owned?.id) {
+      await query(
+        `INSERT INTO memberships (user_id, organization_id, role)
+         VALUES ($1, $2, 'owner')
+         ON CONFLICT (user_id, organization_id) DO NOTHING`,
+        [userId, owned.id],
+      );
+      return owned.id;
+    }
+
+    const profile = await query<{ name: string | null; phone: string }>(
+      `SELECT name, phone FROM users WHERE id = $1`,
+      [userId],
+    );
+    const label =
+      profile[0]?.name?.trim() ||
+      phoneFallback ||
+      profile[0]?.phone ||
+      'My';
+    const orgName = `${label}'s Workspace`;
+
+    const org = (await query<{ id: string }>(
+      `INSERT INTO organizations (name, owner_user_id) VALUES ($1, $2) RETURNING id`,
+      [orgName, userId],
+    ))[0];
+
+    await query(
+      `INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')`,
+      [userId, org.id],
+    );
+
+    try {
+      await new SubscriptionService().createTrialSubscription(org.id, userId);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[auth] createTrialSubscription failed:', err);
+    }
+
+    return org.id;
   }
 
   async refresh(refreshToken: string): Promise<{ accessToken: string }> {

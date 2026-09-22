@@ -15,6 +15,8 @@ import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../reports/presentation/reports_screen.dart';
 import '../../analytics/presentation/analytics_dashboard_screen.dart';
 import '../../tenant_portal/presentation/owner_mess_menu_screen.dart';
+import '../../properties/domain/property_archetype.dart';
+import 'property_shell_screen.dart' show propertyDetailProvider;
 
 final _hasTenantContextProvider = FutureProvider.autoDispose<bool>((ref) async {
   final contexts = await ref.watch(authRepositoryProvider).listContexts();
@@ -38,6 +40,9 @@ class PropertyMoreScreen extends ConsumerWidget {
     final isOwnerOrAdmin = role == 'owner' || role == 'admin';
     final canManage = isOwnerOrAdmin || role == 'manager';
     final hasTenantContext = ref.watch(_hasTenantContextProvider).valueOrNull ?? false;
+    final property = ref.watch(propertyDetailProvider(propertyId)).valueOrNull;
+    final showMessMenu = canManage &&
+        propertyArchetypeFromProperty(property).showsMessMenu;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Menu')),
@@ -105,7 +110,7 @@ class PropertyMoreScreen extends ConsumerWidget {
               ),
             ),
           ),
-          if (canManage) ...[
+          if (showMessMenu) ...[
             const SizedBox(height: 10),
             _tile(
               context,

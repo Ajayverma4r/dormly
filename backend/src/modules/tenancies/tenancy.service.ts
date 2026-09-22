@@ -20,6 +20,9 @@ interface CreateTenancyInput {
   moveInAt?: string;
   securityDeposit?: number;
   notes?: string;
+  monthlyRent?: number;
+  /** Default true — roll unbilled past rent into the first invoice. */
+  includePastRentArrears?: boolean;
 }
 
 interface UpdateTenancyInput {
@@ -148,19 +151,62 @@ export class TenancyService {
       ))[0];
     }
 
-    const [tenancy] = await query(
-      `INSERT INTO tenancies
-        (user_id, property_id, node_id, full_name, email, address, company_name,
-         aadhaar_number, move_in_at, security_deposit, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING *`,
-      [
-        user.id, input.propertyId, input.nodeId, input.fullName, input.email ?? null,
-        input.address ?? null, input.companyName ?? null, input.aadhaarNumber ?? null,
-        input.moveInAt ?? null, input.securityDeposit ?? null, input.notes ?? null,
-      ],
-    );
-    return tenancy;
+    try {
+      const [tenancy] = await query(
+        `INSERT INTO tenancies
+          (user_id, property_id, node_id, full_name, email, address, company_name,
+           aadhaar_number, move_in_at, security_deposit, notes,
+           monthly_rent, include_past_rent_arrears)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         RETURNING *`,
+        [
+          user.id,
+          input.propertyId,
+          input.nodeId,
+          input.fullName,
+          input.email ?? null,
+          input.address ?? null,
+          input.companyName ?? null,
+          input.aadhaarNumber ?? null,
+          input.moveInAt ?? null,
+          input.securityDeposit ?? null,
+          input.notes ?? null,
+          input.monthlyRent ?? null,
+          input.includePastRentArrears !== false,
+        ],
+      );
+      return tenancy;
+    } catch (err: any) {
+      // Fallback when migration 019 / monthly_rent columns are not yet applied.
+      const msg = String(err?.message ?? err);
+      if (
+        !msg.includes('include_past_rent_arrears') &&
+        !msg.includes('monthly_rent')
+      ) {
+        throw err;
+      }
+      const [tenancy] = await query(
+        `INSERT INTO tenancies
+          (user_id, property_id, node_id, full_name, email, address, company_name,
+           aadhaar_number, move_in_at, security_deposit, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING *`,
+        [
+          user.id,
+          input.propertyId,
+          input.nodeId,
+          input.fullName,
+          input.email ?? null,
+          input.address ?? null,
+          input.companyName ?? null,
+          input.aadhaarNumber ?? null,
+          input.moveInAt ?? null,
+          input.securityDeposit ?? null,
+          input.notes ?? null,
+        ],
+      );
+      return tenancy;
+    }
   }
 
   /** Ensures the node exists, belongs to the property, is a rentable unit, and is vacant. */

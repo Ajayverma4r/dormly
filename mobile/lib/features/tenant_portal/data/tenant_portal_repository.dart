@@ -153,5 +153,15 @@ class TenantPortalRepository {
     return Map<String, dynamic>.from(res.data['data'] as Map);
   }
 
+  Future<List<Map<String, dynamic>>> societyNotices() async {
+    final res = await _client.dio.get('/v1/tenant-portal/society-notices');
+    return List<Map<String, dynamic>>.from(res.data['data'] as List);
+  }
+
+  Future<Map<String, dynamic>> leaseDetails() async {
+    final res = await _client.dio.get('/v1/tenant-portal/lease-details');
+    return Map<String, dynamic>.from(res.data['data'] as Map);
+  }
+
   String get baseUrl => _client.dio.options.baseUrl;
 }

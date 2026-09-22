@@ -55,6 +55,8 @@ class BillingRepository {
     required String periodEnd,
     required String dueDate,
     required List<Map<String, dynamic>> lineItems,
+    bool? includeArrears,
+    bool? includePendingCharges,
   }) async {
     final res = await _client.dio.post('/v1/properties/$propertyId/billing/invoices', data: {
       'tenancyId': tenancyId,
@@ -62,7 +64,27 @@ class BillingRepository {
       'periodEnd': periodEnd,
       'dueDate': dueDate,
       'lineItems': lineItems,
+      if (includeArrears != null) 'includeArrears': includeArrears,
+      if (includePendingCharges != null)
+        'includePendingCharges': includePendingCharges,
     });
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
+  /// Unbilled past-rent arrears for a tenancy relative to [periodStart].
+  Future<Map<String, dynamic>> arrearsPreview(
+    String propertyId,
+    String tenancyId, {
+    required String periodStart,
+    double? monthlyRent,
+  }) async {
+    final res = await _client.dio.get(
+      '/v1/properties/$propertyId/billing/tenancies/$tenancyId/arrears-preview',
+      queryParameters: {
+        'periodStart': periodStart,
+        if (monthlyRent != null) 'monthlyRent': monthlyRent,
+      },
+    );
     return Map<String, dynamic>.from(res.data['data']);
   }
 

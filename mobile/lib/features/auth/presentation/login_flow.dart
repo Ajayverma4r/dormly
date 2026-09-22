@@ -26,9 +26,35 @@ Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
     return;
   }
 
-  final contexts = await authRepo.listContexts();
+  List<Map<String, dynamic>> contexts;
+  try {
+    contexts = await authRepo.listContexts();
+  } catch (e) {
+    // Treat lookup failures the same as "no workspace" — start fresh setup.
+    debugPrint('listContexts failed after OTP (routing to onboarding): $e');
+    contexts = const [];
+  }
+
   if (contexts.isEmpty) {
-    throw Exception('No accessible workspace found for this account.');
+    // Brand-new / orphaned account — create workspace + scope JWT, then onboard.
+    if (context.mounted) {
+      try {
+        await authRepo.ensureOwnerWorkspace();
+      } catch (e) {
+        debugPrint('ensureOwnerWorkspace failed: $e');
+      }
+      try {
+        final me = await authRepo.fetchMe();
+        if (!me.profileComplete) {
+          context.go('/onboarding/profile');
+          return;
+        }
+      } catch (_) {
+        // Profile optional for first-time owners without /me support.
+      }
+      if (context.mounted) context.go('/onboarding/welcome');
+    }
+    return;
   }
 
   // Frictionless: never show ContextPicker — auto-select primary workspace.

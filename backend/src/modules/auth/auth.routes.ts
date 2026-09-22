@@ -20,6 +20,7 @@ authRouter.post(
   uploadAvatarMiddleware,
   controller.uploadAvatar,
 );
+authRouter.post('/ensure-organization', authGuard, controller.ensureOrganization);
 
 authRouter.get('/contexts', authGuard, contextController.listContexts);
 authRouter.post('/contexts/select', authGuard, contextController.selectContext);

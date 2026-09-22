@@ -52,4 +52,22 @@ export class TenantPortalController {
       next(err);
     }
   };
+
+  societyNotices = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const rows = await service.listSocietyNotices(req.ctxId!, req.userId!);
+      res.json({ data: rows });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  leaseDetails = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await service.getLeaseDetails(req.ctxId!);
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
 }

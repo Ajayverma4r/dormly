@@ -60,7 +60,10 @@ class _OtpVerifyScreenState extends ConsumerState<OtpVerifyScreen> {
       await ref.read(authRepositoryProvider).verifyOtp(widget.phone, _code);
       if (mounted) await completeLogin(context, ref);
     } catch (e) {
-      setState(() => _error = 'Verification failed: $e');
+      if (mounted) {
+        setState(() =>
+            _error = 'Verification failed. Please check the code and try again.');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }

@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
-import '../../tenancies/data/tenancy_repository.dart';
 import '../data/billing_repository.dart';
 import 'billing_providers.dart';
 
@@ -34,6 +33,9 @@ class CreateInvoiceScreen extends ConsumerStatefulWidget {
   /// When true, Skip / successful create return to Room details.
   final bool isFromOnboarding;
 
+  /// Kept for callers; past dues are no longer embedded in this form.
+  final bool includePastRentArrears;
+
   const CreateInvoiceScreen({
     super.key,
     required this.propertyId,
@@ -44,6 +46,7 @@ class CreateInvoiceScreen extends ConsumerStatefulWidget {
     this.roomId,
     this.preSelectedRoomName,
     this.isFromOnboarding = false,
+    this.includePastRentArrears = true,
   });
 
   bool get isEditMode => invoiceId != null && invoiceId!.isNotEmpty;
@@ -53,15 +56,20 @@ class CreateInvoiceScreen extends ConsumerStatefulWidget {
       _CreateInvoiceScreenState();
 }
 
+enum _ChargeBucket { rent, maintenance, electricity, water, other }
+
 class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
   static const _dueDaysAfterPeriodStart = 5;
 
   List<Map<String, dynamic>> _tenancies = [];
   List<Map<String, dynamic>> _chargeTypes = [];
   String? _selectedTenancyId;
-  final Map<String, bool> _chargeSelected = {};
-  final Map<String, TextEditingController> _amountControllers = {};
-  final List<_CustomChargeRow> _customCharges = [];
+
+  /// Controllers only for variable charges (electricity / water / other).
+  final Map<String, TextEditingController> _variableControllers = {};
+  final _electricityFallbackController = TextEditingController();
+  final _waterFallbackController = TextEditingController();
+  final _otherFallbackController = TextEditingController();
 
   late DateTime _periodStart;
   late DateTime _periodEnd;
@@ -69,18 +77,17 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   bool _loading = true;
   bool _saving = false;
-  bool _loadingDues = false;
-  bool _loadingRollover = false;
+  bool _loadingOutstanding = false;
   String? _error;
 
-  /// Global unpaid ledger balance for the selected tenant (all months).
-  final _previousDuesController = TextEditingController();
+  /// Unpaid ledger balance shown in the helper note (not editable / not billed here).
+  double _outstandingBalance = 0;
 
   static final _currency =
       NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
   static final _dateFormat = DateFormat('d MMM yyyy');
 
-  static const _openInvoiceStatuses = {
+  static const _openStatuses = {
     'pending',
     'overdue',
     'partial',
@@ -94,32 +101,36 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     _periodStart = DateTime(now.year, now.month, 1);
     _periodEnd = DateTime(now.year, now.month + 1, 0);
     _dueDate = _defaultDueDate(_periodStart);
-    _previousDuesController.addListener(_onChargeAmountChanged);
+    _electricityFallbackController.addListener(_onAmountChanged);
+    _waterFallbackController.addListener(_onAmountChanged);
+    _otherFallbackController.addListener(_onAmountChanged);
     _load();
   }
 
   @override
   void dispose() {
-    _previousDuesController.removeListener(_onChargeAmountChanged);
-    _previousDuesController.dispose();
-    for (final controller in _amountControllers.values) {
-      controller.removeListener(_onChargeAmountChanged);
-      controller.dispose();
+    for (final c in [
+      _electricityFallbackController,
+      _waterFallbackController,
+      _otherFallbackController,
+    ]) {
+      c.removeListener(_onAmountChanged);
+      c.dispose();
     }
-    for (final row in _customCharges) {
-      row.dispose(_onChargeAmountChanged);
+    for (final c in _variableControllers.values) {
+      c.removeListener(_onAmountChanged);
+      c.dispose();
     }
     super.dispose();
   }
 
-  void _onChargeAmountChanged() => setState(() {});
+  void _onAmountChanged() => setState(() {});
 
   DateTime _defaultDueDate(DateTime periodStart) =>
       periodStart.add(const Duration(days: _dueDaysAfterPeriodStart));
 
   DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  /// Clamp [day] into a valid calendar day for [year]/[month].
   DateTime _clampDay(int year, int month, int day) {
     final lastDay = DateTime(year, month + 1, 0).day;
     final safeDay = day < 1 ? 1 : (day > lastDay ? lastDay : day);
@@ -142,8 +153,6 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     return null;
   }
 
-  /// Anniversary cycle for the current calendar month using move-in day.
-  /// e.g. move-in 15 Aug → in September: 15 Sep → 14 Oct.
   DateTimeRange _anniversaryPeriod(DateTime moveIn, {DateTime? asOf}) {
     final now = asOf ?? DateTime.now();
     final start = _clampDay(now.year, now.month, moveIn.day);
@@ -173,33 +182,170 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     );
   }
 
-  double get _previousDues =>
-      double.tryParse(_previousDuesController.text.trim()) ?? 0;
-
-  void _setPreviousDues(double amount) {
-    if (amount <= 0) {
-      _previousDuesController.clear();
-      return;
-    }
-    _previousDuesController.text = amount == amount.roundToDouble()
-        ? amount.toStringAsFixed(0)
-        : amount.toStringAsFixed(2);
-  }
-
   String _formatAmount(double amount) => amount == amount.roundToDouble()
       ? amount.toStringAsFixed(0)
       : amount.toStringAsFixed(2);
+
+  _ChargeBucket? _bucketForName(String raw) {
+    final name = raw.trim().toLowerCase();
+    if (name.isEmpty) return null;
+    if (name == 'rent' || name == 'base rent' || name == 'monthly rent') {
+      return _ChargeBucket.rent;
+    }
+    if (name.contains('rent') && !name.contains('current')) {
+      return _ChargeBucket.rent;
+    }
+    if (name.contains('maintenance') || name == 'cam') {
+      return _ChargeBucket.maintenance;
+    }
+    if (name.contains('electric')) return _ChargeBucket.electricity;
+    if (name == 'water' || name.contains('water')) return _ChargeBucket.water;
+    if (name == 'other' || name.startsWith('other')) return _ChargeBucket.other;
+    return null;
+  }
+
+  Map<String, dynamic>? _chargeFor(_ChargeBucket bucket) {
+    for (final c in _chargeTypes) {
+      final name = (c['name'] ?? '').toString();
+      if (_bucketForName(name) == bucket) return c;
+    }
+    return null;
+  }
+
+  TextEditingController _controllerFor(_ChargeBucket bucket) {
+    final charge = _chargeFor(bucket);
+    final id = charge?['id']?.toString();
+    if (id != null && _variableControllers.containsKey(id)) {
+      return _variableControllers[id]!;
+    }
+    switch (bucket) {
+      case _ChargeBucket.electricity:
+        return _electricityFallbackController;
+      case _ChargeBucket.water:
+        return _waterFallbackController;
+      case _ChargeBucket.other:
+        return _otherFallbackController;
+      case _ChargeBucket.rent:
+      case _ChargeBucket.maintenance:
+        return _otherFallbackController; // unused for fixed
+    }
+  }
+
+  double? _readMonthlyRent(Map<String, dynamic>? tenant) {
+    if (tenant == null) return null;
+    for (final key in ['monthly_rent', 'monthlyRent']) {
+      final raw = tenant[key];
+      if (raw == null) continue;
+      if (raw is num) return raw.toDouble();
+      return double.tryParse(raw.toString());
+    }
+    return null;
+  }
+
+  double _defaultAmount(Map<String, dynamic>? charge) {
+    if (charge == null) return 0;
+    final raw = charge['default_amount'] ?? charge['defaultAmount'];
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+
+  /// Locked fixed rent from the tenancy (not editable on this screen).
+  double get _fixedRent {
+    final fromTenancy = _readMonthlyRent(_tenancyById(_selectedTenancyId));
+    if (fromTenancy != null && fromTenancy > 0) return fromTenancy;
+    return _defaultAmount(_chargeFor(_ChargeBucket.rent));
+  }
+
+  /// Locked maintenance from charge-type default.
+  double get _fixedMaintenance =>
+      _defaultAmount(_chargeFor(_ChargeBucket.maintenance));
+
+  double _variableAmount(_ChargeBucket bucket) {
+    return double.tryParse(_controllerFor(bucket).text.trim()) ?? 0;
+  }
+
+  double _computedTotal() {
+    var total = 0.0;
+    if (_fixedRent > 0) total += _fixedRent;
+    if (_fixedMaintenance > 0) total += _fixedMaintenance;
+    for (final b in [
+      _ChargeBucket.electricity,
+      _ChargeBucket.water,
+      _ChargeBucket.other,
+    ]) {
+      final v = _variableAmount(b);
+      if (v > 0) total += v;
+    }
+    return total;
+  }
+
+  Map<String, dynamic>? _tenancyById(String? tenancyId) {
+    if (tenancyId == null) return null;
+    for (final t in _tenancies) {
+      if (t['id']?.toString() == tenancyId) return t;
+    }
+    return null;
+  }
+
+  void _ensurePreselectedTenant() {
+    final id = widget.preSelectedTenantId;
+    if (id == null || id.isEmpty) return;
+    if (_tenancyById(id) != null) return;
+    _tenancies = [
+      {
+        'id': id,
+        'full_name': widget.preSelectedTenantName ?? 'Tenant',
+        'node_name': widget.preSelectedRoomName ?? '—',
+        'node_id': widget.roomId,
+        'nodeId': widget.roomId,
+        'status': 'active',
+      },
+      ..._tenancies,
+    ];
+  }
+
+  void _returnToRoomDetails() {
+    ref.invalidate(invoicesProvider(widget.propertyId));
+    ref.invalidate(propertyDashboardProvider(widget.propertyId));
+    Navigator.of(context).popUntil((route) {
+      return route.settings.name == 'node-detail' || route.isFirst;
+    });
+  }
+
+  void _clearVariableAmounts() {
+    for (final c in _variableControllers.values) {
+      c.clear();
+    }
+    _electricityFallbackController.clear();
+    _waterFallbackController.clear();
+    _otherFallbackController.clear();
+  }
+
+  bool _isArrearsDescription(String description) {
+    final d = description.toLowerCase();
+    return d.contains('previous dues') ||
+        d.contains('arrears') ||
+        d.contains('prior dues');
+  }
 
   Future<void> _load() async {
     try {
       final repo = ref.read(billingRepositoryProvider);
       final tenancies = await repo.listTenanciesForProperty(widget.propertyId);
       final chargeTypes = await repo.listChargeTypes(widget.propertyId);
+
       for (final c in chargeTypes) {
-        _chargeSelected[c['id']] = true;
+        final bucket = _bucketForName((c['name'] ?? '').toString());
+        if (bucket == null ||
+            bucket == _ChargeBucket.rent ||
+            bucket == _ChargeBucket.maintenance) {
+          continue;
+        }
+        final id = c['id']?.toString();
+        if (id == null) continue;
         final controller = TextEditingController();
-        controller.addListener(_onChargeAmountChanged);
-        _amountControllers[c['id']] = controller;
+        controller.addListener(_onAmountChanged);
+        _variableControllers[id] = controller;
       }
 
       _tenancies = tenancies.where((t) => t['status'] == 'active').toList();
@@ -237,25 +383,20 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
   }
 
   void _applyLineItemsToForm(List<Map<String, dynamic>> lineItems) {
-    _clearAllChargeAmounts();
-    _clearCustomCharges();
-    _setPreviousDues(0);
+    _clearVariableAmounts();
 
     final chargeById = <String, Map<String, dynamic>>{};
-    final chargeByName = <String, Map<String, dynamic>>{};
     for (final c in _chargeTypes) {
       final id = c['id']?.toString();
       if (id != null) chargeById[id] = c;
-      final name = (c['name'] ?? '').toString().trim().toLowerCase();
-      if (name.isNotEmpty) chargeByName[name] = c;
     }
 
-    var arrears = 0.0;
+    var otherSum = 0.0;
 
     for (final li in lineItems) {
       final description =
           (li['description'] ?? li['name'] ?? '').toString().trim();
-      if (description.isEmpty) continue;
+      if (description.isEmpty || _isArrearsDescription(description)) continue;
 
       final amount = double.tryParse(
             (li['amount'] ?? li['total'] ?? '').toString(),
@@ -263,35 +404,39 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           0;
       if (amount <= 0) continue;
 
-      if (_isArrearsDescription(description)) {
-        arrears += amount;
-        continue;
-      }
-
       final chargeTypeId =
           (li['charge_type_id'] ?? li['chargeTypeId'])?.toString();
       Map<String, dynamic>? matched;
-      if (chargeTypeId != null && chargeById.containsKey(chargeTypeId)) {
-        matched = chargeById[chargeTypeId];
-      } else {
-        matched = chargeByName[description.toLowerCase()];
-      }
+      if (chargeTypeId != null) matched = chargeById[chargeTypeId];
 
-      if (matched != null) {
-        final id = matched['id']?.toString();
-        if (id == null) continue;
-        _chargeSelected[id] = true;
-        _amountControllers[id]?.text = _formatAmount(amount);
-      } else {
-        final row = _CustomChargeRow();
-        row.name.text = description;
-        row.amount.text = _formatAmount(amount);
-        row.attach(_onChargeAmountChanged);
-        _customCharges.add(row);
+      final bucket = matched != null
+          ? _bucketForName((matched['name'] ?? '').toString())
+          : _bucketForName(description);
+
+      if (bucket == _ChargeBucket.electricity ||
+          bucket == _ChargeBucket.water) {
+        final resolvedBucket = bucket == _ChargeBucket.electricity
+            ? _ChargeBucket.electricity
+            : _ChargeBucket.water;
+        final id = matched?['id']?.toString() ??
+            _chargeFor(resolvedBucket)?['id']?.toString();
+        if (id != null && _variableControllers.containsKey(id)) {
+          _variableControllers[id]!.text = _formatAmount(amount);
+        } else {
+          _controllerFor(resolvedBucket).text = _formatAmount(amount);
+        }
+      } else if (bucket == _ChargeBucket.other ||
+          bucket == null ||
+          (bucket != _ChargeBucket.rent &&
+              bucket != _ChargeBucket.maintenance)) {
+        otherSum += amount;
       }
+      // rent / maintenance stay locked from tenancy defaults
     }
 
-    if (arrears > 0) _setPreviousDues(arrears);
+    if (otherSum > 0) {
+      _controllerFor(_ChargeBucket.other).text = _formatAmount(otherSum);
+    }
   }
 
   Future<void> _loadExistingInvoice() async {
@@ -299,9 +444,10 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     final id = widget.invoiceId!;
     final full = await repo.getInvoice(widget.propertyId, id);
 
-    final tenancyId =
-        (full['tenancy_id'] ?? full['tenancyId'] ?? widget.invoice?['tenancy_id'])
-            ?.toString();
+    final tenancyId = (full['tenancy_id'] ??
+            full['tenancyId'] ??
+            widget.invoice?['tenancy_id'])
+        ?.toString();
 
     final start = _parseDateField(full, ['period_start', 'periodStart']);
     final end = _parseDateField(full, ['period_end', 'periodEnd']);
@@ -315,7 +461,6 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
     _selectedTenancyId = tenancyId;
 
-    // Ensure selected tenancy appears even if status is no longer active.
     if (tenancyId != null && _tenancyById(tenancyId) == null) {
       final seed = widget.invoice;
       _tenancies = [
@@ -342,6 +487,9 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
         : <Map<String, dynamic>>[];
 
     _applyLineItemsToForm(lineItems);
+    if (tenancyId != null) {
+      await _refreshOutstanding(tenancyId);
+    }
   }
 
   Future<void> _pickBillingPeriod() async {
@@ -367,99 +515,17 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     if (picked != null) setState(() => _dueDate = _dateOnly(picked));
   }
 
-  String? _rentChargeTypeId() {
-    for (final c in _chargeTypes) {
-      final name = (c['name'] ?? '').toString().toLowerCase();
-      if (name == 'rent') return c['id']?.toString();
-    }
-    for (final c in _chargeTypes) {
-      final name = (c['name'] ?? '').toString().toLowerCase();
-      if (name.contains('rent')) return c['id']?.toString();
-    }
-    return null;
-  }
-
-  double? _readMonthlyRent(Map<String, dynamic>? tenant) {
-    if (tenant == null) return null;
-    for (final key in ['monthly_rent', 'monthlyRent']) {
-      final raw = tenant[key];
-      if (raw == null) continue;
-      if (raw is num) return raw.toDouble();
-      return double.tryParse(raw.toString());
-    }
-    return null;
-  }
-
-  Map<String, dynamic>? _tenancyById(String? tenancyId) {
-    if (tenancyId == null) return null;
-    for (final t in _tenancies) {
-      if (t['id']?.toString() == tenancyId) return t;
-    }
-    return null;
-  }
-
-  void _ensurePreselectedTenant() {
-    final id = widget.preSelectedTenantId;
-    if (id == null || id.isEmpty) return;
-    if (_tenancyById(id) != null) return;
-    _tenancies = [
-      {
-        'id': id,
-        'full_name': widget.preSelectedTenantName ?? 'Tenant',
-        'node_name': widget.preSelectedRoomName ?? '—',
-        'node_id': widget.roomId,
-        'nodeId': widget.roomId,
-        'status': 'active',
-      },
-      ..._tenancies,
-    ];
-  }
-
-  void _returnToRoomDetails() {
-    ref.invalidate(invoicesProvider(widget.propertyId));
-    ref.invalidate(propertyDashboardProvider(widget.propertyId));
-    Navigator.of(context).popUntil((route) {
-      // Keep in sync with NodeDetailScreen.routeName.
-      return route.settings.name == 'node-detail' || route.isFirst;
-    });
-  }
-
-  String _hintForCharge(Map<String, dynamic> charge) {
-    final name = (charge['name'] ?? '').toString().toLowerCase();
-    if (name == 'electricity' || name == 'water') {
-      return 'Enter amount';
-    }
-    return '0.00';
-  }
-
-  bool _isArrearsDescription(String description) {
-    final d = description.toLowerCase();
-    return d.contains('previous dues') ||
-        d.contains('arrears') ||
-        d.contains('prior dues');
-  }
-
-  double _computedTotal() {
-    var total = _previousDues;
-    for (final c in _chargeTypes) {
-      if (_chargeSelected[c['id']] != true) continue;
-      final id = c['id']?.toString();
-      if (id == null) continue;
-      total += double.tryParse(_amountControllers[id]?.text ?? '') ?? 0;
-    }
-    for (final row in _customCharges) {
-      total += double.tryParse(row.amount.text.trim()) ?? 0;
-    }
-    return total;
-  }
-
-  Future<double> _fetchGlobalPreviousDues(String tenancyId) async {
+  Future<double> _fetchOutstandingBalance(String tenancyId) async {
     final invoices =
         await ref.read(billingRepositoryProvider).listInvoices(widget.propertyId);
     final selectedId = tenancyId.trim().toLowerCase();
     var dues = 0.0;
 
     for (final inv in invoices) {
+      if (widget.isEditMode) {
+        final invId = (inv['id'] ?? inv['invoice_id'])?.toString();
+        if (invId == widget.invoiceId) continue;
+      }
       final tid = (inv['tenancy_id'] ?? inv['tenancyId'])
           ?.toString()
           .trim()
@@ -467,7 +533,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
       if (tid != selectedId) continue;
 
       final status = inv['status']?.toString().toLowerCase().trim() ?? '';
-      if (!_openInvoiceStatuses.contains(status)) continue;
+      if (!_openStatuses.contains(status)) continue;
 
       final total = double.tryParse(
             (inv['total_amount'] ?? inv['totalAmount'])?.toString() ?? '',
@@ -480,161 +546,39 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
       final remaining = total - paid;
       if (remaining > 0) dues += remaining;
     }
+
+    // Include unbilled past-rent preview so the note stays informative.
+    try {
+      final periodStart = _periodStart.toIso8601String().split('T').first;
+      final preview = await ref.read(billingRepositoryProvider).arrearsPreview(
+            widget.propertyId,
+            tenancyId,
+            periodStart: periodStart,
+            monthlyRent: _fixedRent > 0 ? _fixedRent : null,
+          );
+      dues += double.tryParse(preview['amount']?.toString() ?? '') ?? 0;
+    } catch (_) {
+      /* note is best-effort */
+    }
+
     return dues;
   }
 
-  DateTime? _invoiceSortDate(Map<String, dynamic> inv) {
-    for (final key in [
-      'period_end',
-      'periodEnd',
-      'period_start',
-      'periodStart',
-      'created_at',
-      'createdAt',
-      'due_date',
-      'dueDate',
-    ]) {
-      final raw = inv[key]?.toString();
-      if (raw == null || raw.isEmpty) continue;
-      final d = DateTime.tryParse(raw);
-      if (d != null) return d;
-    }
-    return null;
-  }
-
-  void _clearCustomCharges() {
-    for (final row in _customCharges) {
-      row.dispose(_onChargeAmountChanged);
-    }
-    _customCharges.clear();
-  }
-
-  void _applyRentOnlyFallback(String? tenancyId) {
-    final rentChargeId = _rentChargeTypeId();
-    final rent = _readMonthlyRent(_tenancyById(tenancyId));
-
-    for (final c in _chargeTypes) {
-      final id = c['id']?.toString();
-      if (id == null) continue;
-      final controller = _amountControllers[id];
-      if (controller == null) continue;
-
-      if (id == rentChargeId) {
-        if (rent != null && rent > 0) {
-          controller.text = _formatAmount(rent);
-        } else {
-          controller.clear();
-        }
-      } else {
-        controller.clear();
-      }
-    }
-  }
-
-  void _clearAllChargeAmounts() {
-    for (final controller in _amountControllers.values) {
-      controller.clear();
-    }
-  }
-
-  Future<void> _applySmartRollover(String tenancyId) async {
-    final repo = ref.read(billingRepositoryProvider);
-    final invoices = await repo.listInvoices(widget.propertyId);
-    final selectedId = tenancyId.trim().toLowerCase();
-
-    final tenantInvoices = invoices.where((inv) {
-      final tid = (inv['tenancy_id'] ?? inv['tenancyId'])
-          ?.toString()
-          .trim()
-          .toLowerCase();
-      return tid == selectedId;
-    }).toList()
-      ..sort((a, b) {
-        final da = _invoiceSortDate(a) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final db = _invoiceSortDate(b) ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return db.compareTo(da);
+  Future<void> _refreshOutstanding(String tenancyId) async {
+    setState(() => _loadingOutstanding = true);
+    try {
+      final dues = await _fetchOutstandingBalance(tenancyId);
+      if (!mounted || _selectedTenancyId != tenancyId) return;
+      setState(() {
+        _outstandingBalance = dues;
+        _loadingOutstanding = false;
       });
-
-    if (tenantInvoices.isEmpty) {
-      _applyRentOnlyFallback(tenancyId);
-      return;
-    }
-
-    final latestId =
-        (tenantInvoices.first['id'] ?? tenantInvoices.first['invoice_id'])
-            ?.toString();
-    if (latestId == null || latestId.isEmpty) {
-      _applyRentOnlyFallback(tenancyId);
-      return;
-    }
-
-    final full = await repo.getInvoice(widget.propertyId, latestId);
-    final rawItems = full['lineItems'] ?? full['line_items'];
-    final lineItems = rawItems is List
-        ? rawItems.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
-        : <Map<String, dynamic>>[];
-
-    if (lineItems.isEmpty) {
-      _applyRentOnlyFallback(tenancyId);
-      return;
-    }
-
-    _clearAllChargeAmounts();
-    _clearCustomCharges();
-
-    final chargeById = <String, Map<String, dynamic>>{};
-    final chargeByName = <String, Map<String, dynamic>>{};
-    for (final c in _chargeTypes) {
-      final id = c['id']?.toString();
-      if (id != null) chargeById[id] = c;
-      final name = (c['name'] ?? '').toString().trim().toLowerCase();
-      if (name.isNotEmpty) chargeByName[name] = c;
-    }
-
-    for (final li in lineItems) {
-      final description =
-          (li['description'] ?? li['name'] ?? '').toString().trim();
-      if (description.isEmpty || _isArrearsDescription(description)) continue;
-
-      final amount = double.tryParse(
-            (li['amount'] ?? li['total'] ?? '').toString(),
-          ) ??
-          0;
-      if (amount <= 0) continue;
-
-      final chargeTypeId =
-          (li['charge_type_id'] ?? li['chargeTypeId'])?.toString();
-      Map<String, dynamic>? matched;
-      if (chargeTypeId != null && chargeById.containsKey(chargeTypeId)) {
-        matched = chargeById[chargeTypeId];
-      } else {
-        matched = chargeByName[description.toLowerCase()];
-      }
-
-      if (matched != null) {
-        final id = matched['id']?.toString();
-        if (id == null) continue;
-        _chargeSelected[id] = true;
-        _amountControllers[id]?.text = _formatAmount(amount);
-      } else {
-        final row = _CustomChargeRow();
-        row.name.text = description;
-        row.amount.text = _formatAmount(amount);
-        row.attach(_onChargeAmountChanged);
-        _customCharges.add(row);
-      }
-    }
-
-    // Ensure rent still has a value if last invoice had no rent line.
-    final rentId = _rentChargeTypeId();
-    if (rentId != null) {
-      final rentText = _amountControllers[rentId]?.text.trim() ?? '';
-      if (rentText.isEmpty) {
-        final rent = _readMonthlyRent(_tenancyById(tenancyId));
-        if (rent != null && rent > 0) {
-          _amountControllers[rentId]?.text = _formatAmount(rent);
-        }
-      }
+    } catch (_) {
+      if (!mounted || _selectedTenancyId != tenancyId) return;
+      setState(() {
+        _outstandingBalance = 0;
+        _loadingOutstanding = false;
+      });
     }
   }
 
@@ -643,11 +587,8 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
     setState(() {
       _selectedTenancyId = tenancyId;
-      _setPreviousDues(0);
-      _loadingDues = tenancyId != null;
-      _loadingRollover = tenancyId != null;
-      _clearCustomCharges();
-      _clearAllChargeAmounts();
+      _outstandingBalance = 0;
+      _clearVariableAmounts();
       if (tenancyId != null) {
         _applyAnniversaryPeriodForTenant(tenancyId);
       } else {
@@ -656,75 +597,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     });
 
     if (tenancyId == null) return;
-
-    try {
-      await _applySmartRollover(tenancyId);
-      if (!mounted || _selectedTenancyId != tenancyId) return;
-      setState(() => _loadingRollover = false);
-
-      final dues = await _fetchGlobalPreviousDues(tenancyId);
-      if (!mounted || _selectedTenancyId != tenancyId) return;
-      setState(() {
-        _setPreviousDues(dues);
-        _loadingDues = false;
-      });
-    } catch (_) {
-      if (!mounted || _selectedTenancyId != tenancyId) return;
-      _applyRentOnlyFallback(tenancyId);
-      setState(() {
-        _setPreviousDues(0);
-        _loadingDues = false;
-        _loadingRollover = false;
-      });
-    }
-  }
-
-  void _addCustomCharge() {
-    final row = _CustomChargeRow();
-    row.attach(_onChargeAmountChanged);
-    setState(() => _customCharges.add(row));
-  }
-
-  void _removeCustomCharge(int index) {
-    if (index < 0 || index >= _customCharges.length) return;
-    final row = _customCharges.removeAt(index);
-    row.dispose(_onChargeAmountChanged);
-    setState(() {});
-  }
-
-  double? _currentRentInput() {
-    final rentId = _rentChargeTypeId();
-    if (rentId != null && _chargeSelected[rentId] == true) {
-      final parsed =
-          double.tryParse(_amountControllers[rentId]?.text.trim() ?? '');
-      if (parsed != null && parsed > 0) return parsed;
-    }
-    for (final row in _customCharges) {
-      final name = row.name.text.trim().toLowerCase();
-      if (name != 'rent' && name != 'base rent' && name != 'monthly rent') {
-        continue;
-      }
-      final amount = double.tryParse(row.amount.text.trim()) ?? 0;
-      if (amount > 0) return amount;
-    }
-    return null;
-  }
-
-  Future<void> _syncRentToTenancy(double rent) async {
-    final t = _tenancyById(_selectedTenancyId);
-    final nodeId = widget.roomId ??
-        t?['node_id']?.toString() ??
-        t?['nodeId']?.toString();
-    await ref.read(tenancyRepositoryProvider).update(
-          widget.propertyId,
-          _selectedTenancyId!,
-          nodeId: (nodeId != null && nodeId.isNotEmpty) ? nodeId : null,
-          monthlyRent: rent,
-        );
-    if (t != null) {
-      t['monthly_rent'] = rent;
-      t['monthlyRent'] = rent;
-    }
+    await _refreshOutstanding(tenancyId);
   }
 
   Future<void> _save() async {
@@ -735,49 +608,49 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
     final lineItems = <Map<String, dynamic>>[];
 
-    for (final c in _chargeTypes) {
-      if (_chargeSelected[c['id']] != true) continue;
-      final amount =
-          double.tryParse(_amountControllers[c['id']]!.text.trim()) ?? 0;
-      if (amount <= 0) continue;
+    void addFixed(_ChargeBucket bucket, double amount, String kind) {
+      if (amount <= 0) return;
+      final charge = _chargeFor(bucket);
+      final desc = bucket == _ChargeBucket.rent
+          ? '${DateFormat('MMM').format(_periodStart)} Rent'
+          : (charge?['name'] ?? 'Maintenance').toString();
       lineItems.add({
-        'chargeTypeId': c['id'],
-        'description': c['name'],
+        if (charge?['id'] != null) 'chargeTypeId': charge!['id'],
+        'description': desc,
         'amount': amount,
+        'chargeKind': kind,
       });
     }
 
-    for (final row in _customCharges) {
-      final name = row.name.text.trim();
-      final amount = double.tryParse(row.amount.text.trim()) ?? 0;
+    addFixed(_ChargeBucket.rent, _fixedRent, 'rent');
+    addFixed(_ChargeBucket.maintenance, _fixedMaintenance, 'maintenance');
+
+    for (final entry in {
+      _ChargeBucket.electricity: 'electricity',
+      _ChargeBucket.water: 'other',
+      _ChargeBucket.other: 'other',
+    }.entries) {
+      final amount = _variableAmount(entry.key);
       if (amount <= 0) continue;
-      if (name.isEmpty) {
-        setState(() => _error = 'Give each custom charge a name.');
-        return;
-      }
+      final charge = _chargeFor(entry.key);
+      final name = charge != null
+          ? (charge['name'] ?? entry.key.name).toString()
+          : (entry.key == _ChargeBucket.other
+              ? 'Other'
+              : entry.key.name[0].toUpperCase() + entry.key.name.substring(1));
       lineItems.add({
+        if (charge?['id'] != null) 'chargeTypeId': charge!['id'],
         'description': name,
         'amount': amount,
-      });
-    }
-
-    if (_previousDues > 0) {
-      lineItems.insert(0, {
-        'description': 'Previous Dues (Arrears)',
-        'amount': _previousDues,
+        'chargeKind': entry.value,
       });
     }
 
     if (lineItems.isEmpty) {
-      setState(() => _error = 'Add at least one charge with an amount above 0.');
+      setState(() =>
+          _error = 'Nothing to bill — set rent on the tenant, or enter a utility.');
       return;
     }
-
-    final rentInput = _currentRentInput();
-    final savedRent = _readMonthlyRent(_tenancyById(_selectedTenancyId));
-    final shouldSyncRent = rentInput != null &&
-        rentInput > 0 &&
-        (savedRent == null || (rentInput - savedRent).abs() > 0.009);
 
     setState(() {
       _saving = true;
@@ -800,6 +673,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           lineItems: lineItems,
         );
       } else {
+        // Past dues stay on the tenant ledger (outstanding), not this invoice.
         await repo.createInvoice(
           widget.propertyId,
           tenancyId: _selectedTenancyId!,
@@ -807,24 +681,9 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           periodEnd: periodEnd,
           dueDate: dueDate,
           lineItems: lineItems,
+          includeArrears: false,
+          includePendingCharges: true,
         );
-      }
-
-      if (shouldSyncRent) {
-        try {
-          await _syncRentToTenancy(rentInput);
-        } catch (e) {
-          debugPrint('Could not sync base monthly rent: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Invoice saved. Update Base Monthly Rent on the tenant profile if it is still empty.',
-                ),
-              ),
-            );
-          }
-        }
       }
 
       ref.invalidate(invoicesProvider(widget.propertyId));
@@ -853,7 +712,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
       }
       if (status == 404) {
         return widget.isEditMode
-            ? 'Update failed (404). The invoice update API is not on the server yet — deploy the backend, then try again.'
+            ? 'Update failed (404). Deploy the backend, then try again.'
             : (serverMsg ?? 'Could not create invoice (not found).');
       }
       if (serverMsg != null && serverMsg.isNotEmpty) {
@@ -867,6 +726,54 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
         : 'Could not create invoice: $e';
   }
 
+  Widget _fixedChargeRow(String label, double amount) {
+    final hasAmount = amount > 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+          ),
+          Text(
+            hasAmount ? _currency.format(amount) : 'Not set',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              color: hasAmount ? AppColors.ink : Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _variableChargeField({
+    required String label,
+    required TextEditingController controller,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          prefixText: '₹ ',
+          hintText: 'Optional',
+          isDense: true,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.isEditMode;
@@ -877,424 +784,272 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
         _returnToRoomDetails();
       },
       child: Scaffold(
-      appBar: AppBar(
-        title: Text(isEdit ? 'Edit Invoice' : 'New Invoice'),
-        actions: [
-          if (widget.isFromOnboarding && !isEdit)
-            TextButton(
-              onPressed: _returnToRoomDetails,
-              child: Text(
-                'Skip',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  fontWeight: FontWeight.w600,
+        appBar: AppBar(
+          title: Text(isEdit ? 'Edit Invoice' : 'Add Utilities'),
+          actions: [
+            if (widget.isFromOnboarding && !isEdit)
+              TextButton(
+                onPressed: _returnToRoomDetails,
+                child: Text(
+                  'Skip',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                const Text('Tenant',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                if (_tenancies.isEmpty)
-                  Text(
-                    'No active tenants on this property yet.',
-                    style: TextStyle(color: Colors.grey.shade600),
-                  )
-                else
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedTenancyId,
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    items: _tenancies
-                        .map((t) {
-                          final id = t['id']?.toString();
-                          if (id == null || id.isEmpty) {
-                            return null;
-                          }
-                          return DropdownMenuItem<String>(
-                            value: id,
-                            child: Text(
-                              '${t['full_name']} — ${t['node_name']}',
-                            ),
-                          );
-                        })
-                        .whereType<DropdownMenuItem<String>>()
-                        .toList(),
-                    onChanged: isEdit ? null : _onTenantSelected,
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+                children: [
+                  // Tenant
+                  const Text(
+                    'Tenant',
+                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
-                if (_loadingRollover) ...[
                   const SizedBox(height: 8),
+                  if (_tenancies.isEmpty)
+                    Text(
+                      'No active tenants on this property yet.',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedTenancyId,
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        isDense: true,
+                      ),
+                      items: _tenancies
+                          .map((t) {
+                            final id = t['id']?.toString();
+                            if (id == null || id.isEmpty) return null;
+                            return DropdownMenuItem<String>(
+                              value: id,
+                              child: Text(
+                                '${t['full_name']} — ${t['node_name']}',
+                              ),
+                            );
+                          })
+                          .whereType<DropdownMenuItem<String>>()
+                          .toList(),
+                      onChanged: isEdit ? null : _onTenantSelected,
+                    ),
+
+                  const SizedBox(height: 16),
+
+                  // Compact period row
                   Row(
                     children: [
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                      Expanded(
+                        child: InkWell(
+                          onTap: _pickBillingPeriod,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Period',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                            ),
+                            child: Text(
+                              '${_dateFormat.format(_periodStart)} → ${_dateFormat.format(_periodEnd)}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        width: 120,
+                        child: InkWell(
+                          onTap: _pickDueDate,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              labelText: 'Due',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                            ),
+                            child: Text(
+                              _dateFormat.format(_dueDate),
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  // Fixed charges (read-only)
+                  const Text(
+                    'Included this cycle',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'From the tenant profile — edit rent on Tenant Details.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      children: [
+                        _fixedChargeRow('Rent', _fixedRent),
+                        if (_chargeFor(_ChargeBucket.maintenance) != null ||
+                            _fixedMaintenance > 0) ...[
+                          Divider(height: 1, color: Colors.grey.shade200),
+                          _fixedChargeRow('Maintenance', _fixedMaintenance),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  // Variable utilities only
+                  const Text(
+                    'Utilities (optional)',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Leave blank to skip — empty or ₹0 is ignored.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 12),
+                  _variableChargeField(
+                    label: 'Electricity',
+                    controller: _controllerFor(_ChargeBucket.electricity),
+                  ),
+                  _variableChargeField(
+                    label: 'Water',
+                    controller: _controllerFor(_ChargeBucket.water),
+                  ),
+                  _variableChargeField(
+                    label: 'Other',
+                    controller: _controllerFor(_ChargeBucket.other),
+                  ),
+
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'This invoice',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
+                        Text(
+                          _currency.format(_computedTotal()),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  if (_selectedTenancyId != null) ...[
+                    const SizedBox(height: 16),
+                    if (_loadingOutstanding)
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Checking past dues…',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      )
+                    else
                       Text(
-                        'Loading last invoice…',
+                        _outstandingBalance > 0
+                            ? 'Note: Any unpaid past dues (e.g., ${_currency.format(_outstandingBalance)}) will be automatically added to the Tenant\'s Total Outstanding Balance.'
+                            : 'Note: Any unpaid past dues will be automatically added to the Tenant\'s Total Outstanding Balance.',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          height: 1.4,
+                          color: Colors.grey.shade700,
                         ),
                       ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 20),
-                const Text('Billing Period',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                InkWell(
-                  onTap: _pickBillingPeriod,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InputDecorator(
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      suffixIcon: const Icon(Icons.date_range_outlined),
-                      helperText: isEdit
-                          ? 'Loaded from this invoice — tap to adjust'
-                          : (_selectedTenancyId == null
-                              ? 'Select a tenant to auto-align with move-in day'
-                              : (_readMoveInDate(
-                                          _tenancyById(_selectedTenancyId)) !=
-                                      null
-                                  ? 'Anniversary cycle from move-in day — tap to edit'
-                                  : 'No move-in date — calendar month (editable)')),
-                    ),
-                    child: Text(
-                      '${_dateFormat.format(_periodStart)} → ${_dateFormat.format(_periodEnd)}',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Due Date',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                InkWell(
-                  onTap: _pickDueDate,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InputDecorator(
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      suffixIcon: const Icon(Icons.event_outlined),
-                      helperText:
-                          'Auto-set to $_dueDaysAfterPeriodStart days after period start',
-                    ),
-                    child: Text(_dateFormat.format(_dueDate)),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text('Charges',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                _PreviousDuesRow(
-                  controller: _previousDuesController,
-                  amount: _previousDues,
-                  loading: _loadingDues,
-                  visible: _selectedTenancyId != null,
-                ),
-                ..._chargeTypes.map((c) {
-                  final selected = _chargeSelected[c['id']] ?? true;
-                  final chargeName =
-                      (c['name'] ?? '').toString().toLowerCase();
-                  final isVariable =
-                      chargeName == 'electricity' || chargeName == 'water';
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Checkbox(
-                          value: selected,
-                          onChanged: (v) => setState(
-                            () => _chargeSelected[c['id']] = v ?? false,
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(c['name']),
-                              if (isVariable)
-                                Text(
-                                  'Variable — enter this month\'s amount',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        SizedBox(
-                          width: 110,
-                          child: TextFormField(
-                            controller: _amountControllers[c['id']],
-                            enabled: selected,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: InputDecoration(
-                              prefixText: '₹ ',
-                              hintText: _hintForCharge(c),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-                ...List.generate(_customCharges.length, (i) {
-                  final row = _customCharges[i];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: TextFormField(
-                            controller: row.name,
-                            decoration: const InputDecoration(
-                              labelText: 'Charge name',
-                              hintText: 'e.g. Repair',
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 2,
-                          child: TextFormField(
-                            controller: row.amount,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: const InputDecoration(
-                              prefixText: '₹ ',
-                              labelText: 'Amount',
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Remove',
-                          onPressed: () => _removeCustomCharge(i),
-                          icon: Icon(
-                            Icons.delete_outline,
-                            color: Colors.red.shade400,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: _addCustomCharge,
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Custom Charge'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Total Amount',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        _currency.format(_computedTotal()),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 8),
-                  Text(_error!, style: const TextStyle(color: Colors.red)),
-                ],
-                const SizedBox(height: 20),
-                SizedBox(
-                  height: 54,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.blueprint,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: _saving ? null : _save,
-                    child: _saving
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : Text(
-                            isEdit ? 'Update Invoice' : 'Create Invoice',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                  ),
-                ),
-              ],
-            ),
-      ),
-    );
-  }
-}
-
-class _CustomChargeRow {
-  final TextEditingController name = TextEditingController();
-  final TextEditingController amount = TextEditingController();
-
-  void attach(VoidCallback onChanged) {
-    name.addListener(onChanged);
-    amount.addListener(onChanged);
-  }
-
-  void dispose(VoidCallback onChanged) {
-    name.removeListener(onChanged);
-    amount.removeListener(onChanged);
-    name.dispose();
-    amount.dispose();
-  }
-}
-
-class _PreviousDuesRow extends StatelessWidget {
-  final TextEditingController controller;
-  final double amount;
-  final bool loading;
-  final bool visible;
-
-  const _PreviousDuesRow({
-    required this.controller,
-    required this.amount,
-    required this.loading,
-    required this.visible,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (!visible) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child:
-                    Icon(Icons.history, size: 18, color: Colors.orange.shade800),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Previous Dues',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    Text(
-                      'All unpaid invoices (any month) — editable',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
                   ],
-                ),
-              ),
-              if (loading)
-                const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                SizedBox(
-                  width: 110,
-                  child: TextFormField(
-                    controller: controller,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Colors.orange.shade900,
-                      fontSize: 13,
-                    ),
-                    decoration: InputDecoration(
-                      prefixText: '₹ ',
-                      hintText: '0',
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.orange.shade50,
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.orange.shade200),
+
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_error!, style: const TextStyle(color: Colors.red)),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.blueprint,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: Colors.orange.shade300),
-                      ),
+                      onPressed: _saving ? null : _save,
+                      child: _saving
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : Text(
+                              isEdit ? 'Update Invoice' : 'Save Invoice',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                     ),
                   ),
-                ),
-            ],
-          ),
-          if (amount > 0) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Includes unpaid rent from previous months',
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.red.shade700,
-                fontWeight: FontWeight.w500,
+                ],
               ),
-            ),
-          ],
-        ],
       ),
     );
   }
 }
-

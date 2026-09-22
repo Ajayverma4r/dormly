@@ -156,6 +156,34 @@ class AuthRepository {
     }
   }
 
+  /// Creates a default owner workspace if missing, then scopes the JWT to it.
+  /// Required before property APIs (`requireContext`).
+  Future<Map<String, dynamic>> ensureOwnerWorkspace() async {
+    final role = await getContextRole();
+    final orgId = await getOrganizationId();
+    if (role == 'owner' || role == 'admin') {
+      if (orgId != null && await hasStoredContext()) {
+        try {
+          return await selectContext('organization', orgId);
+        } catch (_) {
+          // Fall through to ensure endpoint.
+        }
+      }
+    }
+
+    final res = await _client.dio.post('/v1/auth/ensure-organization');
+    final data = Map<String, dynamic>.from(res.data['data'] as Map);
+    await AuthStorage.writeAccessToken(data['accessToken'] as String);
+    final context = Map<String, dynamic>.from(data['context'] as Map);
+    await AuthStorage.writeContext(
+      type: context['type'] as String,
+      id: context['id'] as String,
+      role: context['role'] as String,
+      organizationId: context['id'] as String,
+    );
+    return context;
+  }
+
   Future<void> logout() async {
     await AuthStorage.clearAll();
   }

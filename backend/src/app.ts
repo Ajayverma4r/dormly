@@ -17,6 +17,7 @@ import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-
 
 import { ensureLiveOpsSchema } from '@modules/notifications/notify';
 import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
+import { ensureBillingSchema } from '@modules/billing/billing.service';
 
 export function createApp() {
   const app = express();
@@ -60,6 +61,9 @@ export function createApp() {
   void ensureNotificationsSchema().catch(() => undefined);
   void ensureLiveOpsSchema().catch((err) =>
     console.warn('[boot] live-ops schema ensure failed:', err),
+  );
+  void ensureBillingSchema().catch((err) =>
+    console.warn('[boot] billing schema ensure failed:', err),
   );
 
   return app;

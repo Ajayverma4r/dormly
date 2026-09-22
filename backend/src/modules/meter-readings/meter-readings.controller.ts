@@ -7,6 +7,7 @@ import multer from 'multer';
 import { MeterReadingsService } from './meter-readings.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import { TenantPortalService } from '@modules/tenant-portal/tenant-portal.service';
+import { assertFeatureAllowed } from '@modules/tenant-portal/property-type-access';
 
 const service = new MeterReadingsService();
 const tenantPortal = new TenantPortalService();
@@ -80,6 +81,7 @@ export class MeterReadingsController {
     try {
       const tenancy = await tenantPortal.getMyTenancy(req.ctxId!);
       if (!tenancy) return res.status(404).json({ error: 'No active tenancy' });
+      assertFeatureAllowed(tenancy, 'meter_reading');
       res.json({
         data: await service.listByUnit(String(tenancy.node_id)),
       });
@@ -92,6 +94,7 @@ export class MeterReadingsController {
     try {
       const tenancy = await tenantPortal.getMyTenancy(req.ctxId!);
       if (!tenancy) return res.status(404).json({ error: 'No active tenancy' });
+      assertFeatureAllowed(tenancy, 'meter_reading');
       const body = submitSchema.parse(req.body);
       const imageUrl = req.file
         ? `/uploads/meter-readings/${req.file.filename}`
