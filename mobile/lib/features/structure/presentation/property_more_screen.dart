@@ -41,8 +41,11 @@ class PropertyMoreScreen extends ConsumerWidget {
     final canManage = isOwnerOrAdmin || role == 'manager';
     final hasTenantContext = ref.watch(_hasTenantContextProvider).valueOrNull ?? false;
     final property = ref.watch(propertyDetailProvider(propertyId)).valueOrNull;
-    final showMessMenu = canManage &&
-        propertyArchetypeFromProperty(property).showsMessMenu;
+    final archetype = propertyArchetypeFromProperty(property);
+    final showMessMenu = canManage && archetype.showsMessMenu;
+    // Rental House uses Spaces tab — hide low-level hierarchy editor.
+    final showStructureSettings =
+        canManage && archetype != PropertyArchetype.individualLease;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Menu')),
@@ -134,14 +137,16 @@ class PropertyMoreScreen extends ConsumerWidget {
               Icons.bar_chart_outlined,
               () => _openAnalyticsReports(context),
             ),
-            const SizedBox(height: 10),
-            _tile(
-              context,
-              'Structure Settings',
-              'Rename, reorder, add levels',
-              Icons.tune,
-              () => context.push('/dashboard/$propertyId/structure'),
-            ),
+            if (showStructureSettings) ...[
+              const SizedBox(height: 10),
+              _tile(
+                context,
+                'Structure Settings',
+                'Rename, reorder, add levels',
+                Icons.tune,
+                () => context.push('/dashboard/$propertyId/structure'),
+              ),
+            ],
           ],
           const SizedBox(height: 24),
           const Divider(),

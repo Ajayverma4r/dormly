@@ -788,7 +788,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         TextField(
           controller: _nameController,
           decoration: InputDecoration(
-            hintText: 'Green Valley Hostel',
+            hintText: 'Your Property name',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),

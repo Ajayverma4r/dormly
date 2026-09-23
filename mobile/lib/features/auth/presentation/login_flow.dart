@@ -351,19 +351,17 @@ void _routeByPropertyList(BuildContext context, List<dynamic> properties) {
     context.go('/onboarding/welcome');
     return;
   }
-  if (properties.length == 1) {
-    final p = properties.first as Map;
-    debugPrint(
-      '[AUTH] routing decision: EXISTING USER → /property/${p['id']}',
-    );
-    context.go(
-      '/property/${p['id']}',
-      extra: {'propertyName': p['name']},
-    );
-    return;
-  }
-  debugPrint('[AUTH] routing decision: EXISTING USER (multi) → /home');
-  context.go('/home');
+  // Always open a property dashboard. Multi-property switching is done
+  // in-app (All Properties / property switcher) — never the list gate.
+  final p = properties.first as Map;
+  debugPrint(
+    '[AUTH] routing decision: EXISTING USER → /property/${p['id']} '
+    '(${properties.length} properties)',
+  );
+  context.go(
+    '/property/${p['id']}',
+    extra: {'propertyName': p['name']},
+  );
 }
 
 /// Public alias used by WelcomeScreen redirects.

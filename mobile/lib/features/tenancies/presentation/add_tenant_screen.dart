@@ -568,11 +568,24 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   }
 
   Widget _buildRentalAssignSpaceCard(List<AssignableUnit> units) {
-    final hasExisting = units.isNotEmpty;
+    // Add Tenant only offers vacant spaces — occupied ones are not selectable.
+    final availableUnits =
+        units.where((u) => !u.occupied).toList(growable: false);
+    final hasAvailable = availableUnits.isNotEmpty;
     final draftName = _rentalSpaceDisplayLabel;
-    final selectedExisting = units
+    final selectedExisting = availableUnits
         .where((u) => u.nodeId == _selectedNodeId)
         .firstOrNull;
+    // Drop a stale selection if that space became occupied / is not vacant.
+    if (_selectedNodeId != null &&
+        selectedExisting == null &&
+        !_addingNewSpace &&
+        units.any((u) => u.nodeId == _selectedNodeId && u.occupied)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _clearRentalSpaceAssignment();
+      });
+    }
     final selectedLabel = selectedExisting?.pathLabel ??
         _selectedSpaceLabel ??
         draftName;
@@ -639,7 +652,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
             selectedBanner(
               label: draftName,
               onChange: () {
-                if (hasExisting) {
+                if (hasAvailable) {
                   _clearRentalSpaceAssignment();
                 } else {
                   _openCreateSpaceSheet();
@@ -660,7 +673,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
     if (_selectedNodeId != null &&
         selectedLabel != null &&
         selectedExisting == null &&
-        !hasExisting) {
+        !hasAvailable) {
       return _stepCard(
         step: 'STEP 1',
         title: 'Assign Space',
@@ -673,7 +686,8 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
       );
     }
 
-    if (!hasExisting) {
+    if (!hasAvailable) {
+      final allOccupied = units.isNotEmpty;
       return _stepCard(
         step: 'STEP 1',
         title: 'Which space are they renting?',
@@ -681,9 +695,9 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'No rental spaces yet',
-              style: TextStyle(
+            Text(
+              allOccupied ? 'No vacant spaces' : 'No rental spaces yet',
+              style: const TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
                 color: AppColors.ink,
@@ -691,7 +705,9 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Create a space first, then add this tenant to it.',
+              allOccupied
+                  ? 'All current spaces have tenants. Create a new space to continue.'
+                  : 'Create a space first, then add this tenant to it.',
               style: TextStyle(
                 fontSize: 13,
                 height: 1.4,
@@ -705,7 +721,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                 onPressed: _openCreateSpaceSheet,
                 icon: const Icon(Icons.add_home_outlined),
                 label: const Text(
-                  '+ Create Space',
+                  'Create Space',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -726,7 +742,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
       );
     }
 
-    // Existing spaces — dropdown + create new.
+    // Vacant spaces only — dropdown + create new.
     return _stepCard(
       step: 'STEP 1',
       title: 'Which space are they renting?',
@@ -736,7 +752,8 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           DropdownButtonFormField<String>(
-            value: units.any((u) => u.nodeId == _selectedNodeId)
+            isExpanded: true,
+            value: availableUnits.any((u) => u.nodeId == _selectedNodeId)
                 ? _selectedNodeId
                 : null,
             decoration: InputDecoration(
@@ -760,14 +777,12 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                 ),
               ),
             ),
-            items: units
+            items: availableUnits
                 .map(
                   (u) => DropdownMenuItem(
                     value: u.nodeId,
                     child: Text(
-                      u.occupied
-                          ? '${u.pathLabel} (occupied)'
-                          : u.pathLabel,
+                      u.pathLabel,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -778,7 +793,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
               _addingNewSpace = false;
               _newSpaceName = null;
               final match =
-                  units.where((u) => u.nodeId == id).firstOrNull;
+                  availableUnits.where((u) => u.nodeId == id).firstOrNull;
               _selectedSpaceLabel = match?.pathLabel;
               if (match?.monthlyRent != null) {
                 _rentController.text = _formatAmount(match!.monthlyRent!);
@@ -790,18 +805,11 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
               _error = null;
             }),
           ),
-          if (selectedExisting?.occupied == true) ...[
-            const SizedBox(height: 8),
-            Text(
-              'This space already has a tenant.',
-              style: TextStyle(fontSize: 12, color: Colors.red.shade700),
-            ),
-          ],
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: _openCreateSpaceSheet,
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('+ Create Space'),
+            label: const Text('Create Space'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.primary,
               side: const BorderSide(color: AppColors.primary),
