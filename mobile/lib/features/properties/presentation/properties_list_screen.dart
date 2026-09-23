@@ -52,7 +52,7 @@ class PropertiesListScreen extends ConsumerWidget {
             tooltip: 'Logout',
             onPressed: () async {
               await ref.read(authRepositoryProvider).logout();
-              if (context.mounted) context.go('/login');
+              if (context.mounted) context.go('/splash');
             },
           ),
         ],

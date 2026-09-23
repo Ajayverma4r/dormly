@@ -57,8 +57,9 @@ class _OtpVerifyScreenState extends ConsumerState<OtpVerifyScreen> {
       _error = null;
     });
     try {
-      await ref.read(authRepositoryProvider).verifyOtp(widget.phone, _code);
-      if (mounted) await completeLogin(context, ref);
+      final profile =
+          await ref.read(authRepositoryProvider).verifyOtp(widget.phone, _code);
+      if (mounted) await completeLogin(context, ref, otpProfile: profile);
     } catch (e) {
       if (mounted) {
         setState(() =>

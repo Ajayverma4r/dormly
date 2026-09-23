@@ -1,66 +1,96 @@
 // features/auth/presentation/login_flow.dart
 //
-// Post-login routing (frictionless):
-//   invitations → auto-pick primary context → profile (if needed) → first property shell
-//
-// Session restore (app restart):
-//   refresh token → restore context → route to dashboard / wizard
-//
-// Role/property list screens are bypassed; switching lives in-app (Menu / Dashboard).
+// Unauthenticated: Splash → Your Stay, Simplified → Login → OTP
+// Post-OTP (server is source of truth):
+//   propertyCount > 0  → Dashboard / property picker
+//   propertyCount == 0 → Welcome to Dormly (property creation)
+// Authenticated cold start: Splash → restoreSession → Dashboard
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../data/auth_repository.dart';
+import '../domain/user_profile.dart';
 import '../../staff/data/staff_repository.dart';
 import '../../properties/data/properties_repository.dart';
 
 /// Fresh login after OTP — always resolves context from the server.
-Future<void> completeLogin(BuildContext context, WidgetRef ref) async {
+Future<void> completeLogin(
+  BuildContext context,
+  WidgetRef ref, {
+  UserProfile? otpProfile,
+}) async {
   final authRepo = ref.read(authRepositoryProvider);
   final staffRepo = ref.read(staffRepositoryProvider);
 
+  debugPrint('[AUTH] OTP successful');
+  debugPrint(
+    '[AUTH] otp profile: propertyCount=${otpProfile?.propertyCount} '
+    'orgId=${otpProfile?.organizationId} '
+    'profileComplete=${otpProfile?.profileComplete}',
+  );
+
   final invitations = await staffRepo.listMyInvitations();
   if (invitations.isNotEmpty) {
+    debugPrint('[AUTH] routing decision: INVITATIONS');
     if (context.mounted) context.go('/invitations', extra: invitations);
     return;
   }
 
-  List<Map<String, dynamic>> contexts;
+  List<Map<String, dynamic>>? contexts;
   try {
     contexts = await authRepo.listContexts();
+    debugPrint('[AUTH] listContexts count=${contexts.length}');
   } catch (e) {
-    // Treat lookup failures the same as "no workspace" — start fresh setup.
-    debugPrint('listContexts failed after OTP (routing to onboarding): $e');
-    contexts = const [];
-  }
-
-  if (contexts.isEmpty) {
-    // Brand-new / orphaned account — create workspace + scope JWT, then onboard.
+    debugPrint('[AUTH] listContexts failed: $e');
+    try {
+      await authRepo.ensureOwnerWorkspace();
+    } catch (ensureErr) {
+      debugPrint('[AUTH] ensureOwnerWorkspace failed: $ensureErr');
+    }
     if (context.mounted) {
-      try {
-        await authRepo.ensureOwnerWorkspace();
-      } catch (e) {
-        debugPrint('ensureOwnerWorkspace failed: $e');
-      }
-      try {
-        final me = await authRepo.fetchMe();
-        if (!me.profileComplete) {
-          context.go('/onboarding/profile');
-          return;
-        }
-      } catch (_) {
-        // Profile optional for first-time owners without /me support.
-      }
-      if (context.mounted) context.go('/onboarding/welcome');
+      await routeAuthenticatedUser(context, ref, otpProfile: otpProfile);
     }
     return;
   }
 
-  // Frictionless: never show ContextPicker — auto-select primary workspace.
+  if (contexts.isEmpty) {
+    debugPrint('[AUTH] contexts empty — ensuring owner workspace');
+    if (context.mounted) {
+      try {
+        await authRepo.ensureOwnerWorkspace();
+      } catch (e) {
+        debugPrint('[AUTH] ensureOwnerWorkspace failed: $e');
+      }
+      try {
+        final me = otpProfile ?? await authRepo.fetchMe();
+        if (!me.profileComplete) {
+          debugPrint('[AUTH] destination: /onboarding/profile');
+          if (context.mounted) context.go('/onboarding/profile');
+          return;
+        }
+      } catch (_) {}
+      if (context.mounted) {
+        await continueAfterProfileComplete(context, ref, otpProfile: otpProfile);
+      }
+    }
+    return;
+  }
+
   final chosen = _pickPrimaryContext(contexts);
+  debugPrint(
+    '[AUTH] selected context type=${chosen['type']} '
+    'id=${chosen['id']} role=${chosen['role']}',
+  );
   await authRepo.selectContext(chosen['type'], chosen['id']);
-  if (context.mounted) await routeAfterContextSelection(context, ref, chosen);
+  if (context.mounted) {
+    await routeAfterContextSelection(
+      context,
+      ref,
+      chosen,
+      otpProfile: otpProfile,
+    );
+  }
 }
 
 /// Cold start — reuse persisted refresh token + last workspace context.
@@ -76,7 +106,6 @@ Future<void> restoreSession(BuildContext context, WidgetRef ref) async {
   if (await authRepo.hasStoredContext()) {
     final restored = await authRepo.restoreContextIfNeeded();
     if (!restored) {
-      // Stored context invalid — fall back to full login resolution.
       if (context.mounted) await completeLogin(context, ref);
       return;
     }
@@ -98,66 +127,141 @@ Future<void> restoreSession(BuildContext context, WidgetRef ref) async {
 /// Route an already-authenticated user (restore or post-context-select).
 Future<void> routeAuthenticatedUser(
   BuildContext context,
-  WidgetRef ref,
-) async {
+  WidgetRef ref, {
+  UserProfile? otpProfile,
+}) async {
   final authRepo = ref.read(authRepositoryProvider);
   final role = await authRepo.getContextRole();
 
   if (role == 'tenant') {
+    debugPrint('[AUTH] destination: /tenant/dashboard');
     if (context.mounted) context.go('/tenant/dashboard');
     return;
   }
 
   if (role == 'owner' || role == 'admin') {
     try {
-      final me = await authRepo.fetchMe();
+      final me = otpProfile ?? await authRepo.fetchMe();
       if (!me.profileComplete) {
+        debugPrint('[AUTH] destination: /onboarding/profile');
         if (context.mounted) context.go('/onboarding/profile');
         return;
       }
-    } catch (_) {
-      // If /me fails (old backend), fall through to property routing.
-    }
+    } catch (_) {}
   }
 
-  if (context.mounted) await continueAfterProfileComplete(context, ref);
+  if (context.mounted) {
+    await continueAfterProfileComplete(context, ref, otpProfile: otpProfile);
+  }
 }
 
-/// Called after profile is saved during onboarding when user already has properties.
+/// Route by server property list after auth context is ready.
 Future<void> continueAfterProfileComplete(
   BuildContext context,
-  WidgetRef ref,
-) async {
+  WidgetRef ref, {
+  UserProfile? otpProfile,
+}) async {
   final authRepo = ref.read(authRepositoryProvider);
+  final propsRepo = ref.read(propertiesRepositoryProvider);
   final orgId = await authRepo.getOrganizationId();
   final scopedPropertyId = await authRepo.getScopedPropertyId();
   if (!context.mounted) return;
 
+  debugPrint(
+    '[AUTH] continueAfterProfileComplete orgId=$orgId '
+    'scopedPropertyId=$scopedPropertyId',
+  );
+
+  // 1) Prefer organization property list (JWT + optional orgId).
   if (orgId != null) {
-    final properties =
-        await ref.read(propertiesRepositoryProvider).list(orgId);
-    if (!context.mounted) return;
-    _goByPropertyCount(context, properties);
-    return;
+    try {
+      var properties = await propsRepo.list(orgId);
+      debugPrint('[AUTH] properties count (org list): ${properties.length}');
+
+      // If list is empty but server profile says properties exist, retry via JWT.
+      if (properties.isEmpty) {
+        final me = otpProfile ?? await authRepo.fetchMe();
+        debugPrint('[AUTH] me.propertyCount=${me.propertyCount}');
+        if (me.propertyCount > 0) {
+          properties = await propsRepo.list();
+          debugPrint(
+            '[AUTH] properties count (JWT retry): ${properties.length}',
+          );
+          if (properties.isEmpty) {
+            // Server says properties exist — never send to Welcome.
+            debugPrint(
+              '[AUTH] routing decision: EXISTING USER '
+              '(propertyCount>0, list empty) → /home',
+            );
+            if (context.mounted) context.go('/home');
+            return;
+          }
+        }
+      }
+
+      if (!context.mounted) return;
+      _routeByPropertyList(context, properties);
+      return;
+    } catch (e) {
+      debugPrint('[AUTH] list properties failed: $e');
+      // Fall through — try scoped / me.propertyCount before Welcome.
+      try {
+        final me = otpProfile ?? await authRepo.fetchMe();
+        if (me.propertyCount > 0) {
+          debugPrint(
+            '[AUTH] routing decision: EXISTING USER '
+            '(list failed, propertyCount>0) → /home',
+          );
+          if (context.mounted) context.go('/home');
+          return;
+        }
+      } catch (_) {}
+    }
   }
 
+  // 2) Staff/manager scoped property.
   if (scopedPropertyId != null) {
-    final property =
-        await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
-    if (!context.mounted) return;
-    context.go('/property/$scopedPropertyId',
-        extra: {'propertyName': property['name']});
-    return;
+    try {
+      final property = await propsRepo.getById(scopedPropertyId);
+      debugPrint(
+        '[AUTH] routing decision: EXISTING USER (scoped) '
+        '→ /property/$scopedPropertyId',
+      );
+      if (!context.mounted) return;
+      context.go(
+        '/property/$scopedPropertyId',
+        extra: {'propertyName': property['name']},
+      );
+      return;
+    } catch (e) {
+      debugPrint('[AUTH] getById scoped property failed: $e');
+    }
   }
 
-  context.go('/onboarding/welcome');
+  // 3) Final server check before Welcome.
+  try {
+    final me = otpProfile ?? await authRepo.fetchMe();
+    debugPrint('[AUTH] final me.propertyCount=${me.propertyCount}');
+    if (me.propertyCount > 0) {
+      debugPrint(
+        '[AUTH] routing decision: EXISTING USER '
+        '(final propertyCount>0) → /home',
+      );
+      if (context.mounted) context.go('/home');
+      return;
+    }
+  } catch (_) {}
+
+  debugPrint('[AUTH] routing decision: NEW USER → /onboarding/welcome');
+  if (context.mounted) context.go('/onboarding/welcome');
 }
 
 Future<void> routeAfterContextSelection(
   BuildContext context,
   WidgetRef ref,
-  Map<String, dynamic> selectedContext,
-) async {
+  Map<String, dynamic> selectedContext, {
+  UserProfile? otpProfile,
+}) async {
   final role = selectedContext['role'];
 
   if (role == 'tenant') {
@@ -167,39 +271,18 @@ Future<void> routeAfterContextSelection(
 
   final authRepo = ref.read(authRepositoryProvider);
 
-  // Owners/admins must complete profile before property flows.
   if (role == 'owner' || role == 'admin') {
     try {
-      final me = await authRepo.fetchMe();
+      final me = otpProfile ?? await authRepo.fetchMe();
       if (!me.profileComplete) {
-        if (context.mounted) {
-          context.go('/onboarding/profile');
-        }
+        if (context.mounted) context.go('/onboarding/profile');
         return;
       }
-    } catch (_) {
-      // If /me fails (old backend), fall through to property routing.
-    }
+    } catch (_) {}
   }
 
-  final orgId = await authRepo.getOrganizationId();
-  final scopedPropertyId = await authRepo.getScopedPropertyId();
-
-  if (!context.mounted) return;
-
-  if (orgId != null) {
-    final properties =
-        await ref.read(propertiesRepositoryProvider).list(orgId);
-    if (!context.mounted) return;
-    _goByPropertyCount(context, properties);
-  } else if (scopedPropertyId != null) {
-    final property =
-        await ref.read(propertiesRepositoryProvider).getById(scopedPropertyId);
-    if (!context.mounted) return;
-    context.go('/property/$scopedPropertyId',
-        extra: {'propertyName': property['name']});
-  } else {
-    context.go('/onboarding/welcome');
+  if (context.mounted) {
+    await continueAfterProfileComplete(context, ref, otpProfile: otpProfile);
   }
 }
 
@@ -237,7 +320,6 @@ Future<void> switchWorkspaceRole(
   if (context.mounted) await routeAfterContextSelection(context, ref, chosen);
 }
 
-/// Prefer owner/admin org workspaces over staff/tenant for frictionless entry.
 Map<String, dynamic> _pickPrimaryContext(List<dynamic> contexts) {
   int score(Map<String, dynamic> c) {
     switch (c['role']?.toString()) {
@@ -263,15 +345,28 @@ Map<String, dynamic> _pickPrimaryContext(List<dynamic> contexts) {
   return list.first;
 }
 
-/// Always land on the first property shell — never the property list gate.
-void _goByPropertyCount(BuildContext context, List<dynamic> properties) {
+void _routeByPropertyList(BuildContext context, List<dynamic> properties) {
   if (properties.isEmpty) {
+    debugPrint('[AUTH] routing decision: NEW USER → /onboarding/welcome');
     context.go('/onboarding/welcome');
     return;
   }
-  final p = properties.first as Map;
-  context.go(
-    '/property/${p['id']}',
-    extra: {'propertyName': p['name']},
-  );
+  if (properties.length == 1) {
+    final p = properties.first as Map;
+    debugPrint(
+      '[AUTH] routing decision: EXISTING USER → /property/${p['id']}',
+    );
+    context.go(
+      '/property/${p['id']}',
+      extra: {'propertyName': p['name']},
+    );
+    return;
+  }
+  debugPrint('[AUTH] routing decision: EXISTING USER (multi) → /home');
+  context.go('/home');
+}
+
+/// Public alias used by WelcomeScreen redirects.
+void goByPropertyCount(BuildContext context, List<dynamic> properties) {
+  _routeByPropertyList(context, properties);
 }

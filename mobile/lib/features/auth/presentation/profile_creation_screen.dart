@@ -101,7 +101,7 @@ class _ProfileCreationScreenState extends ConsumerState<ProfileCreationScreen> {
         if (me.propertyCount == 0) {
           context.go('/onboarding/welcome');
         } else {
-          await continueAfterProfileComplete(context, ref);
+          await continueAfterProfileComplete(context, ref, otpProfile: me);
         }
       } else {
         Navigator.of(context).pop(true);

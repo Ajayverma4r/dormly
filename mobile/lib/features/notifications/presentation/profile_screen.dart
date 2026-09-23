@@ -45,7 +45,7 @@ class ProfileScreen extends ConsumerWidget {
             child: OutlinedButton.icon(
               onPressed: () async {
                 await ref.read(authRepositoryProvider).logout();
-                if (context.mounted) context.go('/login');
+                if (context.mounted) context.go('/splash');
               },
               icon: const Icon(Icons.logout, color: AppColors.danger),
               label: const Text('Logout', style: TextStyle(color: AppColors.danger)),

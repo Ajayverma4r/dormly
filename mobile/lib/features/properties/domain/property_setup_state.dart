@@ -96,12 +96,19 @@ class SetupRentalSpace {
   final RentalSpaceType type;
   /// Local parent space id (room under floor).
   final String? parentId;
+  /// Optional floor label for portion/room/shop (created at seed time).
+  final String? floorLabel;
+  final double? monthlyRent;
+  final double? securityDeposit;
 
   const SetupRentalSpace({
     required this.id,
     required this.name,
     required this.type,
     this.parentId,
+    this.floorLabel,
+    this.monthlyRent,
+    this.securityDeposit,
   });
 
   SetupRentalSpace copyWith({
@@ -109,13 +116,40 @@ class SetupRentalSpace {
     RentalSpaceType? type,
     String? parentId,
     bool clearParent = false,
+    String? floorLabel,
+    bool clearFloorLabel = false,
+    double? monthlyRent,
+    bool clearMonthlyRent = false,
+    double? securityDeposit,
+    bool clearSecurityDeposit = false,
   }) =>
       SetupRentalSpace(
         id: id,
         name: name ?? this.name,
         type: type ?? this.type,
         parentId: clearParent ? null : (parentId ?? this.parentId),
+        floorLabel: clearFloorLabel ? null : (floorLabel ?? this.floorLabel),
+        monthlyRent:
+            clearMonthlyRent ? null : (monthlyRent ?? this.monthlyRent),
+        securityDeposit: clearSecurityDeposit
+            ? null
+            : (securityDeposit ?? this.securityDeposit),
       );
+
+  String get typeLabel {
+    switch (type) {
+      case RentalSpaceType.entireProperty:
+        return 'Entire Property';
+      case RentalSpaceType.floor:
+        return 'Floor';
+      case RentalSpaceType.portion:
+        return 'Floor / Portion';
+      case RentalSpaceType.room:
+        return 'Room';
+      case RentalSpaceType.shop:
+        return 'Commercial Space';
+    }
+  }
 }
 
 /// One floor's room plan under a building.
@@ -400,25 +434,8 @@ class PropertySetupNotifier extends StateNotifier<PropertySetupState> {
   }
 
   void setRentalDivisionMode(RentalDivisionMode mode) {
-    List<SetupRentalSpace> spaces;
-    switch (mode) {
-      case RentalDivisionMode.entireProperty:
-        spaces = [
-          SetupRentalSpace(
-            id: _newId(),
-            name: 'Entire Property',
-            type: RentalSpaceType.entireProperty,
-          ),
-        ];
-      case RentalDivisionMode.floorPortion:
-      case RentalDivisionMode.room:
-      case RentalDivisionMode.commercial:
-        spaces = state.rentalDivisionMode == mode ? state.rentalSpaces : [];
-    }
-    state = state.copyWith(
-      rentalDivisionMode: mode,
-      rentalSpaces: spaces,
-    );
+    // Keep previously added spaces so the user can mix types (portion + room…).
+    state = state.copyWith(rentalDivisionMode: mode);
   }
 
   void upsertRentalSpace({
@@ -426,6 +443,9 @@ class PropertySetupNotifier extends StateNotifier<PropertySetupState> {
     required String name,
     required RentalSpaceType type,
     String? parentId,
+    String? floorLabel,
+    double? monthlyRent,
+    double? securityDeposit,
   }) {
     final list = [...state.rentalSpaces];
     if (id == null) {
@@ -434,6 +454,9 @@ class PropertySetupNotifier extends StateNotifier<PropertySetupState> {
         name: name,
         type: type,
         parentId: parentId,
+        floorLabel: floorLabel,
+        monthlyRent: monthlyRent,
+        securityDeposit: securityDeposit,
       ));
     } else {
       final i = list.indexWhere((s) => s.id == id);
@@ -443,10 +466,33 @@ class PropertySetupNotifier extends StateNotifier<PropertySetupState> {
           type: type,
           parentId: parentId,
           clearParent: parentId == null,
+          floorLabel: floorLabel,
+          clearFloorLabel: floorLabel == null,
+          monthlyRent: monthlyRent,
+          clearMonthlyRent: monthlyRent == null,
+          securityDeposit: securityDeposit,
+          clearSecurityDeposit: securityDeposit == null,
         );
       }
     }
-    state = state.copyWith(rentalSpaces: list);
+    state = state.copyWith(
+      rentalSpaces: list,
+      rentalDivisionMode: _modeForType(type) ?? state.rentalDivisionMode,
+    );
+  }
+
+  RentalDivisionMode? _modeForType(RentalSpaceType type) {
+    switch (type) {
+      case RentalSpaceType.entireProperty:
+        return RentalDivisionMode.entireProperty;
+      case RentalSpaceType.portion:
+      case RentalSpaceType.floor:
+        return RentalDivisionMode.floorPortion;
+      case RentalSpaceType.room:
+        return RentalDivisionMode.room;
+      case RentalSpaceType.shop:
+        return RentalDivisionMode.commercial;
+    }
   }
 
   void removeRentalSpace(String id) {

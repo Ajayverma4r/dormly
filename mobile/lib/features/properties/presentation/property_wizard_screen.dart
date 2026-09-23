@@ -6,8 +6,10 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/step_indicator.dart';
@@ -43,9 +45,30 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
   /// Set after a rental-house property is created (success step).
   Map<String, dynamic>? _createdRentalProperty;
 
+  /// Inline space-details editor inside Step 2 (never navigates to CreateSpaceScreen).
+  RentalSpaceType? _draftSpaceType;
+  String? _draftSpaceId;
+  final _draftNameCtrl = TextEditingController();
+  final _draftRentCtrl = TextEditingController();
+  final _draftDepositCtrl = TextEditingController();
+  final List<String> _draftFloors = [
+    'Ground Floor',
+    '1st Floor',
+    '2nd Floor',
+    '3rd Floor',
+    'Roof',
+  ];
+  String? _draftFloorLabel;
+
   @override
   void initState() {
     super.initState();
+    // Fresh create only — never resume leftover setup as if editing an
+    // existing property.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(propertySetupProvider.notifier).reset();
+    });
     _loadTypes();
   }
 
@@ -53,6 +76,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
   void dispose() {
     _nameController.dispose();
     _cityController.dispose();
+    _draftNameCtrl.dispose();
+    _draftRentCtrl.dispose();
+    _draftDepositCtrl.dispose();
     super.dispose();
   }
 
@@ -190,11 +216,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
       setState(() => _error = 'Enter a property name and choose a property type.');
       return;
     }
-    if (setup.rentalDivisionMode == null ||
-        setup.assignableRentalSpaces.isEmpty) {
-      setState(() => _error = 'Choose how your house is divided and add spaces.');
-      return;
-    }
+    // Spaces are optional — user may skip setup and add them later from Dashboard.
 
     setState(() {
       _creating = true;
@@ -292,14 +314,38 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
 
     for (final space in ordered) {
       String? parentRemote = propertyRootId;
-      if (space.parentId != null) {
+
+      // Create/reuse a floor container when this space has a floor label.
+      final floorLabel = space.floorLabel?.trim();
+      if (floorLabel != null && floorLabel.isNotEmpty) {
+        final floorKey = 'floor:${floorLabel.toLowerCase()}';
+        if (localToRemote.containsKey(floorKey)) {
+          parentRemote = localToRemote[floorKey];
+        } else {
+          final floorNode = await repo.createNode(
+            propertyId,
+            levelId: unitLevel.id,
+            parentNodeId: propertyRootId,
+            name: floorLabel,
+            metadata: {'space_type': RentalSpaceType.floor.apiValue},
+          );
+          final floorId = floorNode['id']?.toString();
+          if (floorId != null) {
+            localToRemote[floorKey] = floorId;
+            parentRemote = floorId;
+          }
+        }
+      } else if (space.parentId != null) {
         parentRemote = localToRemote[space.parentId] ?? propertyRootId;
       }
+
       final created = await repo.createNode(
         propertyId,
         levelId: unitLevel.id,
         parentNodeId: parentRemote,
         name: space.name,
+        monthlyRent: space.monthlyRent,
+        securityDeposit: space.securityDeposit,
         metadata: {
           'space_type': space.type.apiValue,
         },
@@ -311,21 +357,34 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
 
   void _continueFromRentalSpaces() {
     final setup = ref.read(propertySetupProvider);
-    if (setup.rentalDivisionMode == null) {
-      setState(() => _error = 'Choose what you are renting out.');
-      return;
-    }
-    if (setup.assignableRentalSpaces.isEmpty) {
-      setState(() => _error = 'Add at least one space to continue.');
-      return;
-    }
-    for (final s in setup.rentalSpaces) {
+    // Spaces are optional. Only validate spaces the user already added.
+    for (final s in setup.assignableRentalSpaces) {
       if (s.name.trim().isEmpty) {
         setState(() => _error = 'Every space needs a name.');
         return;
       }
+      if (s.monthlyRent == null || s.monthlyRent! <= 0) {
+        setState(() => _error = 'Every space needs a monthly rent.');
+        return;
+      }
     }
-    _createRentalPropertyAndShowSuccess();
+    // Stay in the property wizard — go to Review (never CreateSpaceScreen).
+    setState(() {
+      _error = null;
+      _draftSpaceType = null;
+      _draftSpaceId = null;
+      _step = 5;
+    });
+  }
+
+  /// Create the property now; spaces can be added later from Dashboard → Spaces.
+  void _skipRentalSpaceSetup() {
+    setState(() {
+      _error = null;
+      _draftSpaceType = null;
+      _draftSpaceId = null;
+      _step = 5;
+    });
   }
 
   void _goBack() {
@@ -341,7 +400,17 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
     var prev = _step - 1;
 
     if (_step == 7) {
+      if (_draftSpaceType != null) {
+        setState(() {
+          _error = null;
+          _draftSpaceType = null;
+          _draftSpaceId = null;
+        });
+        return;
+      }
       prev = 0; // Spaces → Details
+    } else if (_step == 5 && setup.isRentalHouse) {
+      prev = 7; // Review → Spaces
     } else if (setup.isApartment) {
       if (_step == 2) {
         prev = 0;
@@ -588,7 +657,8 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
       return;
     }
     if (setup.isRentalHouse) {
-      // Zero structure — no units/nodes at create time.
+      await _createRentalPropertyAndShowSuccess();
+      return;
     } else if (setup.buildings.isEmpty || setup.totalRooms < 1) {
       setState(() => _error = 'Add buildings and rooms before creating.');
       return;
@@ -911,14 +981,176 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
     );
   }
 
-  // ─── Rental spaces setup ───────────────────────────────────────────────────
+  // ─── Rental spaces setup (all details stay inside Step 2) ─────────────────
+
+  RentalSpaceType _typeForMode(RentalDivisionMode mode) {
+    switch (mode) {
+      case RentalDivisionMode.entireProperty:
+        return RentalSpaceType.entireProperty;
+      case RentalDivisionMode.floorPortion:
+        return RentalSpaceType.portion;
+      case RentalDivisionMode.room:
+        return RentalSpaceType.room;
+      case RentalDivisionMode.commercial:
+        return RentalSpaceType.shop;
+    }
+  }
+
+  String _emojiForType(RentalSpaceType type) {
+    switch (type) {
+      case RentalSpaceType.entireProperty:
+        return '🏠';
+      case RentalSpaceType.floor:
+      case RentalSpaceType.portion:
+        return '🏢';
+      case RentalSpaceType.room:
+        return '🚪';
+      case RentalSpaceType.shop:
+        return '🏪';
+    }
+  }
+
+  String _nameHintForType(RentalSpaceType type) {
+    switch (type) {
+      case RentalSpaceType.entireProperty:
+        return 'e.g., Entire House';
+      case RentalSpaceType.floor:
+      case RentalSpaceType.portion:
+        return 'e.g., Ground Floor Portion';
+      case RentalSpaceType.room:
+        return 'e.g., Room 1, Back Room';
+      case RentalSpaceType.shop:
+        return 'e.g., Front Shop';
+    }
+  }
+
+  bool _typeNeedsFloor(RentalSpaceType type) =>
+      type != RentalSpaceType.entireProperty;
+
+  void _openSpaceEditor({
+    required RentalSpaceType type,
+    SetupRentalSpace? existing,
+  }) {
+    // Collect floors already used in this wizard session.
+    final setup = ref.read(propertySetupProvider);
+    final known = <String>{
+      ..._draftFloors,
+      for (final s in setup.rentalSpaces)
+        if (s.floorLabel != null && s.floorLabel!.trim().isNotEmpty)
+          s.floorLabel!.trim(),
+    };
+    _draftFloors
+      ..clear()
+      ..addAll(known);
+    _draftFloors.sort();
+
+    _draftNameCtrl.text = existing?.name ??
+        (type == RentalSpaceType.entireProperty ? 'Entire House' : '');
+    _draftRentCtrl.text = existing?.monthlyRent != null
+        ? existing!.monthlyRent!.toStringAsFixed(0)
+        : '';
+    _draftDepositCtrl.text = existing?.securityDeposit != null
+        ? existing!.securityDeposit!.toStringAsFixed(0)
+        : '';
+    _draftFloorLabel = existing?.floorLabel;
+    setState(() {
+      _error = null;
+      _draftSpaceType = type;
+      _draftSpaceId = existing?.id;
+    });
+  }
+
+  void _closeSpaceEditor() {
+    setState(() {
+      _error = null;
+      _draftSpaceType = null;
+      _draftSpaceId = null;
+    });
+  }
+
+  void _saveDraftSpace() {
+    final type = _draftSpaceType;
+    if (type == null) return;
+    final name = _draftNameCtrl.text.trim();
+    final rent = double.tryParse(_draftRentCtrl.text.trim());
+    final deposit = double.tryParse(_draftDepositCtrl.text.trim());
+
+    if (name.isEmpty) {
+      setState(() => _error = 'Enter a space name.');
+      return;
+    }
+    if (_typeNeedsFloor(type) &&
+        (_draftFloorLabel == null || _draftFloorLabel!.trim().isEmpty)) {
+      setState(() => _error = 'Select a floor location.');
+      return;
+    }
+    if (rent == null || rent <= 0) {
+      setState(() => _error = 'Enter a valid monthly rent.');
+      return;
+    }
+
+    ref.read(propertySetupProvider.notifier).upsertRentalSpace(
+          id: _draftSpaceId,
+          name: name,
+          type: type,
+          floorLabel: _typeNeedsFloor(type) ? _draftFloorLabel!.trim() : null,
+          monthlyRent: rent,
+          securityDeposit: deposit,
+        );
+    _closeSpaceEditor();
+  }
+
+  Future<void> _promptAddWizardFloor() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add floor'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            labelText: 'Floor name',
+            hintText: 'e.g., Basement, Mezzanine',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final v = controller.text.trim();
+              if (v.isNotEmpty) Navigator.pop(ctx, v);
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    setState(() {
+      if (!_draftFloors.any((f) => f.toLowerCase() == name.toLowerCase())) {
+        _draftFloors.add(name);
+        _draftFloors.sort();
+      }
+      _draftFloorLabel = name;
+    });
+  }
 
   Widget _buildRentalSpacesStep() {
     final setup = ref.watch(propertySetupProvider);
-    final notifier = ref.read(propertySetupProvider.notifier);
-    final mode = setup.rentalDivisionMode;
+    final draftType = _draftSpaceType;
 
-    // Types aligned with CreateSpaceScreen.
+    // Editing a space — stay inside Step 2 (do NOT open CreateSpaceScreen).
+    if (draftType != null) {
+      return _buildWizardSpaceDetailsEditor(draftType);
+    }
+
     const options = <(RentalDivisionMode, String, String, String)>[
       (
         RentalDivisionMode.entireProperty,
@@ -946,6 +1178,13 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
       ),
     ];
 
+    final spaces = setup.assignableRentalSpaces;
+    final currency = NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 0,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -972,7 +1211,6 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
               ),
               const SizedBox(height: 16),
               ...options.map((opt) {
-                final selected = mode == opt.$1;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
@@ -980,21 +1218,14 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                     borderRadius: BorderRadius.circular(16),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(16),
-                      onTap: () => notifier.setRentalDivisionMode(opt.$1),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
+                      onTap: () => _openSpaceEditor(
+                        type: _typeForMode(opt.$1),
+                      ),
+                      child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: selected
-                                ? AppColors.blueprint
-                                : Colors.grey.shade300,
-                            width: selected ? 2 : 1,
-                          ),
-                          color: selected
-                              ? AppColors.blueprint.withOpacity(0.04)
-                              : Colors.white,
+                          border: Border.all(color: Colors.grey.shade300),
                         ),
                         child: Row(
                           children: [
@@ -1023,12 +1254,8 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                               ),
                             ),
                             Icon(
-                              selected
-                                  ? Icons.radio_button_checked
-                                  : Icons.radio_button_off,
-                              color: selected
-                                  ? AppColors.blueprint
-                                  : Colors.grey,
+                              Icons.chevron_right,
+                              color: Colors.grey.shade500,
                             ),
                           ],
                         ),
@@ -1037,49 +1264,271 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                   ),
                 );
               }),
-              if (mode != null) ...[
-                const SizedBox(height: 12),
+              if (spaces.isNotEmpty) ...[
+                const SizedBox(height: 16),
                 const Divider(),
                 const SizedBox(height: 8),
-                switch (mode) {
-                  RentalDivisionMode.entireProperty =>
-                    _rentalWholeHouseSummary(setup),
-                  RentalDivisionMode.floorPortion =>
-                    _rentalSpaceListEditor(
-                      setup: setup,
-                      notifier: notifier,
-                      title: 'Your floors / portions',
-                      emoji: '🏢',
-                      type: RentalSpaceType.portion,
-                      addLabel: '+ Add Floor / Portion',
-                      addTitle: 'Add floor / portion',
-                      addHint: 'e.g., Ground Floor Portion',
-                      editTitle: 'Edit floor / portion',
+                const Text(
+                  'Your spaces',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                const SizedBox(height: 10),
+                ...spaces.map((s) {
+                  final rent = s.monthlyRent;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            _emojiForType(s.type),
+                            style: const TextStyle(fontSize: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '✓ ${s.name}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  [
+                                    s.typeLabel,
+                                    if (rent != null)
+                                      '${currency.format(rent)}/month',
+                                  ].join(' · '),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _openSpaceEditor(
+                              type: s.type,
+                              existing: s,
+                            ),
+                            child: const Text('Edit'),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 20),
+                            onPressed: () => ref
+                                .read(propertySetupProvider.notifier)
+                                .removeRentalSpace(s.id),
+                          ),
+                        ],
+                      ),
                     ),
-                  RentalDivisionMode.room => _rentalSpaceListEditor(
-                      setup: setup,
-                      notifier: notifier,
-                      title: 'Your rooms',
-                      emoji: '🚪',
-                      type: RentalSpaceType.room,
-                      addLabel: '+ Add Room',
-                      addTitle: 'Add room',
-                      addHint: 'e.g., Room 1, Back Room',
-                      editTitle: 'Edit room',
-                    ),
-                  RentalDivisionMode.commercial => _rentalSpaceListEditor(
-                      setup: setup,
-                      notifier: notifier,
-                      title: 'Your commercial spaces',
-                      emoji: '🏪',
-                      type: RentalSpaceType.shop,
-                      addLabel: '+ Add Commercial Space',
-                      addTitle: 'Add commercial space',
-                      addHint: 'e.g., Front Shop',
-                      editTitle: 'Edit commercial space',
-                    ),
-                },
+                  );
+                }),
+              ] else
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Optional — tap a type to add a space, or skip and add later.',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
+                ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: Colors.red)),
               ],
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _primaryButton(
+                  label: 'Continue',
+                  trailing: '→',
+                  onPressed: _continueFromRentalSpaces,
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  onPressed: _skipRentalSpaceSetup,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.slate,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text(
+                    'Skip setup for now',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWizardSpaceDetailsEditor(RentalSpaceType type) {
+    final needsFloor = _typeNeedsFloor(type);
+    final canSave = _draftNameCtrl.text.trim().isNotEmpty &&
+        (!needsFloor ||
+            (_draftFloorLabel != null && _draftFloorLabel!.trim().isNotEmpty)) &&
+        double.tryParse(_draftRentCtrl.text.trim()) != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            children: [
+              const Text(
+                'Space details',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.blueprint.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      _emojiForType(type),
+                      style: const TextStyle(fontSize: 22),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        SetupRentalSpace(
+                          id: '',
+                          name: '',
+                          type: type,
+                        ).typeLabel,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.blueprint,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _closeSpaceEditor,
+                      child: const Text('Change'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('Space Name',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _draftNameCtrl,
+                textCapitalization: TextCapitalization.words,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: _nameHintForType(type),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              if (needsFloor) ...[
+                const SizedBox(height: 18),
+                const Text('Floor Location',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _draftFloors.contains(_draftFloorLabel)
+                      ? _draftFloorLabel
+                      : null,
+                  decoration: InputDecoration(
+                    hintText: 'Select a floor',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  items: _draftFloors
+                      .map(
+                        (f) => DropdownMenuItem(value: f, child: Text(f)),
+                      )
+                      .toList(),
+                  onChanged: (v) => setState(() => _draftFloorLabel = v),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _promptAddWizardFloor,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('+ Add Floor'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              const Text('Monthly Rent',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _draftRentCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                ],
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'e.g., 15000',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text('Security Deposit',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _draftDepositCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+                ],
+                decoration: InputDecoration(
+                  hintText: 'Optional',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: const TextStyle(color: Colors.red)),
@@ -1089,219 +1538,27 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-          child: _primaryButton(
-            label: _creating ? 'Creating…' : 'Continue',
-            trailing: _creating ? null : '→',
-            onPressed: _creating ? null : _continueFromRentalSpaces,
-            loading: _creating,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _rentalWholeHouseSummary(PropertySetupState setup) {
-    final space = setup.rentalSpaces.isEmpty ? null : setup.rentalSpaces.first;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade300),
-        color: const Color(0xFFF7F8FC),
-      ),
-      child: Row(
-        children: [
-          const Text('🏠', style: TextStyle(fontSize: 22)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              space?.name ?? 'Entire Property',
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-            ),
-          ),
-          Text(
-            'Ready to rent',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Flat list editor for one rental space type (no Building→Floor→Room nesting).
-  Widget _rentalSpaceListEditor({
-    required PropertySetupState setup,
-    required PropertySetupNotifier notifier,
-    required String title,
-    required String emoji,
-    required RentalSpaceType type,
-    required String addLabel,
-    required String addTitle,
-    required String addHint,
-    required String editTitle,
-  }) {
-    final spaces = setup.rentalSpaces.where((s) => s.type == type).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-        ),
-        const SizedBox(height: 8),
-        if (spaces.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              'Add at least one space to continue.',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
-          ),
-        ...spaces.map((s) => _spaceListTile(
-              emoji: emoji,
-              name: s.name,
-              onEdit: () => _showSpaceNameSheet(
-                title: editTitle,
-                initial: s.name,
-                onSave: (name) => notifier.upsertRentalSpace(
-                  id: s.id,
-                  name: name,
-                  type: type,
+          child: SizedBox(
+            height: 54,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    canSave ? AppColors.blueprint : Colors.grey.shade300,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
               ),
-              onDelete: () => notifier.removeRentalSpace(s.id),
-            )),
-        OutlinedButton.icon(
-          onPressed: () => _showSpaceNameSheet(
-            title: addTitle,
-            hint: addHint,
-            onSave: (name) => notifier.upsertRentalSpace(
-              name: name,
-              type: type,
-            ),
-          ),
-          icon: const Icon(Icons.add),
-          label: Text(addLabel),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.blueprint,
-            side: const BorderSide(color: AppColors.blueprint),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              onPressed: canSave ? _saveDraftSpace : null,
+              child: const Text(
+                'Save Space',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
             ),
           ),
         ),
       ],
     );
-  }
-
-  // Removed: _rentalFloorsList / _rentalRoomsNestedList (hostel-style nesting).
-
-  Widget _spaceListTile({
-    required String emoji,
-    required String name,
-    required VoidCallback onEdit,
-    required VoidCallback onDelete,
-    bool dense = false,
-  }) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: dense ? 4 : 8),
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: dense ? 6 : 10,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: Row(
-          children: [
-            Text(emoji, style: TextStyle(fontSize: dense ? 16 : 20)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                name,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: dense ? 13 : 15,
-                ),
-              ),
-            ),
-            TextButton(onPressed: onEdit, child: const Text('Edit')),
-            IconButton(
-              icon: Icon(Icons.delete_outline, size: dense ? 18 : 20),
-              onPressed: onDelete,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showSpaceNameSheet({
-    required String title,
-    required void Function(String name) onSave,
-    String? initial,
-    String? hint,
-  }) async {
-    final ctrl = TextEditingController(text: initial ?? '');
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text('Space name',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: ctrl,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: hint ?? 'Name',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              _primaryButton(
-                label: 'Save',
-                onPressed: () {
-                  if (ctrl.text.trim().isEmpty) return;
-                  Navigator.of(ctx).pop(true);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (saved == true && ctrl.text.trim().isNotEmpty) {
-      onSave(ctrl.text.trim());
-    }
-    ctrl.dispose();
   }
 
   // ─── Step 1: Structure ─────────────────────────────────────────────────────
@@ -2183,43 +2440,66 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Breakdown',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-              ),
-              const SizedBox(height: 10),
               if (setup.isRentalHouse) ...[
+                const Text(
+                  'Property Information',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Type · Rental House',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey.shade800,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Spaces',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+                const SizedBox(height: 10),
                 ...setup.assignableRentalSpaces.map((s) {
-                  final typeLabel = switch (s.type) {
-                    RentalSpaceType.entireProperty => 'Entire Property',
-                    RentalSpaceType.floor => 'Floor',
-                    RentalSpaceType.portion => 'Floor / Portion',
-                    RentalSpaceType.room => 'Room',
-                    RentalSpaceType.shop => 'Commercial',
-                  };
+                  final rent = s.monthlyRent;
+                  final rentLabel = rent == null
+                      ? null
+                      : NumberFormat.currency(
+                          locale: 'en_IN',
+                          symbol: '₹',
+                          decimalDigits: 0,
+                        ).format(rent);
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.only(bottom: 10),
                     child: Text(
-                      '$typeLabel · ${s.name}',
+                      [
+                        s.name,
+                        s.typeLabel,
+                        if (rentLabel != null) '$rentLabel/month',
+                      ].join('\n'),
                       style: TextStyle(
                         fontSize: 14,
                         color: Colors.grey.shade800,
-                        height: 1.35,
+                        height: 1.4,
                       ),
                     ),
                   );
                 }),
                 if (setup.assignableRentalSpaces.isEmpty)
                   Text(
-                    'No spaces listed yet — you can add them after creating the property.',
+                    'No spaces yet — you can add them after creating from Dashboard → Spaces.',
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.grey.shade700,
                       height: 1.4,
                     ),
                   ),
-              ] else
+              ] else ...[
+                const Text(
+                  'Breakdown',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+                const SizedBox(height: 10),
                 ...setup.buildings.expand((building) {
                   final roomLabel = setup.isApartment ? 'Flat' : 'Room';
                   final rows = <Widget>[];
@@ -2255,6 +2535,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                   }
                   return rows;
                 }),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: const TextStyle(color: Colors.red)),
@@ -2265,7 +2546,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
           child: _primaryButton(
-            label: _creating ? 'Creating…' : '✓ Looks good',
+            label: _creating
+                ? 'Creating…'
+                : (setup.isRentalHouse ? 'Create Property' : '✓ Looks good'),
             onPressed: _creating ? null : _createProperty,
             loading: _creating,
           ),

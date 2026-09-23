@@ -1,11 +1,13 @@
 // features/auth/presentation/onboarding_screen.dart
 //
-// First-launch onboarding. Skip / finish → LoginScreen and clears isFirstTime.
+// SCREEN 2 — App intro (NOT property onboarding).
+// Shown after splash for EVERY unauthenticated startup (including after logout).
+// Skip / Get Started → existing PhoneLoginScreen (/login) only.
+// Property "Welcome to Dormly" is a separate post-auth flow.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/storage/app_prefs.dart';
 import '../../../core/theme/app_theme.dart';
 
 const _brandPurple = Color(0xFF6D28D9);
@@ -13,7 +15,6 @@ const _brandPurpleDeep = Color(0xFF5B21B6);
 const _ink = Color(0xFF111827);
 const _muted = Color(0xFF6B7280);
 const _onboardingBg = Color(0xFFF4F0FD);
-
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -34,15 +35,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     super.dispose();
   }
 
-  Future<void> _finish() async {
-    await AppPrefs.setFirstTimeCompleted();
-    if (!mounted) return;
+  /// Open the EXISTING login screen — never property welcome.
+  void _goToLogin() {
     context.go('/login');
   }
 
   void _next() {
     if (_page >= _pageCount - 1) {
-      _finish();
+      _goToLogin();
       return;
     }
     _controller.nextPage(
@@ -54,6 +54,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final isLast = _page == _pageCount - 1;
+    // Page 0 ("Your Stay, Simplified") primary CTA is Get Started → Login.
+    final showGetStarted = _page == 0 || isLast;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark.copyWith(
@@ -69,7 +71,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
-                  onPressed: _finish,
+                  onPressed: _goToLogin,
                   style: TextButton.styleFrom(
                     foregroundColor: _ink,
                     padding: const EdgeInsets.symmetric(
@@ -118,7 +120,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           ],
                         ),
                         child: FilledButton(
-                          onPressed: _next,
+                          onPressed: showGetStarted ? _goToLogin : _next,
                           style: FilledButton.styleFrom(
                             backgroundColor: _brandPurple,
                             foregroundColor: Colors.white,
@@ -128,7 +130,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             ),
                           ),
                           child: Text(
-                            isLast ? 'Get Started →' : 'Next →',
+                            showGetStarted ? 'Get Started →' : 'Next →',
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w700,
@@ -155,7 +157,6 @@ class _WelcomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Texts sit above the illustration (24px side padding only here).
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 4, 24, 0),
           child: Column(
@@ -170,9 +171,9 @@ class _WelcomePage extends StatelessWidget {
                     color: _ink,
                   ),
                   children: [
-                    TextSpan(text: 'Your Home,\n'),
+                    TextSpan(text: 'Your Stay,\n'),
                     TextSpan(
-                      text: 'Made Simple',
+                      text: 'Simplified',
                       style: TextStyle(color: _brandPurple),
                     ),
                   ],
@@ -180,7 +181,7 @@ class _WelcomePage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Manage stay, payments, complaints and more — all in one app.',
+                'Manage rent, raise complaints,\nget updates and more — all in one app.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -193,7 +194,6 @@ class _WelcomePage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        // Full-bleed image under the text: edge-to-edge width, crop empty top of PNG.
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {

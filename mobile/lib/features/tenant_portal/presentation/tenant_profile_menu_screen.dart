@@ -183,7 +183,7 @@ class TenantProfileMenuScreen extends ConsumerWidget {
             danger: true,
             onTap: () async {
               await ref.read(authRepositoryProvider).logout();
-              if (context.mounted) context.go('/login');
+              if (context.mounted) context.go('/splash');
             },
           ),
           const SizedBox(height: 16),

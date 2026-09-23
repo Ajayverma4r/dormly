@@ -1,8 +1,12 @@
 // core/routing/app_router.dart
 //
-// Redirect rule implements: existing users never see onboarding again.
-// The "has properties" check always comes from the server response, never
-// a locally cached boolean, so it can't get out of sync.
+// Unauthenticated startup:
+//   /splash → /onboarding ("Your Stay, Simplified") → /login → OTP
+//   → server decides: existing properties → dashboard | none → Welcome to Dormly
+//
+// Authenticated cold start: SplashScreen.restoreSession → dashboard.
+//
+// Property onboarding (/onboarding/welcome, create-property) is post-auth only.
 
 import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/splash_screen.dart';

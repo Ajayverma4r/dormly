@@ -1,14 +1,20 @@
 // features/auth/presentation/splash_screen.dart
 //
-// Primary first frame (Picture 2): purple gradient, logo, tagline, splash1
-// buildings, loader. Native Android launch is solid purple only (no circular
-// logo placeholder) so this screen appears as soon as Flutter paints.
+// SCREEN 1 — App splash.
+//
+// Authenticated (valid session):
+//   Splash → restoreSession → Dashboard / existing property routing
+//
+// Unauthenticated (including after logout):
+//   Splash → /onboarding ("Your Stay, Simplified") → Login
+//
+// Never skip the app intro based on AppPrefs.isFirstTime.
+// Never send unauthenticated users to property "Welcome to Dormly".
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/storage/app_prefs.dart';
 import '../data/auth_repository.dart';
 import 'login_flow.dart';
 
@@ -32,7 +38,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Future<void> _runSequence() async {
     final authRepo = ref.read(authRepositoryProvider);
     var hasSession = false;
-    var firstTime = true;
 
     final sessionFuture = authRepo.hasPersistedSession().then((v) {
       hasSession = v;
@@ -40,18 +45,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       debugPrint('Splash session read failed (non-fatal): $e');
     });
 
-    final firstTimeFuture = AppPrefs.isFirstTime().then((v) {
-      firstTime = v;
-    }).catchError((Object e) {
-      debugPrint('Splash first-time read failed (non-fatal): $e');
-      firstTime = true;
-    });
-
-    // Hold Picture 2 long enough to read branding, then navigate.
+    // Hold splash long enough to read branding, then navigate.
     await Future.delayed(const Duration(milliseconds: 2200));
-    await Future.wait([sessionFuture, firstTimeFuture]);
+    await sessionFuture;
     if (!mounted) return;
 
+    // Authenticated: restore session → dashboard (or post-auth property welcome).
     if (hasSession) {
       try {
         await restoreSession(context, ref);
@@ -63,11 +62,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       }
     }
 
-    if (firstTime) {
-      context.go('/onboarding');
-    } else {
-      context.go('/login');
-    }
+    if (!mounted) return;
+
+    // Unauthenticated: always show app intro before login.
+    context.go('/onboarding');
   }
 
   @override
@@ -82,31 +80,25 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       ),
       child: Scaffold(
         backgroundColor: _splashPurpleTop,
-        body: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [_splashPurpleTop, _splashPurpleBottom],
-            ),
-          ),
+        // Edge-to-edge: no SafeArea around the image (avoids top/bottom bars).
+        body: SizedBox.expand(
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Bottom building illustration (splash1).
-              Align(
-                alignment: Alignment.bottomCenter,
+              // Full-screen splash art — cover + bottom-aligned so buildings
+              // stay anchored and purple fills any leftover edges.
+              Positioned.fill(
                 child: Image.asset(
                   'assets/images/splash1.png',
-                  width: double.infinity,
-                  fit: BoxFit.fitWidth,
+                  fit: BoxFit.cover,
                   alignment: Alignment.bottomCenter,
                   excludeFromSemantics: true,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  errorBuilder: (_, __, ___) => const ColoredBox(
+                    color: _splashPurpleTop,
+                  ),
                 ),
               ),
+              // Logo / tagline / loader sit above the art (safe for notches).
               SafeArea(
                 child: Column(
                   children: [

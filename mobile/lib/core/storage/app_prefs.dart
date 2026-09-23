@@ -9,7 +9,10 @@ const _isFirstTimeKey = 'isFirstTime';
 class AppPrefs {
   AppPrefs._();
 
-  /// `true` until the user skips or finishes onboarding (default on first install).
+  /// `true` until historically marked complete (legacy flag).
+  ///
+  /// Startup routing no longer uses this — unauthenticated users always see
+  /// the app intro. Kept so existing installs / other code do not break.
   static Future<bool> isFirstTime() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_isFirstTimeKey) ?? true;

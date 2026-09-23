@@ -152,7 +152,8 @@ class PropertyMoreScreen extends ConsumerWidget {
             child: OutlinedButton.icon(
               onPressed: () async {
                 await ref.read(authRepositoryProvider).logout();
-                if (context.mounted) context.go('/login');
+                // Splash → app intro → login (not direct login).
+                if (context.mounted) context.go('/splash');
               },
               icon: const Icon(Icons.logout, color: AppColors.danger),
               label: const Text('Logout',
