@@ -20,6 +20,7 @@ import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show contextRoleProvide
 import 'property_dashboard_tab_screen.dart';
 import 'property_structure_tab_screen.dart';
 import 'property_more_screen.dart';
+import 'rental_spaces_tab_screen.dart';
 import '../../tenancies/presentation/residents_list_screen.dart';
 
 final propertyDetailProvider =
@@ -214,6 +215,9 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
             final canManage = isOwnerOrAdmin || role == 'manager';
             final peopleLabel =
                 _peopleLabelFor(property['property_type_key'] as String?);
+            final archetype = propertyArchetypeFromProperty(property);
+            final isRentalHouse =
+                archetype == PropertyArchetype.individualLease;
 
             final tabs = [
               // 0 — Dashboard
@@ -236,11 +240,17 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                 propertyId: widget.propertyId,
                 asTab: true,
               ),
-              // 3 — Rooms / Units (structure of the active property)
-              PropertyStructureTabScreen(
-                propertyId: widget.propertyId,
-                canManage: canManage,
-              ),
+              // 3 — Spaces (rental) or Rooms (hostel / apartment)
+              if (isRentalHouse)
+                RentalSpacesTabScreen(
+                  propertyId: widget.propertyId,
+                  canManage: canManage,
+                )
+              else
+                PropertyStructureTabScreen(
+                  propertyId: widget.propertyId,
+                  canManage: canManage,
+                ),
               // 4 — Menu
               PropertyMoreScreen(
                 propertyId: widget.propertyId,
@@ -259,38 +269,47 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                 key: const ValueKey('property-bottom-nav-v2'),
                 body: IndexedStack(index: _index, children: tabs),
                 bottomNavigationBar: NavigationBar(
-                  key: const ValueKey(
-                      'nav-bar-dashboard-tenants-payments-rooms-menu'),
+                  key: ValueKey(
+                    isRentalHouse
+                        ? 'nav-bar-dashboard-tenants-payments-spaces-menu'
+                        : 'nav-bar-dashboard-tenants-payments-rooms-menu',
+                  ),
                   selectedIndex: _index,
                   onDestinationSelected: _goToTab,
                   backgroundColor: AppColors.surface,
                   indicatorColor: AppColors.primarySoft,
-                  destinations: const [
-                    NavigationDestination(
+                  destinations: [
+                    const NavigationDestination(
                       icon: Icon(Icons.home_outlined),
                       selectedIcon:
                           Icon(Icons.home, color: AppColors.blueprint),
                       label: 'Dashboard',
                     ),
-                    NavigationDestination(
+                    const NavigationDestination(
                       icon: Icon(Icons.people_outline),
                       selectedIcon:
                           Icon(Icons.people, color: AppColors.blueprint),
                       label: 'Tenants',
                     ),
-                    NavigationDestination(
+                    const NavigationDestination(
                       icon: Icon(Icons.account_balance_wallet_outlined),
                       selectedIcon: Icon(Icons.account_balance_wallet,
                           color: AppColors.blueprint),
                       label: 'Payments',
                     ),
                     NavigationDestination(
-                      icon: Icon(Icons.meeting_room_outlined),
-                      selectedIcon: Icon(Icons.meeting_room,
-                          color: AppColors.blueprint),
-                      label: 'Rooms',
+                      icon: Icon(isRentalHouse
+                          ? Icons.home_work_outlined
+                          : Icons.meeting_room_outlined),
+                      selectedIcon: Icon(
+                        isRentalHouse
+                            ? Icons.home_work
+                            : Icons.meeting_room,
+                        color: AppColors.blueprint,
+                      ),
+                      label: isRentalHouse ? 'Spaces' : 'Rooms',
                     ),
-                    NavigationDestination(
+                    const NavigationDestination(
                       icon: Icon(Icons.menu),
                       selectedIcon:
                           Icon(Icons.menu, color: AppColors.blueprint),

@@ -32,6 +32,22 @@ function mapLevel(row: any): HierarchyLevel {
 }
 
 function mapNode(row: any): HierarchyNode {
+  const meta = row.metadata ?? {};
+  const spaceType =
+    row.space_type ??
+    (typeof meta.space_type === 'string' ? meta.space_type : null);
+  const monthlyRent =
+    row.monthly_rent != null
+      ? Number(row.monthly_rent)
+      : typeof meta.monthly_rent === 'number'
+        ? meta.monthly_rent
+        : null;
+  const securityDeposit =
+    row.security_deposit != null
+      ? Number(row.security_deposit)
+      : typeof meta.security_deposit === 'number'
+        ? meta.security_deposit
+        : null;
   return {
     id: row.id,
     propertyId: row.property_id,
@@ -41,7 +57,10 @@ function mapNode(row: any): HierarchyNode {
     code: row.code,
     orderIndex: row.order_index,
     isActive: row.is_active,
-    metadata: row.metadata ?? {},
+    spaceType: spaceType ?? null,
+    monthlyRent,
+    securityDeposit,
+    metadata: meta,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -145,19 +164,106 @@ export class PgHierarchyNodeRepository implements HierarchyNodeRepository {
   }
 
   async create(input: CreateHierarchyNodeInput & { orderIndex: number }): Promise<HierarchyNode> {
-    const rows = await query(
-      `INSERT INTO hierarchy_nodes (property_id, level_id, parent_node_id, name, code, order_index, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [input.propertyId, input.levelId, input.parentNodeId ?? null, input.name, input.code ?? null, input.orderIndex, input.metadata ?? {}],
-    );
-    return mapNode(rows[0]);
+    const spaceType =
+      input.spaceType ??
+      (typeof input.metadata?.space_type === 'string'
+        ? (input.metadata.space_type as string)
+        : null);
+    const monthlyRent =
+      input.monthlyRent ??
+      (typeof input.metadata?.monthly_rent === 'number'
+        ? (input.metadata.monthly_rent as number)
+        : null);
+    const securityDeposit =
+      input.securityDeposit ??
+      (typeof input.metadata?.security_deposit === 'number'
+        ? (input.metadata.security_deposit as number)
+        : null);
+    const metadata = {
+      ...(input.metadata ?? {}),
+      ...(spaceType ? { space_type: spaceType } : {}),
+      ...(monthlyRent != null ? { monthly_rent: monthlyRent } : {}),
+      ...(securityDeposit != null ? { security_deposit: securityDeposit } : {}),
+    };
+    try {
+      const rows = await query(
+        `INSERT INTO hierarchy_nodes
+          (property_id, level_id, parent_node_id, name, code, order_index, metadata,
+           space_type, monthly_rent, security_deposit)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [
+          input.propertyId,
+          input.levelId,
+          input.parentNodeId ?? null,
+          input.name,
+          input.code ?? null,
+          input.orderIndex,
+          metadata,
+          spaceType,
+          monthlyRent,
+          securityDeposit,
+        ],
+      );
+      return mapNode(rows[0]);
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      // Fallback when pricing columns (024) are not yet applied.
+      if (msg.includes('monthly_rent') || msg.includes('security_deposit')) {
+        try {
+          const rows = await query(
+            `INSERT INTO hierarchy_nodes
+              (property_id, level_id, parent_node_id, name, code, order_index, metadata, space_type)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [
+              input.propertyId,
+              input.levelId,
+              input.parentNodeId ?? null,
+              input.name,
+              input.code ?? null,
+              input.orderIndex,
+              metadata,
+              spaceType,
+            ],
+          );
+          return mapNode(rows[0]);
+        } catch (err2: any) {
+          const msg2 = String(err2?.message ?? err2);
+          if (!msg2.includes('space_type')) throw err2;
+        }
+      } else if (!msg.includes('space_type')) {
+        throw err;
+      }
+      // Fallback when migration 022 (space_type column) is not yet applied.
+      const rows = await query(
+        `INSERT INTO hierarchy_nodes
+          (property_id, level_id, parent_node_id, name, code, order_index, metadata)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [
+          input.propertyId,
+          input.levelId,
+          input.parentNodeId ?? null,
+          input.name,
+          input.code ?? null,
+          input.orderIndex,
+          metadata,
+        ],
+      );
+      return mapNode(rows[0]);
+    }
   }
 
   async update(id: string, input: UpdateHierarchyNodeInput): Promise<HierarchyNode> {
     const fields: string[] = [];
     const values: any[] = [];
     let i = 1;
-    const columnMap: Record<string, string> = { name: 'name', code: 'code', isActive: 'is_active', metadata: 'metadata' };
+    const columnMap: Record<string, string> = {
+      name: 'name',
+      code: 'code',
+      isActive: 'is_active',
+      metadata: 'metadata',
+      monthlyRent: 'monthly_rent',
+      securityDeposit: 'security_deposit',
+    };
     for (const [key, column] of Object.entries(columnMap)) {
       const value = (input as any)[key];
       if (value !== undefined) {

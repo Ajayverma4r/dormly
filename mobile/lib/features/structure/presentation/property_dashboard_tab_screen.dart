@@ -22,6 +22,7 @@ import '../../expenses/presentation/add_expense_sheet.dart';
 import '../../expenses/presentation/expense_history_screen.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
 import '../../notifications/presentation/notifications_providers.dart';
+import '../../properties/domain/property_archetype.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
@@ -99,10 +100,11 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     return '₹${value.toStringAsFixed(0)}';
   }
 
-  String _availableUnitsLabel(int vacant) {
+  String _availableUnitsLabel(int vacant, {required bool isRentalHouse}) {
+    final unit = isRentalHouse ? 'Space' : 'Room';
     if (vacant == 0) return 'Fully occupied';
-    if (vacant == 1) return '1 Room Empty';
-    return '$vacant Rooms Empty';
+    if (vacant == 1) return '1 $unit Empty';
+    return '$vacant ${unit}s Empty';
   }
 
   String _occupancyPrimary(HeroStats hero) {
@@ -396,6 +398,9 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                 final overview = dashboard.overview;
                 final insights = dashboard.actionableInsights;
                 final attentionAlerts = _buildAttentionAlerts(dashboard);
+                final isRentalHouse =
+                    propertyArchetypeFromProperty(property) ==
+                        PropertyArchetype.individualLease;
 
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -405,8 +410,10 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       subtitle: _propertySubtitle(property),
                       isOccupied: hero.occupiedUnits > 0,
                       occupancyPrimary: _occupancyPrimary(hero),
-                      occupancySubtitle:
-                          _availableUnitsLabel(hero.availableUnits),
+                      occupancySubtitle: _availableUnitsLabel(
+                        hero.availableUnits,
+                        isRentalHouse: isRentalHouse,
+                      ),
                       rentalValueLabel: 'Active Monthly Rent',
                       rentalValue: _formatCurrency(hero.expectedMonthlyRent),
                       propertyId: propertyId,
@@ -521,6 +528,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
                       propertyId: propertyId,
                       noticeCount: insights.upcomingVacancies,
                       items: insights.upcomingVacancyItems,
+                      isRentalHouse: isRentalHouse,
                     ),
                   ],
                 );
@@ -1776,12 +1784,23 @@ class _UpcomingVacanciesCard extends ConsumerWidget {
   final String propertyId;
   final int noticeCount;
   final List<UpcomingVacancy> items;
+  final bool isRentalHouse;
 
   const _UpcomingVacanciesCard({
     required this.propertyId,
     required this.noticeCount,
     this.items = const [],
+    this.isRentalHouse = false,
   });
+
+  String _placeLabel(UpcomingVacancy v) {
+    final place = v.room.trim();
+    if (place.isEmpty) return isRentalHouse ? 'Space' : 'Room';
+    // Avoid "Room Ground Floor" when place is already a full space name.
+    if (isRentalHouse) return place;
+    if (place.toLowerCase().startsWith('room')) return place;
+    return 'Room $place';
+  }
 
   Future<List<UpcomingVacancy>> _resolveItems(WidgetRef ref) async {
     if (items.isNotEmpty) return items;
@@ -1943,7 +1962,7 @@ class _UpcomingVacanciesCard extends ConsumerWidget {
                           ),
                         ),
                         subtitle: Text(
-                          'Room ${v.room} · moving out $dayLabel'
+                          '${_placeLabel(v)} · moving out $dayLabel'
                           '${v.isEmergency ? ' · Emergency' : ''}',
                           style: const TextStyle(
                             fontSize: 12,
@@ -1979,10 +1998,10 @@ class _UpcomingVacanciesCard extends ConsumerWidget {
           : days == 1
               ? 'in 1 day'
               : 'in $days days';
-      return '${v.name} • Room ${v.room} moving out $dayLabel';
+      return '${v.name} • ${_placeLabel(v)} moving out $dayLabel';
     }
     final first = items.first;
-    return '${first.name} • Room ${first.room} +${items.length - 1} more moving out';
+    return '${first.name} • ${_placeLabel(first)} +${items.length - 1} more moving out';
   }
 
   @override

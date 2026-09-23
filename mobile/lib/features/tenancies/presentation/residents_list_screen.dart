@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../data/tenancy_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../properties/domain/property_archetype.dart';
+import '../../structure/presentation/property_shell_screen.dart'
+    show propertyDetailProvider;
 import 'add_tenant_screen.dart';
 import 'tenant_profile_screen.dart';
 import 'tenancy_providers.dart';
@@ -130,6 +133,10 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
     final residentsAsync =
         ref.watch(propertyResidentsProvider(widget.propertyId));
     final baseUrl = ref.watch(tenancyRepositoryProvider).baseUrl;
+    final property = ref.watch(propertyDetailProvider(widget.propertyId)).asData?.value;
+    final isRentalHouse = property != null &&
+        propertyArchetypeFromProperty(property) ==
+            PropertyArchetype.individualLease;
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -195,7 +202,9 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
                                 onTap: () => Navigator.pop(ctx),
                               ),
                               ListTile(
-                                title: const Text('Sort by room'),
+                                title: Text(isRentalHouse
+                                    ? 'Sort by space'
+                                    : 'Sort by room'),
                                 onTap: () => Navigator.pop(ctx),
                               ),
                             ],
@@ -215,9 +224,9 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
                   onSelected: (f) => _setFilter(f, totalPages),
                 ),
                 const SizedBox(height: 8),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12),
-                  child: _TableHeaderRow(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: _TableHeaderRow(isRentalHouse: isRentalHouse),
                 ),
                 Expanded(
                   child: filtered.isEmpty
@@ -237,6 +246,7 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
                             return _GuestListRow(
                               resident: r,
                               baseUrl: baseUrl,
+                              isRentalHouse: isRentalHouse,
                               onTap: () => _openGuestDetail(r),
                             );
                           },
@@ -499,7 +509,9 @@ class _FilterPill extends StatelessWidget {
 }
 
 class _TableHeaderRow extends StatelessWidget {
-  const _TableHeaderRow();
+  final bool isRentalHouse;
+
+  const _TableHeaderRow({this.isRentalHouse = false});
 
   @override
   Widget build(BuildContext context) {
@@ -508,14 +520,20 @@ class _TableHeaderRow extends StatelessWidget {
       color: AppColors.slate,
       fontWeight: FontWeight.w500,
     );
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Expanded(flex: 4, child: Text('Guest', style: style)),
-          Expanded(flex: 2, child: Text('Room', style: style)),
-          Expanded(flex: 3, child: Text('Floor', style: style)),
-          Expanded(flex: 3, child: Text('Status', style: style)),
+          const Expanded(flex: 4, child: Text('Guest', style: style)),
+          Expanded(
+            flex: 2,
+            child: Text(isRentalHouse ? 'Space' : 'Room', style: style),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(isRentalHouse ? 'Location' : 'Floor', style: style),
+          ),
+          const Expanded(flex: 3, child: Text('Status', style: style)),
         ],
       ),
     );
@@ -525,12 +543,14 @@ class _TableHeaderRow extends StatelessWidget {
 class _GuestListRow extends StatelessWidget {
   final Map<String, dynamic> resident;
   final String baseUrl;
+  final bool isRentalHouse;
   final VoidCallback onTap;
 
   const _GuestListRow({
     required this.resident,
     required this.baseUrl,
     required this.onTap,
+    this.isRentalHouse = false,
   });
 
   @override
@@ -540,12 +560,15 @@ class _GuestListRow extends StatelessWidget {
     final room = resident['node_name']?.toString() ?? '—';
     final floor = _formatFloor(
       resident['floor_name'] ?? resident['floorName'],
+      isRentalHouse: isRentalHouse,
     );
     final status = _resolveDisplayStatus(resident);
     final photoUrl = _photoUrl(resident, baseUrl);
     final initials = _initials(name);
     final isCheckedOut = status == _GuestDisplayStatus.checkedOut;
-    final staySummary = isCheckedOut ? _checkedOutStaySummary(resident) : null;
+    final staySummary = isCheckedOut
+        ? _checkedOutStaySummary(resident, isRentalHouse: isRentalHouse)
+        : null;
 
     return Material(
       color: AppColors.surface,
@@ -610,7 +633,10 @@ class _GuestListRow extends StatelessWidget {
                 Expanded(
                   flex: 5,
                   child: Text(
-                    staySummary ?? 'Stayed in Room $room',
+                    staySummary ??
+                        (isRentalHouse
+                            ? 'Stayed in $room'
+                            : 'Stayed in Room $room'),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -787,23 +813,28 @@ String _formatPhone(String raw) {
   return raw.isEmpty ? '—' : raw;
 }
 
-String _formatFloor(dynamic raw) {
+String _formatFloor(dynamic raw, {bool isRentalHouse = false}) {
   if (raw == null || raw.toString().trim().isEmpty) return '—';
   final name = raw.toString().trim();
+  if (isRentalHouse) return name;
   if (name.toLowerCase().contains('floor')) return name;
   return '$name Floor';
 }
 
-String _checkedOutStaySummary(Map<String, dynamic> r) {
+String _checkedOutStaySummary(
+  Map<String, dynamic> r, {
+  bool isRentalHouse = false,
+}) {
   final room = (r['node_name'] ?? r['nodeName'])?.toString().trim();
   final roomLabel =
       (room == null || room.isEmpty) ? '—' : room;
   final leftRaw = r['move_out_at'] ?? r['moveOutAt'] ?? r['updated_at'];
   final leftLabel = _formatShortDate(leftRaw);
-  if (leftLabel == null) {
-    return 'Stayed in Room $roomLabel';
-  }
-  return 'Stayed in Room $roomLabel • Left on $leftLabel';
+  final stayed = isRentalHouse
+      ? 'Stayed in $roomLabel'
+      : 'Stayed in Room $roomLabel';
+  if (leftLabel == null) return stayed;
+  return '$stayed • Left on $leftLabel';
 }
 
 String? _formatShortDate(dynamic raw) {

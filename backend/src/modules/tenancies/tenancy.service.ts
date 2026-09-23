@@ -10,7 +10,10 @@ import { ensureNotificationsSchema } from '@modules/notifications/move-out-notif
 
 interface CreateTenancyInput {
   propertyId: string;
-  nodeId: string;
+  /** Existing hierarchy node. Optional when [unitName] is provided (rental houses). */
+  nodeId?: string;
+  /** Free-text portion/unit label — resolved or created on the fly. */
+  unitName?: string;
   phone: string;
   fullName: string;
   email?: string;
@@ -141,7 +144,8 @@ export class TenancyService {
   }
 
   async create(input: CreateTenancyInput) {
-    await this.assertNodeAssignable(input.propertyId, input.nodeId);
+    const nodeId = await this.resolveNodeId(input);
+    await this.assertNodeAssignable(input.propertyId, nodeId);
 
     let user = (await query<{ id: string }>(`SELECT id FROM users WHERE phone = $1`, [input.phone]))[0];
     if (!user) {
@@ -162,7 +166,7 @@ export class TenancyService {
         [
           user.id,
           input.propertyId,
-          input.nodeId,
+          nodeId,
           input.fullName,
           input.email ?? null,
           input.address ?? null,
@@ -194,7 +198,7 @@ export class TenancyService {
         [
           user.id,
           input.propertyId,
-          input.nodeId,
+          nodeId,
           input.fullName,
           input.email ?? null,
           input.address ?? null,
@@ -206,6 +210,152 @@ export class TenancyService {
         ],
       );
       return tenancy;
+    }
+  }
+
+  /**
+   * Resolves the hierarchy node for a new tenancy.
+   * - Prefer explicit [nodeId] when provided.
+   * - Otherwise find-or-create a unit node by [unitName] (tenant-first rental flow).
+   */
+  private async resolveNodeId(input: CreateTenancyInput): Promise<string> {
+    const explicit = input.nodeId?.trim();
+    if (explicit) return explicit;
+
+    const unitName = input.unitName?.trim();
+    if (!unitName) {
+      throw new Error('Select or add what they are renting.');
+    }
+
+    return this.findOrCreateUnitNode(input.propertyId, unitName);
+  }
+
+  /**
+   * Finds an occupancy unit by name (case-insensitive) or creates it under the
+   * property root. Used for rental-house "tenant-first" onboarding.
+   */
+  private async findOrCreateUnitNode(
+    propertyId: string,
+    unitName: string,
+  ): Promise<string> {
+    const levels = await query<{
+      id: string;
+      internal_key: string;
+      supports_occupancy: boolean;
+      parent_level_id: string | null;
+      order_index: number;
+    }>(
+      `SELECT id, internal_key, supports_occupancy, parent_level_id, order_index
+       FROM hierarchy_levels
+       WHERE property_id = $1 AND is_enabled = true
+       ORDER BY order_index ASC`,
+      [propertyId],
+    );
+
+    if (levels.length === 0) {
+      throw new Error('This property has no structure levels configured.');
+    }
+
+    const unitLevel =
+      levels.find((l) => l.internal_key === 'unit') ??
+      levels.find((l) => l.supports_occupancy) ??
+      levels[levels.length - 1];
+
+    const existing = await query<{ id: string }>(
+      `SELECT id FROM hierarchy_nodes
+       WHERE property_id = $1
+         AND level_id = $2
+         AND lower(trim(name)) = lower(trim($3))
+       LIMIT 1`,
+      [propertyId, unitLevel.id, unitName],
+    );
+    if (existing[0]) return existing[0].id;
+
+    // Parent: nearest enabled ancestor level's first node (create property root if needed).
+    let parentNodeId: string | null = null;
+    if (unitLevel.parent_level_id) {
+      const parentLevel = levels.find((l) => l.id === unitLevel.parent_level_id);
+      if (parentLevel) {
+        const parents = await query<{ id: string }>(
+          `SELECT id FROM hierarchy_nodes
+           WHERE property_id = $1 AND level_id = $2
+           ORDER BY order_index ASC, created_at ASC
+           LIMIT 1`,
+          [propertyId, parentLevel.id],
+        );
+        if (parents[0]) {
+          parentNodeId = parents[0].id;
+        } else {
+          const prop = await query<{ name: string }>(
+            `SELECT name FROM properties WHERE id = $1`,
+            [propertyId],
+          );
+          const rootName = prop[0]?.name?.trim() || 'Main Property';
+          const siblingCount = await query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM hierarchy_nodes
+             WHERE level_id = $1 AND parent_node_id IS NULL`,
+            [parentLevel.id],
+          );
+          const [root] = await query<{ id: string }>(
+            `INSERT INTO hierarchy_nodes
+              (property_id, level_id, parent_node_id, name, order_index, metadata)
+             VALUES ($1,$2,NULL,$3,$4,$5)
+             RETURNING id`,
+            [
+              propertyId,
+              parentLevel.id,
+              rootName,
+              Number(siblingCount[0]?.count ?? 0),
+              {},
+            ],
+          );
+          parentNodeId = root.id;
+        }
+      }
+    }
+
+    const siblingCount = await query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM hierarchy_nodes
+       WHERE level_id = $1
+         AND (($2::uuid IS NULL AND parent_node_id IS NULL) OR parent_node_id = $2)`,
+      [unitLevel.id, parentNodeId],
+    );
+
+    try {
+      const [created] = await query<{ id: string }>(
+        `INSERT INTO hierarchy_nodes
+          (property_id, level_id, parent_node_id, name, order_index, metadata, space_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id`,
+        [
+          propertyId,
+          unitLevel.id,
+          parentNodeId,
+          unitName,
+          Number(siblingCount[0]?.count ?? 0),
+          { space_type: 'portion' },
+          'portion',
+        ],
+      );
+      return created.id;
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (!msg.includes('space_type')) throw err;
+      const [created] = await query<{ id: string }>(
+        `INSERT INTO hierarchy_nodes
+          (property_id, level_id, parent_node_id, name, order_index, metadata)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING id`,
+        [
+          propertyId,
+          unitLevel.id,
+          parentNodeId,
+          unitName,
+          Number(siblingCount[0]?.count ?? 0),
+          { space_type: 'portion' },
+        ],
+      );
+      return created.id;
     }
   }
 

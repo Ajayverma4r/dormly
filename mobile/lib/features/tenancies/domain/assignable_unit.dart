@@ -10,6 +10,9 @@ class AssignableUnit {
   final String levelName;
   final String pathLabel;
   final bool occupied;
+  final double? monthlyRent;
+  final double? securityDeposit;
+  final String? tenantName;
 
   const AssignableUnit({
     required this.nodeId,
@@ -17,6 +20,9 @@ class AssignableUnit {
     required this.levelName,
     required this.pathLabel,
     required this.occupied,
+    this.monthlyRent,
+    this.securityDeposit,
+    this.tenantName,
   });
 }
 

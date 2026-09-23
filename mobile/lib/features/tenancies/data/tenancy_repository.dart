@@ -119,7 +119,8 @@ class TenancyRepository {
 
   Future<Map<String, dynamic>> create(
     String propertyId, {
-    required String nodeId,
+    String? nodeId,
+    String? unitName,
     required String phone,
     required String fullName,
     String? email,
@@ -132,11 +133,24 @@ class TenancyRepository {
     double? monthlyRent,
     bool? includePastRentArrears,
   }) async {
+    final trimmedNode = nodeId?.trim();
+    final trimmedUnit = unitName?.trim();
+    if ((trimmedNode == null || trimmedNode.isEmpty) &&
+        (trimmedUnit == null || trimmedUnit.isEmpty)) {
+      throw ArgumentError('nodeId or unitName is required');
+    }
+
     final body = <String, dynamic>{
-      'nodeId': nodeId,
       'phone': phone,
       'fullName': fullName,
     };
+    if (trimmedNode != null && trimmedNode.isNotEmpty) {
+      body['nodeId'] = trimmedNode;
+    }
+    if (trimmedUnit != null && trimmedUnit.isNotEmpty) {
+      body['unitName'] = trimmedUnit;
+      body['portionName'] = trimmedUnit;
+    }
     if (email != null) body['email'] = email;
     if (address != null) body['address'] = address;
     if (companyName != null) body['companyName'] = companyName;

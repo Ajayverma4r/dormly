@@ -15,6 +15,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/image_compress.dart';
 import '../../billing/data/billing_repository.dart';
 import '../../billing/presentation/whatsapp_reminder.dart';
+import '../../properties/domain/property_archetype.dart';
 import '../../structure/presentation/property_shell_screen.dart'
     show propertyDetailProvider;
 import '../data/tenancy_repository.dart';
@@ -361,6 +362,10 @@ class _CheckoutSettlementSheetState
         tenancy: widget.tenancy,
         settlement: settled,
         propertyName: propertyName,
+        isRentalHouse: propertyArchetypeFromProperty(
+              ref.read(propertyDetailProvider(widget.propertyId)).asData?.value,
+            ) ==
+            PropertyArchetype.individualLease,
       );
     } catch (e) {
       if (mounted) {
@@ -386,10 +391,15 @@ class _CheckoutSettlementSheetState
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
     final draft = _draft;
     final name = widget.tenancy['full_name']?.toString() ?? 'Tenant';
+    final property =
+        ref.watch(propertyDetailProvider(widget.propertyId)).asData?.value;
+    final isRentalHouse = property != null &&
+        propertyArchetypeFromProperty(property) ==
+            PropertyArchetype.individualLease;
     final room =
         (widget.tenancy['node_name'] ?? widget.tenancy['nodeName'])
                 ?.toString() ??
-            'Room';
+            (isRentalHouse ? 'Space' : 'Room');
     final net = draft.netAmount;
     final isRefund = draft.isRefund;
 
@@ -577,7 +587,11 @@ class _CheckoutSettlementSheetState
               ],
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Room cleaning / sanitization'),
+                title: Text(
+                  isRentalHouse
+                      ? 'Space cleaning / sanitization'
+                      : 'Room cleaning / sanitization',
+                ),
                 subtitle: Text(
                   _cleaningOn
                       ? 'Charge applied'
@@ -835,6 +849,7 @@ Future<void> showSettlementReceiptDialog({
   required Map<String, dynamic> tenancy,
   required TenantSettlement settlement,
   required String propertyName,
+  bool isRentalHouse = false,
 }) {
   return showDialog(
     context: context,
@@ -842,6 +857,7 @@ Future<void> showSettlementReceiptDialog({
       tenancy: tenancy,
       settlement: settlement,
       propertyName: propertyName,
+      isRentalHouse: isRentalHouse,
     ),
   );
 }
@@ -850,11 +866,13 @@ class _SettlementReceiptDialog extends StatelessWidget {
   final Map<String, dynamic> tenancy;
   final TenantSettlement settlement;
   final String propertyName;
+  final bool isRentalHouse;
 
   const _SettlementReceiptDialog({
     required this.tenancy,
     required this.settlement,
     required this.propertyName,
+    this.isRentalHouse = false,
   });
 
   String get _message {
@@ -870,11 +888,15 @@ class _SettlementReceiptDialog extends StatelessWidget {
     final refId = settlement.txnReferenceId?.trim();
     final refPart =
         (refId == null || refId.isEmpty) ? '' : ' (Ref: $refId)';
+    final spaceLabel = isRentalHouse ? 'Space' : 'Room';
+    final keysLine = isRentalHouse
+        ? 'All keys received & accounts cleared.'
+        : 'All room keys received & accounts cleared.';
 
     return '''
 *Dormly - Final Settlement Summary & NOC*
 Property: $propertyName
-Tenant: $name | Room: $room
+Tenant: $name | $spaceLabel: $room
 Move-in: ${moveIn ?? '—'} | Move-out: ${moveOut ?? '—'}
 --------------------------------
 Security Deposit: ${_currency.format(settlement.originalDeposit)}
@@ -887,7 +909,7 @@ Deductions:
 *Final Net $netLabel: ${_currency.format(settlement.netAmount.abs())}*
 Status: Settled via $mode$refPart
 
-All room keys received & accounts cleared.
+$keysLine
 '''.trim();
   }
 

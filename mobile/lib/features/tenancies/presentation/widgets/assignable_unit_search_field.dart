@@ -44,7 +44,7 @@ class AssignableUnitSearchField extends StatelessWidget {
           controller: controller,
           focusNode: focusNode,
           decoration: InputDecoration(
-            labelText: 'Unit *',
+            labelText: 'Space *',
             hintText: 'Search by building, room, bed…',
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             suffixIcon: const Icon(Icons.search),

@@ -88,13 +88,20 @@ class StructureRepository {
     required String name,
     String? code,
     Map<String, dynamic>? metadata,
+    double? monthlyRent,
+    double? securityDeposit,
   }) async {
     final res = await _client.dio.post('/v1/properties/$propertyId/structure/nodes', data: {
       'levelId': levelId,
       'parentNodeId': parentNodeId,
       'name': name,
       'code': code,
-      if (metadata != null) 'metadata': metadata,
+      if (monthlyRent != null) 'monthlyRent': monthlyRent,
+      if (securityDeposit != null) 'securityDeposit': securityDeposit,
+      if (metadata != null) ...{
+        'metadata': metadata,
+        if (metadata['space_type'] != null) 'spaceType': metadata['space_type'],
+      },
     });
     return Map<String, dynamic>.from(res.data['data']);
   }
@@ -103,6 +110,26 @@ class StructureRepository {
     final res = await _client.dio.patch('/v1/properties/$propertyId/structure/nodes/$nodeId', data: {
       'name': name,
     });
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
+  Future<Map<String, dynamic>> updateNode(
+    String propertyId,
+    String nodeId, {
+    String? name,
+    double? monthlyRent,
+    double? securityDeposit,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final res = await _client.dio.patch(
+      '/v1/properties/$propertyId/structure/nodes/$nodeId',
+      data: {
+        if (name != null) 'name': name,
+        if (monthlyRent != null) 'monthlyRent': monthlyRent,
+        if (securityDeposit != null) 'securityDeposit': securityDeposit,
+        if (metadata != null) 'metadata': metadata,
+      },
+    );
     return Map<String, dynamic>.from(res.data['data']);
   }
 

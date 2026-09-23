@@ -67,7 +67,9 @@ export const uploadTenantDocumentMiddleware = multer({
 const service = new TenancyService();
 
 const createSchema = z.object({
-  nodeId: z.string().uuid(),
+  nodeId: z.string().uuid().optional(),
+  unitName: z.string().min(1).optional(),
+  portionName: z.string().min(1).optional(), // alias for unitName
   phone: z.string().min(6),
   fullName: z.string().min(1),
   email: z.string().email().optional(),
@@ -81,8 +83,22 @@ const createSchema = z.object({
   monthly_rent: z.number().min(0).optional(),
   includePastRentArrears: z.boolean().optional(),
   include_past_rent_arrears: z.boolean().optional(),
+}).superRefine((data, ctx) => {
+  const hasNode = Boolean(data.nodeId);
+  const hasUnit = Boolean(
+    (data.unitName && data.unitName.trim()) ||
+      (data.portionName && data.portionName.trim()),
+  );
+  if (!hasNode && !hasUnit) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide nodeId or unitName (property portion / unit).',
+      path: ['unitName'],
+    });
+  }
 }).transform((data) => ({
   nodeId: data.nodeId,
+  unitName: data.unitName?.trim() || data.portionName?.trim() || undefined,
   phone: data.phone,
   fullName: data.fullName,
   email: data.email,

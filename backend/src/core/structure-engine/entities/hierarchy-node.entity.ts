@@ -13,6 +13,11 @@ export interface HierarchyNode {
   code: string | null;
   orderIndex: number;
   isActive: boolean;
+  /** Rental space kind when applicable. */
+  spaceType?: 'entire_property' | 'floor' | 'portion' | 'room' | 'shop' | null;
+  /** Default pricing for rental spaces (pre-fills tenancy). */
+  monthlyRent?: number | null;
+  securityDeposit?: number | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -24,6 +29,9 @@ export interface CreateHierarchyNodeInput {
   parentNodeId?: string | null;
   name: string;
   code?: string | null;
+  spaceType?: 'entire_property' | 'floor' | 'portion' | 'room' | 'shop' | null;
+  monthlyRent?: number | null;
+  securityDeposit?: number | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -31,6 +39,8 @@ export interface UpdateHierarchyNodeInput {
   name?: string;
   code?: string | null;
   isActive?: boolean;
+  monthlyRent?: number | null;
+  securityDeposit?: number | null;
   metadata?: Record<string, unknown>;
 }
 

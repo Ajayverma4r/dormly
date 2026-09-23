@@ -14,6 +14,9 @@ import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
 import '../../billing/presentation/tenant_ledger_sheet.dart';
 import '../../billing/presentation/whatsapp_reminder.dart';
+import '../../properties/domain/property_archetype.dart';
+import '../../structure/presentation/property_shell_screen.dart'
+    show propertyDetailProvider;
 import '../data/tenancy_repository.dart';
 import 'add_tenant_screen.dart';
 import 'checkout_settlement_sheet.dart';
@@ -273,6 +276,11 @@ class _ProfileBody extends ConsumerWidget {
     );
     final docsAsync =
         ref.watch(tenancyDocumentsProvider((propertyId, _tenancyId)));
+    final property =
+        ref.watch(propertyDetailProvider(propertyId)).asData?.value;
+    final isRentalHouse = property != null &&
+        propertyArchetypeFromProperty(property) ==
+            PropertyArchetype.individualLease;
 
     final name = tenancy['full_name']?.toString() ?? '—';
     final phone = tenancy['phone']?.toString() ?? '—';
@@ -318,8 +326,11 @@ class _ProfileBody extends ConsumerWidget {
             title: 'Stay details',
             child: Column(
               children: [
-                _kv('Room / unit', room),
-                if (bed != null && bed.trim().isNotEmpty && bed != room)
+                _kv(isRentalHouse ? 'Space' : 'Room / unit', room),
+                if (!isRentalHouse &&
+                    bed != null &&
+                    bed.trim().isNotEmpty &&
+                    bed != room)
                   _kv('Bed', bed),
                 _kv('Move-in', moveIn ?? '—'),
                 if (_isEnded) _kv('Move-out', moveOut ?? '—'),
@@ -541,10 +552,16 @@ class _ProfileBody extends ConsumerWidget {
                   foregroundColor: Colors.white,
                 ),
                 onPressed: () => _reAdmit(context, ref),
-                icon: const Icon(Icons.meeting_room_outlined),
-                label: const Text(
-                  'Re-Admit / Assign New Room',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                icon: Icon(
+                  isRentalHouse
+                      ? Icons.home_work_outlined
+                      : Icons.meeting_room_outlined,
+                ),
+                label: Text(
+                  isRentalHouse
+                      ? 'Re-Admit / Assign New Space'
+                      : 'Re-Admit / Assign New Room',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
             ),
@@ -588,6 +605,12 @@ class _ProfileBody extends ConsumerWidget {
   }) async {
     final tenancyId = tenancy['id']?.toString() ?? '';
     if (tenancyId.isEmpty) return;
+    final property =
+        ref.read(propertyDetailProvider(propertyId)).asData?.value;
+    final isRentalHouse = property != null &&
+        propertyArchetypeFromProperty(property) ==
+            PropertyArchetype.individualLease;
+    final spaceFallback = isRentalHouse ? 'Space' : 'Room';
     List<Map<String, dynamic>> invoices = const [];
     try {
       invoices =
@@ -600,8 +623,8 @@ class _ProfileBody extends ConsumerWidget {
       propertyId: propertyId,
       tenancyId: tenancyId,
       tenantName: tenancy['full_name']?.toString() ?? 'Tenant',
-      roomLabel:
-          (tenancy['node_name'] ?? tenancy['nodeName'])?.toString() ?? 'Room',
+      roomLabel: (tenancy['node_name'] ?? tenancy['nodeName'])?.toString() ??
+          spaceFallback,
       phone: tenancy['phone']?.toString(),
       allInvoices: invoices,
     );

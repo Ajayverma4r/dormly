@@ -1,5 +1,5 @@
 -- seed_property_types.sql
--- 3-archetype catalog only. Copied into hierarchy_levels at property create.
+-- 3-archetype catalog only. Idempotent: safe to re-run without creating duplicates.
 
 INSERT INTO property_types (key, display_name, description, icon) VALUES
     ('hostel_pg',    'Hostel / PG',     'Shared living — hostels, PGs, and co-living', 'bed'),
@@ -9,6 +9,10 @@ ON CONFLICT (key) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     description  = EXCLUDED.description,
     icon         = EXCLUDED.icon;
+
+-- Clear existing templates for the 3 keys, then re-seed a single clean chain each.
+DELETE FROM property_type_level_templates
+WHERE property_type_key IN ('hostel_pg', 'apartment', 'rental_house');
 
 -- hostel_pg: Building > Floor > Room > Bed
 WITH b AS (
