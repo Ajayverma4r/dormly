@@ -31,7 +31,9 @@ import '../../tenancies/presentation/pending_kyc_sheet.dart';
 import '../../billing/presentation/whatsapp_reminder.dart';
 import '../../tenancies/data/tenancy_repository.dart';
 import '../../tenancies/presentation/tenant_profile_screen.dart';
-import 'dynamic_dashboard/dynamic_dashboard_screen.dart' show activityProvider;
+import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
+    show activityProvider, hierarchyLevelsProvider;
+import 'hostel_pg_dashboard_body.dart';
 import 'property_shell_screen.dart' show propertyDetailProvider;
 
 class PropertyDashboardTabScreen extends ConsumerWidget {
@@ -100,8 +102,13 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     return '₹${value.toStringAsFixed(0)}';
   }
 
-  String _availableUnitsLabel(int vacant, {required bool isRentalHouse}) {
-    final unit = isRentalHouse ? 'Space' : 'Room';
+  String _availableUnitsLabel(int vacant, {required PropertyArchetype archetype}) {
+    final unit = switch (archetype) {
+      PropertyArchetype.individualLease => 'Space',
+      // Hostel/PG hero stats count beds (supports_occupancy leaf), not rooms.
+      PropertyArchetype.sharedLiving => 'Bed',
+      PropertyArchetype.gatedCommunity => 'Flat',
+    };
     if (vacant == 0) return 'Fully occupied';
     if (vacant == 1) return '1 $unit Empty';
     return '$vacant ${unit}s Empty';
@@ -287,6 +294,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ref.invalidate(propertyDetailProvider(propertyId));
     ref.invalidate(myProfileProvider);
     ref.invalidate(unreadNotificationsCountProvider);
+    ref.invalidate(hierarchyLevelsProvider(propertyId));
 
     await Future.wait<Object>([
       ref.read(propertyDashboardProvider(propertyId).future).catchError((_) =>
@@ -325,358 +333,51 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dashboardAsync = ref.watch(propertyDashboardProvider(propertyId));
-    final activityAsync = ref.watch(activityProvider(propertyId));
     final propertyAsync = ref.watch(propertyDetailProvider(propertyId));
     final profileAsync = ref.watch(myProfileProvider);
     final notificationsAsync = ref.watch(unreadNotificationsCountProvider);
 
     final property = propertyAsync.valueOrNull;
-    final propertyTypeKey = property?['property_type_key'] as String?;
     final displayName = property?['name']?.toString() ?? propertyName;
-
     final notificationCount = notificationsAsync.valueOrNull ?? 0;
+    final archetype = propertyArchetypeFromProperty(property);
 
-    return Scaffold(
-      backgroundColor: _canvas,
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: _brandPurple,
-          onRefresh: () => _refreshDashboard(ref),
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-            children: [
-            profileAsync.when(
-              loading: () => _DashboardHeader(
-                greeting: _greeting(),
-                name: '…',
-                notificationCount: notificationCount,
-                profile: null,
-                avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context, ref),
-                onProfile: () => _onProfileTap(context),
-              ),
-              error: (_, __) => _DashboardHeader(
-                greeting: _greeting(),
-                name: 'there',
-                notificationCount: notificationCount,
-                profile: null,
-                avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context, ref),
-                onProfile: () => _onProfileTap(context),
-              ),
-              data: (p) => _DashboardHeader(
-                greeting: _greeting(),
-                name: _firstName(p),
-                notificationCount: notificationCount,
-                profile: p,
-                avatarUrlResolver: _resolveAvatarUrl,
-                onNotifications: () => _onNotifications(context, ref),
-                onProfile: () => _onProfileTap(context),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const ExpiryWarningBanner(),
-            dashboardAsync.when(
-              loading: () => const Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _HeroSkeleton(),
-                  SizedBox(height: 28),
-                  _OverviewSkeleton(),
-                  SizedBox(height: 28),
-                  _InsightsSkeleton(),
-                ],
-              ),
-              error: (err, _) => _DashboardError(
-                message: 'Could not load dashboard data.',
-                onRetry: () =>
-                    ref.invalidate(propertyDashboardProvider(propertyId)),
-              ),
-              data: (dashboard) {
-                final hero = dashboard.heroStats;
-                final overview = dashboard.overview;
-                final insights = dashboard.actionableInsights;
-                final attentionAlerts = _buildAttentionAlerts(dashboard);
-                final isRentalHouse =
-                    propertyArchetypeFromProperty(property) ==
-                        PropertyArchetype.individualLease;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _HeroCard(
-                      propertyName: displayName,
-                      subtitle: _propertySubtitle(property),
-                      isOccupied: hero.occupiedUnits > 0,
-                      occupancyPrimary: _occupancyPrimary(hero),
-                      occupancySubtitle: _availableUnitsLabel(
-                        hero.availableUnits,
-                        isRentalHouse: isRentalHouse,
-                      ),
-                      rentalValueLabel: 'Active Monthly Rent',
-                      rentalValue: _formatCurrency(hero.expectedMonthlyRent),
-                      propertyId: propertyId,
-                      onOccupancyTap: onGoToRoomsTab,
-                      onRentalValueTap: onGoToPaymentsTab,
-                    ),
-                    if (canManage) ...[
-                      const SizedBox(height: 16),
-                      _PrimaryQuickActionsRow(
-                        onAddTenant: () => _openAddTenant(context, ref),
-                        onNewInvoice: () => _openNewInvoice(context, ref),
-                        onAddExpense: () => _openAddExpense(context, ref),
-                      ),
-                    ],
-                    const SizedBox(height: 28),
-                    const _SectionTitle('Financial Overview'),
-                    const SizedBox(height: 12),
-                    _NetProfitStrip(
-                      collected: overview.rentReceived,
-                      expenses: overview.totalExpenses,
-                      netProfit: overview.netProfit,
-                      formatCurrency: _formatCurrency,
-                      onCollectedTap: () => _openCollectionBreakdown(context),
-                      onExpensesTap: () => _openExpenseHistory(context, ref),
-                      onNetProfitTap: () =>
-                          _openNetProfitInsights(context, ref, overview),
-                    ),
-                    const SizedBox(height: 12),
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 1.35,
-                      children: [
-                        _OverviewCard(
-                          icon: Icons.receipt_long_outlined,
-                          iconColor: const Color(0xFF0891B2),
-                          iconBg: const Color(0xFFCFFAFE),
-                          label: 'Billed This Month',
-                          value: _formatCurrency(overview.billedThisMonth),
-                          sublabel: 'Invoices generated',
-                          onTap: () =>
-                              _openBillingInsights(context, ref, overview),
-                        ),
-                        _OverviewCard(
-                          icon: Icons.timelapse_outlined,
-                          iconColor: const Color(0xFFD97706),
-                          iconBg: const Color(0xFFFEF3C7),
-                          label: 'Pending Dues',
-                          value: _formatCurrency(overview.rentPending),
-                          sublabel:
-                              _pendingDuesSublabel(overview.tenantsWithDues),
-                          onTap: () => _openRecoveryHub(context, overview),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 28),
-                    const _SectionTitle('Property Operations'),
-                    const SizedBox(height: 12),
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 1.35,
-                      children: [
-                        _OverviewCard(
-                          icon: Icons.people_outline_rounded,
-                          iconColor: AppColors.blueprint,
-                          iconBg: AppColors.primarySoft,
-                          label: 'Total Tenants',
-                          value: '${overview.totalActiveTenants}',
-                          sublabel: 'Active',
-                          onTap: onGoToTenantsTab,
-                        ),
-                        _OverviewCard(
-                          icon: Icons.report_problem_outlined,
-                          iconColor: const Color(0xFFEA580C),
-                          iconBg: const Color(0xFFFFEDD5),
-                          label: 'Open Complaints',
-                          value: '${overview.openComplaints}',
-                          sublabel: 'Needs Action',
-                          onTap: () => _openComplaints(context),
-                        ),
-                      ],
-                    ),
-                    if (attentionAlerts.isNotEmpty) ...[
-                      const SizedBox(height: 28),
-                      const _SectionTitle('Needs Attention'),
-                      const SizedBox(height: 12),
-                      _NeedsAttentionSection(
-                        alerts: attentionAlerts,
-                        onKycTap: () => _openPendingKyc(context),
-                        onMaintenanceTap: () => _openComplaints(context),
-                      ),
-                    ],
-                    const SizedBox(height: 28),
-                    const _SectionTitle('Rent Defaulters'),
-                    const SizedBox(height: 12),
-                    _RentDefaultersSection(
-                      propertyId: propertyId,
-                      defaulters: insights.defaulters,
-                    ),
-                    const SizedBox(height: 28),
-                    const _SectionTitle('Upcoming Vacancies'),
-                    const SizedBox(height: 12),
-                    // Explicit tap target — no AbsorbPointer/IgnorePointer ancestors.
-                    _UpcomingVacanciesCard(
-                      propertyId: propertyId,
-                      noticeCount: insights.upcomingVacancies,
-                      items: insights.upcomingVacancyItems,
-                      isRentalHouse: isRentalHouse,
-                    ),
-                  ],
-                );
-              },
-            ),
-            if (canManage) ...[
-              const SizedBox(height: 28),
-              const Text(
-                'More Actions',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.ink,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 20,
-                alignment: WrapAlignment.start,
-                children: [
-                  _QuickAction(
-                    icon: Icons.home_work_outlined,
-                    label: 'Add Property',
-                    color: _brandPurple,
-                    onTap: () => context.push('/onboarding/create-property'),
-                  ),
-                  _QuickAction(
-                    icon: Icons.support_agent_outlined,
-                    label: 'Support',
-                    color: const Color(0xFF9333EA),
-                    onTap: () => _showComingSoon(context, 'Support'),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 28),
-            const Text(
-              'Recent Activity',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.ink,
-              ),
-            ),
-            const SizedBox(height: 12),
-            activityAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => Text('Could not load activity: $err'),
-              data: (items) {
-                if (items.isEmpty) {
-                  return Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Text(
-                      'No activity yet.',
-                      style: TextStyle(color: AppColors.slate),
-                    ),
-                  );
-                }
-                return Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.04),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      children: items.take(5).map((item) {
-                      final isPayment = item['type'] == 'payment';
-                      return ListTile(
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Opening transaction details...'),
-                            ),
-                          );
-                        },
-                        leading: CircleAvatar(
-                          backgroundColor: isPayment
-                              ? const Color(0xFFDCFCE7)
-                              : AppColors.primarySoft,
-                          child: Icon(
-                            isPayment
-                                ? Icons.payments_outlined
-                                : Icons.person_add_alt_outlined,
-                            color: isPayment
-                                ? AppColors.positive
-                                : AppColors.blueprint,
-                            size: 20,
-                          ),
-                        ),
-                        title: Text(
-                          isPayment
-                              ? 'Payment received: ${item['title']}'
-                              : 'New resident: ${item['title']}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          isPayment
-                              ? item['subtitle'].toString()
-                              : 'Moved into ${item['subtitle']}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.slate,
-                          ),
-                        ),
-                        trailing: Text(
-                          item['ts'].toString().split('T').first,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppColors.slate,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                    ),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-            Center(child: AdBannerGate(propertyTypeKey: propertyTypeKey)),
-          ],
-        ),
-        ),
-      ),
+    // Dark dashboard pack for every property type.
+    final profile = profileAsync.valueOrNull;
+    return HostelPgDashboardBody(
+      propertyId: propertyId,
+      propertyName: displayName,
+      canManage: canManage,
+      greeting: _greeting(),
+      firstName: _firstName(profile),
+      profile: profile,
+      notificationCount: notificationCount,
+      avatarUrlResolver: _resolveAvatarUrl,
+      propertySubtitle: _propertySubtitle(property),
+      onNotifications: () => _onNotifications(context, ref),
+      onProfile: () => _onProfileTap(context),
+      onRefresh: () => _refreshDashboard(ref),
+      onAddTenant: canManage ? () => _openAddTenant(context, ref) : null,
+      onNewInvoice: canManage ? () => _openNewInvoice(context, ref) : null,
+      onAddExpense: canManage ? () => _openAddExpense(context, ref) : null,
+      onCollectedTap: () => _openCollectionBreakdown(context),
+      onExpensesTap: () => _openExpenseHistory(context, ref),
+      onNetProfitTap: () {
+        final overview = dashboardAsync.valueOrNull?.overview;
+        if (overview == null) return;
+        _openNetProfitInsights(context, ref, overview);
+      },
+      onViewAllRooms: onGoToRoomsTab,
+      unitKind: switch (archetype) {
+        PropertyArchetype.sharedLiving => 'Bed',
+        PropertyArchetype.gatedCommunity => 'Flat',
+        PropertyArchetype.individualLease => 'Space',
+      },
+      containerKind: switch (archetype) {
+        PropertyArchetype.sharedLiving => 'Room',
+        PropertyArchetype.gatedCommunity => 'Flat',
+        PropertyArchetype.individualLease => 'Space',
+      },
     );
   }
 }
@@ -702,8 +403,6 @@ class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarUrl = avatarUrlResolver(profile?.avatarUrl);
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -774,12 +473,14 @@ class _DashboardHeader extends StatelessWidget {
                 child: CircleAvatar(
                   radius: 20,
                   backgroundColor: const Color(0xFFEDE9FE),
-                  backgroundImage:
-                      avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
-                  child: avatarUrl.isEmpty
-                      ? const Icon(Icons.person,
-                          color: PropertyDashboardTabScreen._brandPurple)
-                      : null,
+                  // Avoid NetworkImage crashes when avatar file is missing (404).
+                  child: Text(
+                    (name.isNotEmpty ? name[0] : '?').toUpperCase(),
+                    style: const TextStyle(
+                      color: PropertyDashboardTabScreen._brandPurple,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
             ),

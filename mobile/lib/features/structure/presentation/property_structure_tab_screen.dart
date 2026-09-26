@@ -15,6 +15,7 @@ import 'rooms/floor_detail_screen.dart';
 import 'rooms/room_grid.dart';
 import 'rooms/rooms_structure_config.dart';
 import 'rooms/rooms_tree_provider.dart';
+import 'hostel_pg_rooms_body.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
 
@@ -332,6 +333,19 @@ class _PropertyStructureTabScreenState
   @override
   Widget build(BuildContext context) {
     final treeAsync = ref.watch(roomsTreeProvider(widget.propertyId));
+    final isHostelPg = hostelPgRoomsEnabled(ref, widget.propertyId);
+
+    if (isHostelPg) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0D1623),
+        body: SafeArea(
+          child: HostelPgRoomsBody(
+            propertyId: widget.propertyId,
+            canManage: widget.canManage,
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: Colors.white,

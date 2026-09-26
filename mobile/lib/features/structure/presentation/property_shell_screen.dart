@@ -222,6 +222,7 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
             final tabs = [
               // 0 — Dashboard
               PropertyDashboardTabScreen(
+                key: ValueKey('dash-${widget.propertyId}-$archetype'),
                 propertyId: widget.propertyId,
                 propertyName: widget.propertyName,
                 canManage: canManage,
@@ -259,6 +260,10 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
               ),
             ];
 
+            // Dark 5-tab shell for every property type (hostel / apartment / rental).
+            const selectedIconColor = Colors.white;
+            const unselectedIconColor = Color(0xFF94A3B8);
+
             return PopScope(
               canPop: false,
               onPopInvokedWithResult: (didPop, _) {
@@ -267,55 +272,94 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
               },
               child: Scaffold(
                 key: const ValueKey('property-bottom-nav-v2'),
-                body: IndexedStack(index: _index, children: tabs),
-                bottomNavigationBar: NavigationBar(
-                  key: ValueKey(
-                    isRentalHouse
-                        ? 'nav-bar-dashboard-tenants-payments-spaces-menu'
-                        : 'nav-bar-dashboard-tenants-payments-rooms-menu',
-                  ),
-                  selectedIndex: _index,
-                  onDestinationSelected: _goToTab,
-                  backgroundColor: AppColors.surface,
-                  indicatorColor: AppColors.primarySoft,
-                  destinations: [
-                    const NavigationDestination(
-                      icon: Icon(Icons.home_outlined),
-                      selectedIcon:
-                          Icon(Icons.home, color: AppColors.blueprint),
-                      label: 'Dashboard',
-                    ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.people_outline),
-                      selectedIcon:
-                          Icon(Icons.people, color: AppColors.blueprint),
-                      label: 'Tenants',
-                    ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.account_balance_wallet_outlined),
-                      selectedIcon: Icon(Icons.account_balance_wallet,
-                          color: AppColors.blueprint),
-                      label: 'Payments',
-                    ),
-                    NavigationDestination(
-                      icon: Icon(isRentalHouse
-                          ? Icons.home_work_outlined
-                          : Icons.meeting_room_outlined),
-                      selectedIcon: Icon(
-                        isRentalHouse
-                            ? Icons.home_work
-                            : Icons.meeting_room,
-                        color: AppColors.blueprint,
+                extendBody: false,
+                backgroundColor: const Color(0xFF0D1623),
+                body: IndexedStack(
+                  index: _index,
+                  sizing: StackFit.expand,
+                  children: tabs,
+                ),
+                bottomNavigationBar: ColoredBox(
+                  color: const Color(0xFF0A0D14),
+                  child: SafeArea(
+                    top: false,
+                    child: NavigationBarTheme(
+                      data: NavigationBarThemeData(
+                        labelTextStyle:
+                            WidgetStateProperty.resolveWith((states) {
+                          final selected =
+                              states.contains(WidgetState.selected);
+                          return TextStyle(
+                            fontSize: 11,
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: selected
+                                ? const Color(0xFF8B5CF6)
+                                : const Color(0xFF94A3B8),
+                          );
+                        }),
                       ),
-                      label: isRentalHouse ? 'Spaces' : 'Rooms',
+                      child: NavigationBar(
+                        key: ValueKey(
+                          isRentalHouse
+                              ? 'nav-bar-dark-spaces'
+                              : 'nav-bar-dark-rooms',
+                        ),
+                        selectedIndex: _index,
+                        onDestinationSelected: _goToTab,
+                        height: 64,
+                        backgroundColor: const Color(0xFF0A0D14),
+                        indicatorColor: const Color(0xFF8B5CF6),
+                        indicatorShape: const StadiumBorder(),
+                        destinations: [
+                          NavigationDestination(
+                            icon: Icon(Icons.home_outlined,
+                                color: unselectedIconColor),
+                            selectedIcon:
+                                Icon(Icons.home, color: selectedIconColor),
+                            label: 'Dashboard',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(Icons.people_outline,
+                                color: unselectedIconColor),
+                            selectedIcon:
+                                Icon(Icons.people, color: selectedIconColor),
+                            label: 'Tenants',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(Icons.account_balance_wallet_outlined,
+                                color: unselectedIconColor),
+                            selectedIcon: Icon(Icons.account_balance_wallet,
+                                color: selectedIconColor),
+                            label: 'Payments',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(
+                              isRentalHouse
+                                  ? Icons.home_work_outlined
+                                  : Icons.meeting_room_outlined,
+                              color: unselectedIconColor,
+                            ),
+                            selectedIcon: Icon(
+                              isRentalHouse
+                                  ? Icons.home_work
+                                  : Icons.meeting_room,
+                              color: selectedIconColor,
+                            ),
+                            label: isRentalHouse ? 'Spaces' : 'Rooms',
+                          ),
+                          NavigationDestination(
+                            icon:
+                                Icon(Icons.menu, color: unselectedIconColor),
+                            selectedIcon:
+                                Icon(Icons.menu, color: selectedIconColor),
+                            label: 'Menu',
+                          ),
+                        ],
+                      ),
                     ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.menu),
-                      selectedIcon:
-                          Icon(Icons.menu, color: AppColors.blueprint),
-                      label: 'Menu',
-                    ),
-                  ],
+                  ),
                 ),
               ),
             );

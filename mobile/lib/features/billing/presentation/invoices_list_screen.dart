@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import 'billing_providers.dart';
 import 'create_invoice_screen.dart';
+import 'hostel_pg_payments_body.dart';
 import 'live_collection_tab.dart';
 import 'reports_history_tab.dart';
 
@@ -104,6 +105,24 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isHostelPg = hostelPgPaymentsEnabled(ref, widget.propertyId);
+
+    if (isHostelPg) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0D1623),
+        appBar: widget.asTab
+            ? null
+            : AppBar(
+                title: const Text('Payments'),
+                backgroundColor: const Color(0xFF0D1623),
+                foregroundColor: Colors.white,
+              ),
+        body: SafeArea(
+          child: HostelPgPaymentsBody(propertyId: widget.propertyId),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.canvas,
       appBar: widget.asTab
