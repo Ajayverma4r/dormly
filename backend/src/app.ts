@@ -14,6 +14,7 @@ import { invitationsRouter } from '@modules/staff/invitations.routes';
 import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscriptions/subscription.routes';
 import { scheduleSubscriptionDowngradeJob } from '@shared/jobs/subscription-downgrade.job';
 import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-expiry-warning.job';
+import { scheduleHostelBillingJob } from '@shared/jobs/hostel-billing.job';
 
 import { ensureLiveOpsSchema } from '@modules/notifications/notify';
 import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
@@ -56,6 +57,7 @@ export function createApp() {
   // Subscription maintenance jobs
   scheduleSubscriptionDowngradeJob();       // hourly: expire → free (no data delete)
   scheduleSubscriptionExpiryWarningJob();   // daily: 7-day in-app renew reminders
+  scheduleHostelBillingJob();               // hourly: hostel/PG anniversary rent bills
 
   // Ensure shared live-ops tables exist (complaints photos, mess, meters, gate passes).
   void ensureNotificationsSchema().catch(() => undefined);

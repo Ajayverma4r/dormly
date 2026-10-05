@@ -108,6 +108,19 @@ class BillingRepository {
     return Map<String, dynamic>.from(res.data['data']);
   }
 
+  /// Persists the owner-edited due date on this invoice.
+  Future<Map<String, dynamic>> updateDueDate(
+    String propertyId,
+    String invoiceId, {
+    required String dueDate,
+  }) async {
+    final res = await _client.dio.patch(
+      '/v1/properties/$propertyId/billing/invoices/$invoiceId/due-date',
+      data: {'dueDate': dueDate},
+    );
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
   Future<void> recordPayment(String propertyId, String invoiceId, double amount, String method) async {
     await _client.dio.post('/v1/properties/$propertyId/billing/invoices/$invoiceId/payments', data: {
       'amount': amount,

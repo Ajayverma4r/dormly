@@ -59,6 +59,10 @@ const generateMonthlySchema = z.object({
   dueDate: z.string().optional(),
 });
 
+const updateDueDateSchema = z.object({
+  dueDate: z.string().min(10),
+});
+
 const paymentSchema = z.object({
   amount: z.number().positive(),
   method: z.string().default('cash'),
@@ -208,6 +212,21 @@ export class BillingController {
         req.params.invoiceId,
         req.params.propertyId,
         body,
+      );
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      res.json({ data: invoice });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  updateDueDate = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const body = updateDueDateSchema.parse(req.body);
+      const invoice = await service.updateDueDate(
+        req.params.invoiceId,
+        req.params.propertyId,
+        body.dueDate,
       );
       if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
       res.json({ data: invoice });

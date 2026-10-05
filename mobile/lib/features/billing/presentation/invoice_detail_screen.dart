@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../data/billing_repository.dart';
+import 'billing_providers.dart';
 import 'record_payment_dialog.dart';
 
 final invoiceDetailProvider = FutureProvider.autoDispose
@@ -57,6 +58,34 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not record payment: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _editDueDate(DateTime current) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    final dueDate = DateFormat('yyyy-MM-dd').format(picked);
+    try {
+      await ref.read(billingRepositoryProvider).updateDueDate(
+            widget.propertyId,
+            widget.invoiceId,
+            dueDate: dueDate,
+          );
+      ref.invalidate(
+        invoiceDetailProvider((widget.propertyId, widget.invoiceId)),
+      );
+      ref.invalidate(invoicesProvider(widget.propertyId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update due date: $e')),
         );
       }
     }
@@ -147,9 +176,12 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
           final remaining = total - paid;
           final status =
               (invoice['status'] ?? 'pending').toString().toUpperCase();
-          final due =
-              invoice['due_date']?.toString().split('T').first ?? '—';
-
+          final dueRaw =
+              invoice['due_date']?.toString().split('T').first ?? '';
+          final dueDate = DateTime.tryParse(dueRaw);
+          final dueLabel = dueDate == null
+              ? (dueRaw.isEmpty ? '—' : dueRaw)
+              : DateFormat('d MMM yyyy').format(dueDate);
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
@@ -167,7 +199,40 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                       'Status: $status',
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    Text('Due: $due'),
+                    if (!widget.viewOnly)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Due Date',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF6B7280),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  dueLabel,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: dueDate == null
+                                ? null
+                                : () => _editDueDate(dueDate),
+                            child: const Text('Edit'),
+                          ),
+                        ],
+                      )
+                    else
+                      Text('Due: $dueLabel'),
                     const Divider(height: 24),
                     const Text(
                       'Breakdown',

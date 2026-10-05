@@ -1,5 +1,11 @@
 // modules/billing/billing.service.ts
 import { query } from '@config/db';
+import {
+  calendarDateInTimeZone,
+  compareYmd,
+  hostelBillingTimeZone,
+  hostelCyclesDue,
+} from './hostel-billing-cycle';
 
 export type ChargeKind =
   | 'rent'
@@ -88,6 +94,11 @@ function isoDate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function dbDateToYmd(value: Date | string): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
 }
 
 function monthKey(d: Date): string {
@@ -497,24 +508,32 @@ export class BillingService {
       throw new Error('Tenancy not found in this property');
     }
 
-    const now = new Date();
-    let periodStart: string;
-    let periodEnd: string;
-    let dueDate: string;
-
-    if (opts.periodStart && opts.periodEnd && opts.dueDate) {
-      periodStart = opts.periodStart.slice(0, 10);
-      periodEnd = opts.periodEnd.slice(0, 10);
-      dueDate = opts.dueDate.slice(0, 10);
-    } else {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const due = new Date(now.getFullYear(), now.getMonth(), 1);
-      due.setDate(due.getDate() + 5);
-      periodStart = isoDate(start);
-      periodEnd = isoDate(end);
-      dueDate = isoDate(due);
+    const explicitDates = Boolean(
+      opts.periodStart && opts.periodEnd && opts.dueDate,
+    );
+    if (!explicitDates) {
+      await this.ensureHostelPgAnniversaryInvoices(
+        opts.propertyId,
+        opts.tenancyId,
+      );
+      const [latest] = await query<{ id: string }>(
+        `SELECT id FROM invoices
+         WHERE tenancy_id = $1 AND property_id = $2
+         ORDER BY period_start DESC
+         LIMIT 1`,
+        [opts.tenancyId, opts.propertyId],
+      );
+      if (!latest) {
+        throw new Error(
+          'No billing cycle is due yet. The first bill is generated on the check-in anniversary.',
+        );
+      }
+      return this.getById(latest.id);
     }
+
+    const periodStart = opts.periodStart!.slice(0, 10);
+    const periodEnd = opts.periodEnd!.slice(0, 10);
+    const dueDate = opts.dueDate!.slice(0, 10);
 
     const existing = await query<{ id: string }>(
       `SELECT id FROM invoices
@@ -638,6 +657,206 @@ export class BillingService {
     return this.getById(invoiceId);
   }
 
+  /**
+   * Persist an owner-edited due date. Does not rewrite line items.
+   * Later automatic generation will not overwrite this row
+   * (invoices are inserted once per cycle).
+   */
+  async updateDueDate(invoiceId: string, propertyId: string, dueDate: string) {
+    const due = dueDate.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+      throw new Error('Due date must be YYYY-MM-DD.');
+    }
+
+    const [existing] = await query<{ id: string }>(
+      `SELECT id FROM invoices WHERE id = $1 AND property_id = $2`,
+      [invoiceId, propertyId],
+    );
+    if (!existing) return null;
+
+    await query(
+      `UPDATE invoices SET due_date = $1::date, updated_at = now()
+       WHERE id = $2 AND property_id = $3`,
+      [due, invoiceId, propertyId],
+    );
+    await this.refreshHostelInvoiceStatuses(propertyId, invoiceId);
+    return this.getById(invoiceId);
+  }
+
+  /**
+   * Create missing rent invoices for completed check-in anniversaries.
+   * Applies to every property type.
+   * Existing invoices (including owner-edited due dates) are left unchanged.
+   */
+  async ensureHostelPgAnniversaryInvoices(
+    propertyId: string,
+    onlyTenancyId?: string,
+  ): Promise<number> {
+    await ensureBillingSchema();
+
+    const [property] = await query<{ timezone: string | null }>(
+      `SELECT timezone FROM properties WHERE id = $1`,
+      [propertyId],
+    );
+    const timeZone = hostelBillingTimeZone(property?.timezone);
+    let today: string;
+    try {
+      today = calendarDateInTimeZone(new Date(), timeZone);
+    } catch {
+      today = calendarDateInTimeZone(new Date(), 'Asia/Kolkata');
+    }
+
+    const tenancies = await query<{
+      id: string;
+      monthly_rent: string | number | null;
+      move_in_at: Date | string | null;
+      move_out_at: Date | string | null;
+      status: string | null;
+    }>(
+      `SELECT id, monthly_rent, move_in_at, move_out_at, status
+       FROM tenancies
+       WHERE property_id = $1
+         AND ($2::uuid IS NULL OR id = $2::uuid)`,
+      [propertyId, onlyTenancyId ?? null],
+    );
+
+    const chargeTypes = await this.listChargeTypes(propertyId);
+    const rentType = chargeTypes.find((c: any) => {
+      const n = String(c.name).toLowerCase();
+      return n === 'rent' || n.includes('rent');
+    }) as { id?: string } | undefined;
+
+    let created = 0;
+    for (const tenancy of tenancies) {
+      if (String(tenancy.status ?? 'active') === 'ended') continue;
+      if (!tenancy.move_in_at) continue;
+      const rent = Number(tenancy.monthly_rent ?? 0);
+      if (!(rent > 0)) continue;
+
+      const moveIn = new Date(tenancy.move_in_at);
+      if (Number.isNaN(moveIn.getTime())) continue;
+      let checkIn: string;
+      try {
+        checkIn = calendarDateInTimeZone(moveIn, timeZone);
+      } catch {
+        checkIn = calendarDateInTimeZone(moveIn, 'Asia/Kolkata');
+      }
+
+      let moveOut: string | null = null;
+      if (tenancy.move_out_at) {
+        const out = new Date(tenancy.move_out_at);
+        if (!Number.isNaN(out.getTime())) {
+          try {
+            moveOut = calendarDateInTimeZone(out, timeZone);
+          } catch {
+            moveOut = calendarDateInTimeZone(out, 'Asia/Kolkata');
+          }
+        }
+      }
+
+      const existing = await query<{ period_start: Date | string }>(
+        `SELECT period_start FROM invoices WHERE tenancy_id = $1`,
+        [tenancy.id],
+      );
+      const existingStarts = new Set(
+        existing.map((row) => dbDateToYmd(row.period_start)),
+      );
+
+      for (const cycle of hostelCyclesDue(checkIn, today)) {
+        if (moveOut && compareYmd(cycle.billDate, moveOut) > 0) continue;
+        if (existingStarts.has(cycle.periodStart)) continue;
+
+        const label = formatMonthLabel(cycle.periodStart.slice(0, 7));
+        const initialStatus =
+          compareYmd(cycle.dueDate, today) < 0 ? 'overdue' : 'pending';
+
+        const inserted = await query<{ id: string }>(
+          `INSERT INTO invoices
+             (tenancy_id, property_id, period_start, period_end, due_date, total_amount, status)
+           SELECT $1, $2, $3::date, $4::date, $5::date, $6, $7::invoice_status
+           WHERE NOT EXISTS (
+             SELECT 1 FROM invoices
+             WHERE tenancy_id = $1 AND period_start = $3::date
+           )
+           RETURNING id`,
+          [
+            tenancy.id,
+            propertyId,
+            cycle.periodStart,
+            cycle.periodEnd,
+            cycle.dueDate,
+            rent,
+            initialStatus,
+          ],
+        );
+        const invoiceId = inserted[0]?.id;
+        if (!invoiceId) continue;
+
+        await query(
+          `INSERT INTO invoice_line_items
+             (invoice_id, charge_type_id, description, amount, charge_kind)
+           VALUES ($1, $2, $3, $4, 'rent'::invoice_charge_kind)`,
+          [invoiceId, rentType?.id ?? null, `${label} Rent`, rent],
+        );
+        existingStarts.add(cycle.periodStart);
+        created += 1;
+      }
+    }
+
+    return created;
+  }
+
+  /** Overdue starts the calendar day after the saved due_date. */
+  async refreshHostelInvoiceStatuses(propertyId: string, invoiceId?: string) {
+    const [property] = await query<{ timezone: string | null }>(
+      `SELECT timezone FROM properties WHERE id = $1`,
+      [propertyId],
+    );
+    const timeZone = hostelBillingTimeZone(property?.timezone);
+    let today: string;
+    try {
+      today = calendarDateInTimeZone(new Date(), timeZone);
+    } catch {
+      today = calendarDateInTimeZone(new Date(), 'Asia/Kolkata');
+    }
+
+    await query(
+      `UPDATE invoices i
+       SET status = v.new_status::invoice_status,
+           updated_at = now()
+       FROM (
+         SELECT i2.id,
+           CASE
+             WHEN COALESCE(SUM(p.amount), 0) >= i2.total_amount
+                  AND i2.total_amount > 0 THEN 'paid'
+             WHEN COALESCE(SUM(p.amount), 0) > 0 THEN 'partial'
+             WHEN i2.due_date < $2::date THEN 'overdue'
+             ELSE 'pending'
+           END AS new_status
+         FROM invoices i2
+         LEFT JOIN payments p ON p.invoice_id = i2.id
+         WHERE i2.property_id = $1
+           AND ($3::uuid IS NULL OR i2.id = $3::uuid)
+         GROUP BY i2.id
+       ) v
+       WHERE i.id = v.id
+         AND i.status::text IS DISTINCT FROM v.new_status`,
+      [propertyId, today, invoiceId ?? null],
+    );
+  }
+
+  async ensureAllHostelPgAnniversaryInvoices(): Promise<number> {
+    const properties = await query<{ id: string }>(
+      `SELECT id FROM properties`,
+    );
+    let created = 0;
+    for (const property of properties) {
+      created += await this.ensureHostelPgAnniversaryInvoices(property.id);
+      await this.refreshHostelInvoiceStatuses(property.id);
+    }
+    return created;
+  }
+
   async getById(invoiceId: string) {
     await ensureBillingSchema();
     const [invoice] = await query<any>(
@@ -645,6 +864,12 @@ export class BillingService {
       [invoiceId],
     );
     if (!invoice) return null;
+    await this.refreshHostelInvoiceStatuses(String(invoice.property_id), invoiceId);
+    const [fresh] = await query<any>(
+      `SELECT * FROM invoices WHERE id = $1`,
+      [invoiceId],
+    );
+    if (fresh) Object.assign(invoice, fresh);
     const lineItems = await query(
       `SELECT ili.*, ct.name AS charge_type_name
        FROM invoice_line_items ili
@@ -669,6 +894,12 @@ export class BillingService {
   }
 
   async listByProperty(propertyId: string) {
+    await this.ensureHostelPgAnniversaryInvoices(propertyId).catch((err) =>
+      console.warn('[billing] anniversary invoices:', err),
+    );
+    await this.refreshHostelInvoiceStatuses(propertyId).catch((err) =>
+      console.warn('[billing] status refresh:', err),
+    );
     return query(
       `SELECT i.*, t.full_name, t.profile_photo_url, u.phone, n.name AS node_name,
               floor_node.name AS floor_name,

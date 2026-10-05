@@ -59,8 +59,6 @@ class CreateInvoiceScreen extends ConsumerStatefulWidget {
 enum _ChargeBucket { rent, maintenance, electricity, water, other }
 
 class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
-  static const _dueDaysAfterPeriodStart = 5;
-
   List<Map<String, dynamic>> _tenancies = [];
   List<Map<String, dynamic>> _chargeTypes = [];
   String? _selectedTenancyId;
@@ -94,13 +92,15 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     'partially_paid',
   };
 
+  static const _dueDaysAfterBill = 4;
+
   @override
   void initState() {
     super.initState();
     final now = DateTime.now();
     _periodStart = DateTime(now.year, now.month, 1);
     _periodEnd = DateTime(now.year, now.month + 1, 0);
-    _dueDate = _defaultDueDate(_periodStart);
+    _dueDate = _dueFromPeriodEnd(_periodEnd);
     _electricityFallbackController.addListener(_onAmountChanged);
     _waterFallbackController.addListener(_onAmountChanged);
     _otherFallbackController.addListener(_onAmountChanged);
@@ -126,10 +126,51 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   void _onAmountChanged() => setState(() {});
 
-  DateTime _defaultDueDate(DateTime periodStart) =>
-      periodStart.add(const Duration(days: _dueDaysAfterPeriodStart));
+  /// Due date is the bill-generation date + 4 calendar days.
+  /// Bill date is the day after the completed stay (period end + 1).
+  DateTime _dueFromPeriodEnd(DateTime periodEnd) {
+    final billDate = _dateOnly(periodEnd).add(const Duration(days: 1));
+    return _dateOnly(billDate.add(const Duration(days: _dueDaysAfterBill)));
+  }
+
+  DateTime _addCalendarMonths(DateTime date, int months) =>
+      _clampDay(date.year, date.month + months, date.day);
+
+  /// Completed stay for any property type.
+  /// Period start = check-in anniversary. Bill date = next anniversary.
+  /// Due date = bill date + 4 calendar days.
+  ({DateTime periodStart, DateTime periodEnd, DateTime dueDate})
+      _stayCycle(DateTime checkIn, {DateTime? asOf}) {
+    final today = _dateOnly(asOf ?? DateTime.now());
+    final start = _dateOnly(checkIn);
+    for (var k = 0; k < 240; k++) {
+      final bill = _addCalendarMonths(start, k + 1);
+      if (!bill.isBefore(today)) {
+        return (
+          periodStart: _addCalendarMonths(start, k),
+          periodEnd: _dateOnly(bill.subtract(const Duration(days: 1))),
+          dueDate: _dateOnly(bill.add(const Duration(days: 4))),
+        );
+      }
+    }
+    final bill = _addCalendarMonths(start, 240);
+    return (
+      periodStart: _addCalendarMonths(start, 239),
+      periodEnd: _dateOnly(bill.subtract(const Duration(days: 1))),
+      dueDate: _dateOnly(bill.add(const Duration(days: 4))),
+    );
+  }
 
   DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  /// Calendar date in the device zone. toIso8601String() shifts midnight
+  /// back a day in IST and would persist the wrong period and due date.
+  String _ymd(DateTime d) {
+    final x = _dateOnly(d);
+    final m = x.month.toString().padLeft(2, '0');
+    final day = x.day.toString().padLeft(2, '0');
+    return '${x.year}-$m-$day';
+  }
 
   DateTime _clampDay(int year, int month, int day) {
     final lastDay = DateTime(year, month + 1, 0).day;
@@ -153,14 +194,6 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     return null;
   }
 
-  DateTimeRange _anniversaryPeriod(DateTime moveIn, {DateTime? asOf}) {
-    final now = asOf ?? DateTime.now();
-    final start = _clampDay(now.year, now.month, moveIn.day);
-    final nextStart = _clampDay(start.year, start.month + 1, moveIn.day);
-    final end = nextStart.subtract(const Duration(days: 1));
-    return DateTimeRange(start: start, end: end);
-  }
-
   DateTimeRange _calendarMonthPeriod({DateTime? asOf}) {
     final now = asOf ?? DateTime.now();
     return DateTimeRange(
@@ -172,14 +205,19 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
   void _applyPeriod(DateTimeRange range) {
     _periodStart = _dateOnly(range.start);
     _periodEnd = _dateOnly(range.end);
-    _dueDate = _defaultDueDate(_periodStart);
+    _dueDate = _dueFromPeriodEnd(_periodEnd);
   }
 
   void _applyAnniversaryPeriodForTenant(String tenancyId) {
     final moveIn = _readMoveInDate(_tenancyById(tenancyId));
-    _applyPeriod(
-      moveIn != null ? _anniversaryPeriod(moveIn) : _calendarMonthPeriod(),
-    );
+    if (moveIn != null) {
+      final cycle = _stayCycle(moveIn);
+      _periodStart = cycle.periodStart;
+      _periodEnd = cycle.periodEnd;
+      _dueDate = cycle.dueDate;
+      return;
+    }
+    _applyPeriod(_calendarMonthPeriod());
   }
 
   String _formatAmount(double amount) => amount == amount.roundToDouble()
@@ -456,7 +494,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     if (start != null && end != null) {
       _periodStart = start;
       _periodEnd = end;
-      _dueDate = due ?? _defaultDueDate(start);
+      _dueDate = due ?? _dueFromPeriodEnd(end);
     }
 
     _selectedTenancyId = tenancyId;
@@ -549,7 +587,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
     // Include unbilled past-rent preview so the note stays informative.
     try {
-      final periodStart = _periodStart.toIso8601String().split('T').first;
+      final periodStart = _ymd(_periodStart);
       final preview = await ref.read(billingRepositoryProvider).arrearsPreview(
             widget.propertyId,
             tenancyId,
@@ -658,9 +696,9 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     });
 
     try {
-      final periodStart = _periodStart.toIso8601String().split('T').first;
-      final periodEnd = _periodEnd.toIso8601String().split('T').first;
-      final dueDate = _dueDate.toIso8601String().split('T').first;
+      final periodStart = _ymd(_periodStart);
+      final periodEnd = _ymd(_periodEnd);
+      final dueDate = _ymd(_dueDate);
       final repo = ref.read(billingRepositoryProvider);
 
       if (widget.isEditMode) {

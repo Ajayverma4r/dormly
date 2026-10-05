@@ -19,6 +19,7 @@ billingRouter.post('/invoices/generate-monthly', controller.generateMonthlyInvoi
 billingRouter.get('/invoices/:invoiceId', controller.getInvoice);
 billingRouter.post('/invoices', controller.createInvoice);
 billingRouter.patch('/invoices/:invoiceId', controller.updateInvoice);
+billingRouter.patch('/invoices/:invoiceId/due-date', controller.updateDueDate);
 billingRouter.post('/invoices/:invoiceId/payments', controller.recordPayment);
 billingRouter.post('/invoices/:invoiceId/pending-charges', controller.addPendingCharges);
 billingRouter.post('/invoices/:invoiceId/remind', controller.sendReminder);

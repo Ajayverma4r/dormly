@@ -11,6 +11,14 @@ import 'whatsapp_reminder.dart';
 
 const _accent = AppColors.blueprint;
 
+String _formatDue(Map<String, dynamic> inv) {
+  final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
+  if (raw == null || raw.length < 10) return '—';
+  final parsed = DateTime.tryParse(raw.substring(0, 10));
+  if (parsed == null) return raw.substring(0, 10);
+  return DateFormat('d MMM yyyy').format(parsed);
+}
+
 Future<void> showTenantLedgerSheet({
   required BuildContext context,
   required WidgetRef ref,
@@ -202,6 +210,41 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
+  Future<void> _editDueDate(Map<String, dynamic> inv) async {
+    final id = inv['id']?.toString();
+    if (id == null || id.isEmpty) return;
+    final current = _parseDue(inv) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    final dueDate = DateFormat('yyyy-MM-dd').format(picked);
+    try {
+      await ref.read(billingRepositoryProvider).updateDueDate(
+            widget.propertyId,
+            id,
+            dueDate: dueDate,
+          );
+      ref.invalidate(invoicesProvider(widget.propertyId));
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update due date: $e')),
+        );
+      }
+    }
+  }
+
+  DateTime? _parseDue(Map<String, dynamic> inv) {
+    final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
+    if (raw == null || raw.length < 10) return null;
+    return DateTime.tryParse(raw.substring(0, 10));
+  }
+
   Future<void> _editInvoice(Map<String, dynamic> inv) async {
     final id = inv['id']?.toString();
     if (id == null || id.isEmpty) return;
@@ -357,7 +400,9 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
                                   lineItemsOf: _lineItems,
                                   amountOf: _asAmount,
                                   busyInvoiceId: _busyInvoiceId,
+                                  showDueDateEdit: true,
                                   onEdit: _editInvoice,
+                                  onEditDueDate: _editDueDate,
                                   onRecordPayment: _recordPaymentForInvoice,
                                 );
                               },
@@ -407,7 +452,9 @@ class _MonthSection extends StatelessWidget {
   final List<Map<String, dynamic>> Function(Map<String, dynamic>) lineItemsOf;
   final double Function(dynamic) amountOf;
   final String? busyInvoiceId;
+  final bool showDueDateEdit;
   final Future<void> Function(Map<String, dynamic>) onEdit;
+  final Future<void> Function(Map<String, dynamic>) onEditDueDate;
   final Future<void> Function(Map<String, dynamic>) onRecordPayment;
 
   const _MonthSection({
@@ -417,7 +464,9 @@ class _MonthSection extends StatelessWidget {
     required this.lineItemsOf,
     required this.amountOf,
     required this.busyInvoiceId,
+    required this.showDueDateEdit,
     required this.onEdit,
+    required this.onEditDueDate,
     required this.onRecordPayment,
   });
 
@@ -517,6 +566,38 @@ class _MonthSection extends StatelessWidget {
                             ),
                           );
                         }),
+                      if (showDueDateEdit) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Due Date',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.slate,
+                                    ),
+                                  ),
+                                  Text(
+                                    _formatDue(inv),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: busy ? null : () => onEditDueDate(inv),
+                              child: const Text('Edit'),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       Row(
                         children: [
