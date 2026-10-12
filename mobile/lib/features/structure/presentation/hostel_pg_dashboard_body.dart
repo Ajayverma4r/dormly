@@ -13,6 +13,8 @@ import '../../properties/presentation/property_switcher_sheet.dart';
 import '../domain/hierarchy_level.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider, nodeCountProvider;
+import 'rooms/room_list_filter.dart';
+import 'rooms/rooms_tree_provider.dart';
 
 /// Colors sampled from 01_exact_dashboard_reference.png
 class HostelPgDashboardColors {
@@ -42,6 +44,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
   final String Function(String?) avatarUrlResolver;
   final String propertySubtitle;
   final VoidCallback onNotifications;
+  final VoidCallback? onSearch;
   final VoidCallback onProfile;
   final Future<void> Function() onRefresh;
   final VoidCallback? onAddTenant;
@@ -51,10 +54,15 @@ class HostelPgDashboardBody extends ConsumerWidget {
   final VoidCallback? onExpensesTap;
   final VoidCallback? onNetProfitTap;
   final VoidCallback? onViewAllRooms;
+  /// Occupied / Vacant / Total stat tapped — opens Rooms with that filter.
+  final ValueChanged<RoomListFilter>? onOccupancyStatTap;
   /// Occupancy unit noun, e.g. Bed / Flat / Space.
   final String unitKind;
   /// Container noun for totals, e.g. Room / Flat / Space.
   final String containerKind;
+  /// When the unit and container are the same level (apartment flats),
+  /// count from the Rooms list so Dashboard and Rooms always agree.
+  final bool countFromRoomList;
 
   const HostelPgDashboardBody({
     super.key,
@@ -68,6 +76,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
     required this.avatarUrlResolver,
     required this.propertySubtitle,
     required this.onNotifications,
+    this.onSearch,
     required this.onProfile,
     required this.onRefresh,
     this.onAddTenant,
@@ -77,8 +86,10 @@ class HostelPgDashboardBody extends ConsumerWidget {
     this.onExpensesTap,
     this.onNetProfitTap,
     this.onViewAllRooms,
+    this.onOccupancyStatTap,
     this.unitKind = 'Bed',
     this.containerKind = 'Room',
+    this.countFromRoomList = false,
   });
 
   @override
@@ -86,9 +97,15 @@ class HostelPgDashboardBody extends ConsumerWidget {
     final dashboardAsync = ref.watch(propertyDashboardProvider(propertyId));
     final levelsAsync = ref.watch(hierarchyLevelsProvider(propertyId));
     final roomLevelId = _roomLevelId(levelsAsync.valueOrNull);
-    final roomCountAsync = roomLevelId == null
+    final roomCountAsync = countFromRoomList || roomLevelId == null
         ? const AsyncValue<int>.data(0)
         : ref.watch(nodeCountProvider((propertyId, roomLevelId)));
+    final RoomListCounts? listCounts = countFromRoomList
+        ? ref.watch(roomsTreeProvider(propertyId)).whenOrNull(
+              data: (tree) =>
+                  countRoomListEntries(collectRoomListEntries(tree)),
+            )
+        : null;
 
     // Minimal clearance so Room Occupancy can sit above fixed nav without huge empty space.
     final bottomClearance = 48.0 + MediaQuery.paddingOf(context).bottom;
@@ -112,6 +129,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
                 name: firstName,
                 notificationCount: notificationCount,
                 onNotifications: onNotifications,
+                onSearch: onSearch,
                 onProfile: onProfile,
               ),
               const SizedBox(height: 10),
@@ -131,15 +149,18 @@ class HostelPgDashboardBody extends ConsumerWidget {
                 data: (dashboard) {
                   final hero = dashboard.heroStats;
                   final overview = dashboard.overview;
-                  final occupiedBeds = hero.occupiedUnits;
-                  final vacantBeds = hero.availableUnits;
-                  final totalBeds = hero.totalUnits;
+                  final occupiedBeds =
+                      listCounts?.occupied ?? hero.occupiedUnits;
+                  final vacantBeds = listCounts?.vacant ?? hero.availableUnits;
+                  final totalBeds = listCounts?.total ?? hero.totalUnits;
                   final occupancyPct = totalBeds <= 0
                       ? 0
                       : ((occupiedBeds / totalBeds) * 100)
                           .round()
                           .clamp(0, 100);
-                  final totalRooms = roomCountAsync.valueOrNull ?? 0;
+                  final totalRooms = countFromRoomList
+                      ? totalBeds
+                      : (roomCountAsync.valueOrNull ?? 0);
 
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -155,6 +176,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
                         totalRooms: totalRooms,
                         unitKind: unitKind,
                         containerKind: containerKind,
+                        onStatTap: onOccupancyStatTap,
                       ),
                       if (canManage) ...[
                         const SizedBox(height: 10),
@@ -232,6 +254,7 @@ class _Header extends StatelessWidget {
   final String name;
   final int notificationCount;
   final VoidCallback onNotifications;
+  final VoidCallback? onSearch;
   final VoidCallback onProfile;
 
   const _Header({
@@ -239,6 +262,7 @@ class _Header extends StatelessWidget {
     required this.name,
     required this.notificationCount,
     required this.onNotifications,
+    required this.onSearch,
     required this.onProfile,
   });
 
@@ -283,6 +307,19 @@ class _Header extends StatelessWidget {
             ],
           ),
         ),
+        if (onSearch != null)
+          IconButton(
+            tooltip: 'Search',
+            onPressed: onSearch,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            icon: const Icon(
+              Icons.search_rounded,
+              color: HostelPgDashboardColors.textPrimary,
+              size: 22,
+            ),
+          ),
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -345,6 +382,7 @@ class _HeroCard extends ConsumerWidget {
   final int totalRooms;
   final String unitKind;
   final String containerKind;
+  final ValueChanged<RoomListFilter>? onStatTap;
 
   const _HeroCard({
     required this.propertyId,
@@ -357,6 +395,7 @@ class _HeroCard extends ConsumerWidget {
     required this.totalRooms,
     required this.unitKind,
     required this.containerKind,
+    this.onStatTap,
   });
 
   @override
@@ -631,6 +670,9 @@ class _HeroCard extends ConsumerWidget {
                   icon: Icons.bed_outlined,
                   value: '$occupiedBeds',
                   label: 'Occupied ${unitKind}s',
+                  onTap: onStatTap == null
+                      ? null
+                      : () => onStatTap!(RoomListFilter.occupied),
                 ),
                 Container(
                   width: 1,
@@ -641,6 +683,9 @@ class _HeroCard extends ConsumerWidget {
                   icon: Icons.bed_outlined,
                   value: '$vacantBeds',
                   label: 'Vacant ${unitKind}s',
+                  onTap: onStatTap == null
+                      ? null
+                      : () => onStatTap!(RoomListFilter.vacant),
                 ),
                 Container(
                   width: 1,
@@ -651,6 +696,9 @@ class _HeroCard extends ConsumerWidget {
                   icon: Icons.apartment_outlined,
                   value: '$totalRooms',
                   label: 'Total ${containerKind}s',
+                  onTap: onStatTap == null
+                      ? null
+                      : () => onStatTap!(RoomListFilter.all),
                 ),
               ],
             ),
@@ -665,17 +713,34 @@ class _InlineStat extends StatelessWidget {
   final IconData icon;
   final String value;
   final String label;
+  final VoidCallback? onTap;
 
   const _InlineStat({
     required this.icon,
     required this.value,
     required this.label,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Column(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: _content(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _content() {
+    return Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -702,7 +767,6 @@ class _InlineStat extends StatelessWidget {
             ),
           ),
         ],
-      ),
     );
   }
 }

@@ -6,6 +6,22 @@ import {
   hostelBillingTimeZone,
   hostelCyclesDue,
 } from './hostel-billing-cycle';
+import {
+  createNotification,
+  notifyPropertyOwners,
+} from '@modules/notifications/notify';
+
+/** A regular invoice already exists for this tenancy's billing cycle. */
+export class InvoiceConflictError extends Error {
+  readonly code = 'invoice_exists';
+  constructor(
+    message: string,
+    readonly invoiceId: string,
+    readonly isDraft: boolean,
+  ) {
+    super(message);
+  }
+}
 
 export type ChargeKind =
   | 'rent'
@@ -84,6 +100,44 @@ export async function ensureBillingSchema(): Promise<void> {
       ).catch((err) =>
         console.warn('[billing] include_past_rent_arrears column:', err),
       );
+
+      // Review workflow (see migration 025). NULL sent_at = draft.
+      // The temporary default back-fills existing invoices as already sent.
+      await query(
+        `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT now()`,
+      ).catch((err) => console.warn('[billing] sent_at column:', err));
+      await query(
+        `ALTER TABLE invoices ALTER COLUMN sent_at DROP DEFAULT`,
+      ).catch((err) => console.warn('[billing] sent_at default:', err));
+      await query(
+        `ALTER TABLE invoices
+           ADD COLUMN IF NOT EXISTS is_auto_generated BOOLEAN NOT NULL DEFAULT false`,
+      ).catch((err) => console.warn('[billing] is_auto_generated column:', err));
+      const [overdueCol] = await query<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_name = 'invoices' AND column_name = 'overdue_notified_at'
+         ) AS exists`,
+      ).catch(() => [{ exists: true }]);
+      if (!overdueCol?.exists) {
+        await query(
+          `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS overdue_notified_at TIMESTAMPTZ`,
+        ).catch((err) => console.warn('[billing] overdue_notified_at column:', err));
+        // Invoices already past due before this feature shipped are not re-announced.
+        await query(
+          `UPDATE invoices SET overdue_notified_at = now()
+           WHERE due_date < CURRENT_DATE AND overdue_notified_at IS NULL`,
+        ).catch((err) => console.warn('[billing] overdue_notified_at backfill:', err));
+      }
+      await query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS invoices_tenancy_period_start_uniq
+           ON invoices (tenancy_id, period_start)`,
+      ).catch((err) =>
+        console.warn(
+          '[billing] unique (tenancy_id, period_start) not created — existing duplicates?',
+          err,
+        ),
+      );
     })();
   }
   return billingSchemaReady;
@@ -113,6 +167,12 @@ function parseDateOnly(raw: string): Date {
 function formatMonthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   return `${MONTH_SHORT[(m ?? 1) - 1]} ${y}`;
+}
+
+/** "2026-11-15" → "15 Nov 2026" */
+function formatShortDate(ymd: string): string {
+  const [y, m, d] = ymd.slice(0, 10).split('-').map(Number);
+  return `${d} ${MONTH_SHORT[(m ?? 1) - 1]} ${y}`;
 }
 
 function formatArrearsDescription(months: string[]): string {
@@ -386,6 +446,24 @@ export class BillingService {
   async createInvoice(input: CreateInvoiceInput) {
     await ensureBillingSchema();
 
+    const periodStartYmd = input.periodStart.slice(0, 10);
+    const [duplicate] = await query<{ id: string; sent_at: Date | null }>(
+      `SELECT id, sent_at FROM invoices
+       WHERE tenancy_id = $1 AND period_start = $2::date
+       LIMIT 1`,
+      [input.tenancyId, periodStartYmd],
+    );
+    if (duplicate) {
+      const isDraft = duplicate.sent_at == null;
+      throw new InvoiceConflictError(
+        isDraft
+          ? 'A draft invoice for this billing cycle is waiting for your review. Open it from Payments to edit and send it.'
+          : 'An invoice for this billing cycle already exists. Open it from Payments to edit it.',
+        duplicate.id,
+        isDraft,
+      );
+    }
+
     const lineItems = [...input.lineItems];
 
     if (input.includeArrears) {
@@ -416,21 +494,33 @@ export class BillingService {
     }
 
     const totalAmount = positiveItems.reduce((sum, li) => sum + li.amount, 0);
-    const isPastDue = new Date(input.dueDate) < new Date();
 
-    const [invoice] = await query<{ id: string }>(
-      `INSERT INTO invoices (tenancy_id, property_id, period_start, period_end, due_date, total_amount, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [
-        input.tenancyId,
-        input.propertyId,
-        input.periodStart,
-        input.periodEnd,
-        input.dueDate,
-        totalAmount,
-        isPastDue ? 'overdue' : 'pending',
-      ],
-    );
+    // Owner-created invoices are confirmed on save, so they go straight to the tenant.
+    // Status is corrected by the timezone-aware refresh in getById below.
+    let invoice: { id: string };
+    try {
+      [invoice] = await query<{ id: string }>(
+        `INSERT INTO invoices
+           (tenancy_id, property_id, period_start, period_end, due_date, total_amount,
+            status, sent_at, is_auto_generated)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',now(),false) RETURNING *`,
+        [
+          input.tenancyId,
+          input.propertyId,
+          input.periodStart,
+          input.periodEnd,
+          input.dueDate,
+          totalAmount,
+        ],
+      );
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new Error(
+          'An invoice for this billing cycle already exists. Open it from Payments to edit it.',
+        );
+      }
+      throw err;
+    }
 
     const chargeTypes = await this.listChargeTypes(input.propertyId);
     const typeNameById = new Map(
@@ -475,6 +565,11 @@ export class BillingService {
     ) {
       await query(`DELETE FROM invoices WHERE id = $1`, [(invoice as any).id]);
       throw new Error('Add at least one charge with an amount above 0.');
+    }
+    if (finalized) {
+      await this.notifyTenantInvoiceSent(finalized).catch((err) =>
+        console.warn('[billing] invoice_sent notification:', err),
+      );
     }
     return finalized;
   }
@@ -611,23 +706,36 @@ export class BillingService {
 
     const totalAmount = input.lineItems.reduce((sum, li) => sum + li.amount, 0);
 
-    await query(
-      `UPDATE invoices
-       SET period_start = $1,
-           period_end = $2,
-           due_date = $3,
-           total_amount = $4,
-           updated_at = now()
-       WHERE id = $5 AND property_id = $6`,
-      [
-        input.periodStart,
-        input.periodEnd,
-        input.dueDate,
-        totalAmount,
-        invoiceId,
-        propertyId,
-      ],
-    );
+    try {
+      await query(
+        `UPDATE invoices
+         SET period_start = $1,
+             period_end = $2,
+             overdue_notified_at = CASE
+               WHEN due_date IS DISTINCT FROM $3::date THEN NULL
+               ELSE overdue_notified_at
+             END,
+             due_date = $3,
+             total_amount = $4,
+             updated_at = now()
+         WHERE id = $5 AND property_id = $6`,
+        [
+          input.periodStart,
+          input.periodEnd,
+          input.dueDate,
+          totalAmount,
+          invoiceId,
+          propertyId,
+        ],
+      );
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new Error(
+          'Another invoice already covers a billing cycle starting on this date.',
+        );
+      }
+      throw err;
+    }
 
     await query(`DELETE FROM invoice_line_items WHERE invoice_id = $1`, [
       invoiceId,
@@ -675,7 +783,13 @@ export class BillingService {
     if (!existing) return null;
 
     await query(
-      `UPDATE invoices SET due_date = $1::date, updated_at = now()
+      `UPDATE invoices
+       SET overdue_notified_at = CASE
+             WHEN due_date IS DISTINCT FROM $1::date THEN NULL
+             ELSE overdue_notified_at
+           END,
+           due_date = $1::date,
+           updated_at = now()
        WHERE id = $2 AND property_id = $3`,
       [due, invoiceId, propertyId],
     );
@@ -708,12 +822,13 @@ export class BillingService {
 
     const tenancies = await query<{
       id: string;
+      full_name: string | null;
       monthly_rent: string | number | null;
       move_in_at: Date | string | null;
       move_out_at: Date | string | null;
       status: string | null;
     }>(
-      `SELECT id, monthly_rent, move_in_at, move_out_at, status
+      `SELECT id, full_name, monthly_rent, move_in_at, move_out_at, status
        FROM tenancies
        WHERE property_id = $1
          AND ($2::uuid IS NULL OR id = $2::uuid)`,
@@ -762,6 +877,7 @@ export class BillingService {
         existing.map((row) => dbDateToYmd(row.period_start)),
       );
 
+      const drafts: { id: string; periodStart: string; periodEnd: string }[] = [];
       for (const cycle of hostelCyclesDue(checkIn, today)) {
         if (moveOut && compareYmd(cycle.billDate, moveOut) > 0) continue;
         if (existingStarts.has(cycle.periodStart)) continue;
@@ -770,25 +886,34 @@ export class BillingService {
         const initialStatus =
           compareYmd(cycle.dueDate, today) < 0 ? 'overdue' : 'pending';
 
-        const inserted = await query<{ id: string }>(
-          `INSERT INTO invoices
-             (tenancy_id, property_id, period_start, period_end, due_date, total_amount, status)
-           SELECT $1, $2, $3::date, $4::date, $5::date, $6, $7::invoice_status
-           WHERE NOT EXISTS (
-             SELECT 1 FROM invoices
-             WHERE tenancy_id = $1 AND period_start = $3::date
-           )
-           RETURNING id`,
-          [
-            tenancy.id,
-            propertyId,
-            cycle.periodStart,
-            cycle.periodEnd,
-            cycle.dueDate,
-            rent,
-            initialStatus,
-          ],
-        );
+        // Draft (sent_at NULL): hidden from the tenant until the owner sends it.
+        // NOT EXISTS + the unique (tenancy_id, period_start) index make retries safe.
+        let inserted: { id: string }[];
+        try {
+          inserted = await query<{ id: string }>(
+            `INSERT INTO invoices
+               (tenancy_id, property_id, period_start, period_end, due_date, total_amount,
+                status, sent_at, is_auto_generated)
+             SELECT $1, $2, $3::date, $4::date, $5::date, $6, $7::invoice_status, NULL, true
+             WHERE NOT EXISTS (
+               SELECT 1 FROM invoices
+               WHERE tenancy_id = $1 AND period_start = $3::date
+             )
+             RETURNING id`,
+            [
+              tenancy.id,
+              propertyId,
+              cycle.periodStart,
+              cycle.periodEnd,
+              cycle.dueDate,
+              rent,
+              initialStatus,
+            ],
+          );
+        } catch (err: any) {
+          if (err?.code === '23505') continue;
+          throw err;
+        }
         const invoiceId = inserted[0]?.id;
         if (!invoiceId) continue;
 
@@ -798,12 +923,58 @@ export class BillingService {
            VALUES ($1, $2, $3, $4, 'rent'::invoice_charge_kind)`,
           [invoiceId, rentType?.id ?? null, `${label} Rent`, rent],
         );
+        await this.addPendingChargesToInvoice(tenancy.id, invoiceId).catch((err) =>
+          console.warn('[billing] attach pending charges to draft:', err),
+        );
         existingStarts.add(cycle.periodStart);
+        drafts.push({
+          id: invoiceId,
+          periodStart: cycle.periodStart,
+          periodEnd: cycle.periodEnd,
+        });
         created += 1;
+      }
+
+      if (drafts.length > 0) {
+        await this.notifyOwnersDraftsReady(
+          propertyId,
+          tenancy.id,
+          tenancy.full_name ?? 'Tenant',
+          drafts,
+        ).catch((err) => console.warn('[billing] draft-ready notification:', err));
       }
     }
 
     return created;
+  }
+
+  private async notifyOwnersDraftsReady(
+    propertyId: string,
+    tenancyId: string,
+    tenantName: string,
+    drafts: { id: string; periodStart: string; periodEnd: string }[],
+  ) {
+    const latest = drafts[drafts.length - 1];
+    const body =
+      drafts.length === 1
+        ? `${tenantName}'s invoice for ${formatShortDate(latest.periodStart)} – ${formatShortDate(latest.periodEnd)} is ready. Review rent, utilities and due date, then send it.`
+        : `${drafts.length} invoices for ${tenantName} are ready (up to ${formatShortDate(latest.periodEnd)}). Review and send them.`;
+    await notifyPropertyOwners({
+      propertyId,
+      type: 'invoice_draft_ready',
+      title: 'Invoice ready for review',
+      body,
+      data: {
+        route: '/invoice-review',
+        invoice_id: latest.id,
+        invoiceId: latest.id,
+        tenancy_id: tenancyId,
+        tenancyId,
+        property_id: propertyId,
+        propertyId,
+        draft_count: drafts.length,
+      },
+    });
   }
 
   /** Overdue starts the calendar day after the saved due_date. */
@@ -845,16 +1016,184 @@ export class BillingService {
     );
   }
 
+  /**
+   * Scheduled run: create draft invoices for completed cycles, refresh statuses,
+   * then send each overdue notice once. Safe to run repeatedly.
+   */
   async ensureAllHostelPgAnniversaryInvoices(): Promise<number> {
     const properties = await query<{ id: string }>(
       `SELECT id FROM properties`,
     );
     let created = 0;
     for (const property of properties) {
-      created += await this.ensureHostelPgAnniversaryInvoices(property.id);
-      await this.refreshHostelInvoiceStatuses(property.id);
+      try {
+        created += await this.ensureHostelPgAnniversaryInvoices(property.id);
+        await this.refreshHostelInvoiceStatuses(property.id);
+        await this.notifyOverdueInvoices(property.id);
+      } catch (err) {
+        console.error(`[billing] scheduled run failed for property ${property.id}:`, err);
+      }
     }
     return created;
+  }
+
+  /**
+   * One overdue notice per sent invoice (tenant + owners). The row is claimed
+   * by setting overdue_notified_at first, so concurrent runs cannot double-send.
+   * Changing the due date clears the marker (see updateDueDate / updateInvoice).
+   */
+  async notifyOverdueInvoices(propertyId: string): Promise<number> {
+    const today = await this.propertyToday(propertyId);
+    const claimed = await query<{
+      id: string;
+      tenancy_id: string;
+      due_date: Date | string;
+      balance: string;
+      user_id: string;
+      full_name: string | null;
+    }>(
+      `UPDATE invoices i
+       SET overdue_notified_at = now()
+       FROM tenancies t
+       WHERE t.id = i.tenancy_id
+         AND i.property_id = $1
+         AND i.sent_at IS NOT NULL
+         AND i.overdue_notified_at IS NULL
+         AND i.due_date < $2::date
+         AND i.total_amount > COALESCE(
+           (SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0)
+       RETURNING i.id, i.tenancy_id, i.due_date::text AS due_date,
+         (i.total_amount - COALESCE(
+           (SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id), 0))::text AS balance,
+         t.user_id, t.full_name`,
+      [propertyId, today],
+    );
+
+    for (const row of claimed) {
+      const due = formatShortDate(String(row.due_date));
+      const balance = Number(row.balance);
+      const name = row.full_name ?? 'Tenant';
+      const ids = {
+        invoice_id: row.id,
+        invoiceId: row.id,
+        tenancy_id: row.tenancy_id,
+        tenancyId: row.tenancy_id,
+        property_id: propertyId,
+        propertyId,
+        amount_due: balance,
+      };
+      await createNotification({
+        userId: row.user_id,
+        propertyId,
+        type: 'invoice_overdue',
+        title: 'Payment overdue',
+        body: `Your payment of ₹${balance} was due on ${due}. Please pay as soon as possible.`,
+        data: { route: '/tenant/dashboard?focus=payments', ...ids },
+      });
+      await notifyPropertyOwners({
+        propertyId,
+        type: 'invoice_overdue_owner',
+        title: 'Rent overdue',
+        body: `${name} has ₹${balance} overdue (due ${due}).`,
+        data: { route: '/tenant-profile', ...ids },
+      }).catch((err) => console.warn('[billing] owner overdue notification:', err));
+    }
+    return claimed.length;
+  }
+
+  /**
+   * Owner confirms a draft: mark it sent and notify the tenant.
+   * Idempotent — a second call returns the invoice without re-notifying.
+   */
+  async sendInvoice(invoiceId: string, propertyId: string) {
+    await ensureBillingSchema();
+    const [existing] = await query<{ id: string; total_amount: string }>(
+      `SELECT id, total_amount FROM invoices WHERE id = $1 AND property_id = $2`,
+      [invoiceId, propertyId],
+    );
+    if (!existing) return null;
+    if (!(Number(existing.total_amount) > 0)) {
+      throw new Error('Add at least one charge with an amount above 0 before sending.');
+    }
+
+    const today = await this.propertyToday(propertyId);
+    // If the due date has already passed, the "sent" notice itself says so,
+    // so the scheduled overdue notice is not sent a second time.
+    const sent = await query<{ id: string }>(
+      `UPDATE invoices
+       SET sent_at = now(),
+           overdue_notified_at = CASE
+             WHEN due_date < $3::date THEN now()
+             ELSE overdue_notified_at
+           END,
+           updated_at = now()
+       WHERE id = $1 AND property_id = $2 AND sent_at IS NULL
+       RETURNING id`,
+      [invoiceId, propertyId, today],
+    );
+
+    const invoice = await this.getById(invoiceId);
+    if (sent.length > 0 && invoice) {
+      await this.notifyTenantInvoiceSent(invoice).catch((err) =>
+        console.warn('[billing] invoice_sent notification:', err),
+      );
+    }
+    return invoice ? { ...invoice, newly_sent: sent.length > 0 } : null;
+  }
+
+  private async notifyTenantInvoiceSent(invoice: any) {
+    const [row] = await query<{
+      user_id: string;
+      due_date: string;
+      period_start: string;
+      period_end: string;
+    }>(
+      `SELECT t.user_id, i.due_date::text AS due_date,
+              i.period_start::text AS period_start, i.period_end::text AS period_end
+       FROM invoices i JOIN tenancies t ON t.id = i.tenancy_id
+       WHERE i.id = $1`,
+      [invoice.id],
+    );
+    if (!row) return;
+    const tenancy = { user_id: row.user_id };
+    const total = Number(invoice.total_amount ?? 0);
+    const balance = total - Number(invoice.paid_amount ?? 0);
+    const dueYmd = row.due_date;
+    const periodStart = row.period_start;
+    const periodEnd = row.period_end;
+    const today = await this.propertyToday(String(invoice.property_id));
+    const pastDue = compareYmd(dueYmd, today) < 0;
+    await createNotification({
+      userId: tenancy.user_id,
+      propertyId: invoice.property_id,
+      type: 'invoice_sent',
+      title: pastDue ? 'New invoice — payment overdue' : 'New invoice',
+      body: `Invoice for ${formatShortDate(periodStart)} – ${formatShortDate(periodEnd)}: ₹${balance}. ${
+        pastDue ? 'It was due on' : 'Due by'
+      } ${formatShortDate(dueYmd)}.`,
+      data: {
+        route: '/tenant/dashboard?focus=payments',
+        invoice_id: invoice.id,
+        invoiceId: invoice.id,
+        tenancy_id: invoice.tenancy_id,
+        tenancyId: invoice.tenancy_id,
+        property_id: invoice.property_id,
+        propertyId: invoice.property_id,
+        amount_due: balance,
+      },
+    });
+  }
+
+  private async propertyToday(propertyId: string): Promise<string> {
+    const [property] = await query<{ timezone: string | null }>(
+      `SELECT timezone FROM properties WHERE id = $1`,
+      [propertyId],
+    );
+    try {
+      return calendarDateInTimeZone(new Date(), hostelBillingTimeZone(property?.timezone));
+    } catch {
+      return calendarDateInTimeZone(new Date(), 'Asia/Kolkata');
+    }
   }
 
   async getById(invoiceId: string) {
@@ -866,7 +1205,11 @@ export class BillingService {
     if (!invoice) return null;
     await this.refreshHostelInvoiceStatuses(String(invoice.property_id), invoiceId);
     const [fresh] = await query<any>(
-      `SELECT * FROM invoices WHERE id = $1`,
+      `SELECT i.*, t.full_name, u.phone
+       FROM invoices i
+       LEFT JOIN tenancies t ON t.id = i.tenancy_id
+       LEFT JOIN users u ON u.id = t.user_id
+       WHERE i.id = $1`,
       [invoiceId],
     );
     if (fresh) Object.assign(invoice, fresh);
@@ -886,11 +1229,12 @@ export class BillingService {
          ili.description`,
       [invoiceId],
     );
-    const payments = await query(
+    const payments = await query<any>(
       `SELECT * FROM payments WHERE invoice_id = $1 ORDER BY paid_at DESC`,
       [invoiceId],
     );
-    return { ...invoice, lineItems, payments };
+    const paidAmount = payments.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+    return { ...invoice, paid_amount: paidAmount, lineItems, payments };
   }
 
   async listByProperty(propertyId: string) {
@@ -988,6 +1332,7 @@ export class BillingService {
               COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0) AS paid_amount
        FROM invoices i
        WHERE i.tenancy_id = $1
+         AND i.sent_at IS NOT NULL
        ORDER BY i.due_date DESC`,
       [tenancyId],
     );
@@ -1040,32 +1385,22 @@ export class BillingService {
     return this.getById(invoiceId);
   }
 
+  /** Same rules as refreshHostelInvoiceStatuses, in the property's local calendar. */
   private async recomputeStatus(invoiceId: string) {
-    const [invoice] = await query<any>(
-      `SELECT * FROM invoices WHERE id = $1`,
+    const [invoice] = await query<{ property_id: string }>(
+      `SELECT property_id FROM invoices WHERE id = $1`,
       [invoiceId],
     );
-    const [{ paid }] = await query<{ paid: string }>(
-      `SELECT COALESCE(SUM(amount), 0)::text AS paid FROM payments WHERE invoice_id = $1`,
-      [invoiceId],
-    );
-    const paidAmount = Number(paid);
-    const total = Number(invoice.total_amount);
-    let status: string;
-    if (paidAmount >= total) status = 'paid';
-    else if (paidAmount > 0) status = 'partial';
-    else if (new Date(invoice.due_date) < new Date()) status = 'overdue';
-    else status = 'pending';
-
-    await query(
-      `UPDATE invoices SET status = $1, updated_at = now() WHERE id = $2`,
-      [status, invoiceId],
-    );
+    if (!invoice) return;
+    await this.refreshHostelInvoiceStatuses(invoice.property_id, invoiceId);
   }
 
   async sendReminder(invoiceId: string) {
     const invoice = await this.getById(invoiceId);
     if (!invoice) throw new Error('Invoice not found');
+    if ((invoice as any).sent_at == null) {
+      throw new Error('This invoice is still a draft. Send it to the tenant first.');
+    }
 
     const [tenancy] = await query<any>(
       `SELECT t.user_id, t.full_name, u.phone

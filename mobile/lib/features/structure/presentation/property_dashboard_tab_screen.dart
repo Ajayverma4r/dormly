@@ -24,6 +24,7 @@ import '../../home/presentation/profile_screen.dart' show myProfileProvider;
 import '../../notifications/presentation/notifications_providers.dart';
 import '../../properties/domain/property_archetype.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
+import '../../search/presentation/global_search_screen.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 import '../../tenancies/presentation/add_tenant_screen.dart';
@@ -35,6 +36,8 @@ import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show activityProvider, hierarchyLevelsProvider;
 import 'hostel_pg_dashboard_body.dart';
 import 'property_shell_screen.dart' show propertyDetailProvider;
+import 'rooms/room_list_filter.dart';
+import 'rooms/rooms_tree_provider.dart';
 
 class PropertyDashboardTabScreen extends ConsumerWidget {
   final String propertyId;
@@ -288,6 +291,11 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     );
   }
 
+  void _openRoomsWithFilter(WidgetRef ref, RoomListFilter filter) {
+    ref.read(roomListFilterProvider(propertyId).notifier).state = filter;
+    onGoToRoomsTab?.call();
+  }
+
   Future<void> _refreshDashboard(WidgetRef ref) async {
     ref.invalidate(propertyDashboardProvider(propertyId));
     ref.invalidate(activityProvider(propertyId));
@@ -295,6 +303,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ref.invalidate(myProfileProvider);
     ref.invalidate(unreadNotificationsCountProvider);
     ref.invalidate(hierarchyLevelsProvider(propertyId));
+    ref.invalidate(roomsTreeProvider(propertyId));
 
     await Future.wait<Object>([
       ref.read(propertyDashboardProvider(propertyId).future).catchError((_) =>
@@ -341,6 +350,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     final displayName = property?['name']?.toString() ?? propertyName;
     final notificationCount = notificationsAsync.valueOrNull ?? 0;
     final archetype = propertyArchetypeFromProperty(property);
+    final isRentalHouse = archetype == PropertyArchetype.individualLease;
 
     // Dark dashboard pack for every property type.
     final profile = profileAsync.valueOrNull;
@@ -355,6 +365,11 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
       avatarUrlResolver: _resolveAvatarUrl,
       propertySubtitle: _propertySubtitle(property),
       onNotifications: () => _onNotifications(context, ref),
+      onSearch: () => openGlobalSearch(
+        context,
+        propertyId: propertyId,
+        canManage: canManage,
+      ),
       onProfile: () => _onProfileTap(context),
       onRefresh: () => _refreshDashboard(ref),
       onAddTenant: canManage ? () => _openAddTenant(context, ref) : null,
@@ -367,7 +382,13 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
         if (overview == null) return;
         _openNetProfitInsights(context, ref, overview);
       },
-      onViewAllRooms: onGoToRoomsTab,
+      onViewAllRooms: isRentalHouse
+          ? onGoToRoomsTab
+          : () => _openRoomsWithFilter(ref, RoomListFilter.all),
+      onOccupancyStatTap: isRentalHouse
+          ? null
+          : (filter) => _openRoomsWithFilter(ref, filter),
+      countFromRoomList: archetype == PropertyArchetype.gatedCommunity,
       unitKind: switch (archetype) {
         PropertyArchetype.sharedLiving => 'Bed',
         PropertyArchetype.gatedCommunity => 'Flat',

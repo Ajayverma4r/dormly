@@ -121,6 +121,18 @@ class BillingRepository {
     return Map<String, dynamic>.from(res.data['data']);
   }
 
+  /// Owner confirms a draft invoice; the tenant can see it and is notified.
+  /// Safe to call twice — the server only notifies once.
+  Future<Map<String, dynamic>> sendInvoice(
+    String propertyId,
+    String invoiceId,
+  ) async {
+    final res = await _client.dio.post(
+      '/v1/properties/$propertyId/billing/invoices/$invoiceId/send',
+    );
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
   Future<void> recordPayment(String propertyId, String invoiceId, double amount, String method) async {
     await _client.dio.post('/v1/properties/$propertyId/billing/invoices/$invoiceId/payments', data: {
       'amount': amount,

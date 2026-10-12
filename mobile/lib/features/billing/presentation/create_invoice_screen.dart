@@ -92,7 +92,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     'partially_paid',
   };
 
-  static const _dueDaysAfterBill = 4;
+  static const _dueDaysAfterBill = 5;
 
   @override
   void initState() {
@@ -126,7 +126,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   void _onAmountChanged() => setState(() {});
 
-  /// Due date is the bill-generation date + 4 calendar days.
+  /// Due date is the bill-generation date + 5 calendar days.
   /// Bill date is the day after the completed stay (period end + 1).
   DateTime _dueFromPeriodEnd(DateTime periodEnd) {
     final billDate = _dateOnly(periodEnd).add(const Duration(days: 1));
@@ -138,7 +138,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   /// Completed stay for any property type.
   /// Period start = check-in anniversary. Bill date = next anniversary.
-  /// Due date = bill date + 4 calendar days.
+  /// Due date = bill date + 5 calendar days.
   ({DateTime periodStart, DateTime periodEnd, DateTime dueDate})
       _stayCycle(DateTime checkIn, {DateTime? asOf}) {
     final today = _dateOnly(asOf ?? DateTime.now());
@@ -149,7 +149,8 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
         return (
           periodStart: _addCalendarMonths(start, k),
           periodEnd: _dateOnly(bill.subtract(const Duration(days: 1))),
-          dueDate: _dateOnly(bill.add(const Duration(days: 4))),
+          dueDate: _dateOnly(
+              bill.add(const Duration(days: _dueDaysAfterBill))),
         );
       }
     }
@@ -157,7 +158,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     return (
       periodStart: _addCalendarMonths(start, 239),
       periodEnd: _dateOnly(bill.subtract(const Duration(days: 1))),
-      dueDate: _dateOnly(bill.add(const Duration(days: 4))),
+      dueDate: _dateOnly(bill.add(const Duration(days: _dueDaysAfterBill))),
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../data/notifications_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../billing/presentation/invoice_detail_screen.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../tenancies/presentation/tenant_profile_screen.dart';
 import 'notifications_providers.dart';
@@ -133,6 +134,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     if (_isMoveOut(n)) return Icons.logout_rounded;
     if (_isSubscription(n)) return Icons.workspace_premium_outlined;
     if (_isRentReminder(n)) return Icons.payments_outlined;
+    final type = (n['type'] ?? '').toString();
+    if (type == 'invoice_draft_ready') return Icons.rate_review_outlined;
+    if (type.startsWith('invoice_')) return Icons.receipt_long_outlined;
     return Icons.notifications_active_outlined;
   }
 
@@ -225,6 +229,25 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     if (route.contains('payments') ||
         route.contains('tenant/dashboard')) {
       context.go(route.startsWith('/') ? route : '/$route');
+      return;
+    }
+    if (route == '/invoice-review') {
+      final invoiceId =
+          data['invoice_id']?.toString() ?? data['invoiceId']?.toString();
+      final propertyId = _propertyIdFrom(n);
+      if (invoiceId != null &&
+          invoiceId.isNotEmpty &&
+          propertyId != null &&
+          propertyId.isNotEmpty) {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => InvoiceDetailScreen(
+              propertyId: propertyId,
+              invoiceId: invoiceId,
+            ),
+          ),
+        );
+      }
       return;
     }
     if (route == '/tenant-profile') {

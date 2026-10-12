@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { StructureValidationError } from '@core/structure-engine/services/structure.service';
 import { SubscriptionRequiredError } from '@shared/property-monetization';
 import { FeatureNotAllowedError } from '@modules/tenant-portal/property-type-access';
+import { InvoiceConflictError } from '@modules/billing/billing.service';
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ZodError) {
@@ -15,6 +16,14 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       code: err.code,
       feature: err.feature,
       propertyKind: err.kind,
+    });
+  }
+  if (err instanceof InvoiceConflictError) {
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
+      invoiceId: err.invoiceId,
+      isDraft: err.isDraft,
     });
   }
   if (err instanceof StructureValidationError) {

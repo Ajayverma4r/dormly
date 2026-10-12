@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../domain/tenant_filters.dart';
+
 /// Palette aligned with Hostel/PG dashboard (Screen 1).
 class _H {
   static const bg = Color(0xFF0D1623);
@@ -18,13 +20,11 @@ class _H {
   static const greenBg = Color(0xFF1A3A2A);
   static const orange = Color(0xFFF2835F);
   static const orangeBg = Color(0xFF3E2A22);
+  static const red = Color(0xFFF87171);
+  static const redBg = Color(0xFF3A1F28);
   static const slate = Color(0xFF64748B);
   static const slateBg = Color(0xFF1E293B);
 }
-
-enum HostelGuestFilter { all, active, due, checkedOut }
-
-enum _GuestDisplayStatus { active, due, checkedOut }
 
 class HostelPgTenantsBody extends StatefulWidget {
   final List<Map<String, dynamic>> residents;
@@ -46,6 +46,7 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
   HostelGuestFilter _filter = HostelGuestFilter.active;
+  TenantPaymentFilter _payment = TenantPaymentFilter.all;
 
   @override
   void dispose() {
@@ -53,53 +54,30 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
     super.dispose();
   }
 
-  bool _hasDue(Map<String, dynamic> r) {
-    final raw = r['has_due'] ?? r['hasDue'];
-    if (raw is bool) return raw;
-    return raw?.toString().toLowerCase() == 'true';
-  }
-
-  bool _isActive(Map<String, dynamic> r) =>
-      r['status']?.toString() == 'active';
-
-  bool _isCheckedOut(Map<String, dynamic> r) =>
-      r['status']?.toString() == 'ended';
-
-  List<Map<String, dynamic>> _applyFilters(List<Map<String, dynamic>> list) {
-    final q = _searchQuery.trim().toLowerCase();
-    return list.where((r) {
-      switch (_filter) {
-        case HostelGuestFilter.active:
-          if (!_isActive(r) || _hasDue(r)) return false;
-        case HostelGuestFilter.due:
-          if (!_isActive(r) || !_hasDue(r)) return false;
-        case HostelGuestFilter.checkedOut:
-          if (!_isCheckedOut(r)) return false;
-        case HostelGuestFilter.all:
-          break;
-      }
-      if (q.isEmpty) return true;
-      final name = (r['full_name'] ?? '').toString().toLowerCase();
-      final room = (r['node_name'] ?? '').toString().toLowerCase();
-      final floor = (r['floor_name'] ?? r['floorName'] ?? '').toString().toLowerCase();
-      final phone = (r['phone'] ?? '').toString().toLowerCase();
-      return name.contains(q) ||
-          room.contains(q) ||
-          floor.contains(q) ||
-          phone.contains(q);
-    }).toList();
-  }
-
   @override
   Widget build(BuildContext context) {
     final residents = widget.residents;
+    final today = DateTime.now();
+    final active = residents.where(isActiveTenancy).toList();
     final allCount = residents.length;
-    final activeCount =
-        residents.where((r) => _isActive(r) && !_hasDue(r)).length;
-    final dueCount =
-        residents.where((r) => _isActive(r) && _hasDue(r)).length;
-    final checkedOutCount = residents.where(_isCheckedOut).length;
-    final filtered = _applyFilters(residents);
+    final activeCount = active.length;
+    final checkedOutCount = residents.where(isCheckedOutTenancy).length;
+    final payCounts = <TenantPaymentStatus, int>{
+      for (final s in TenantPaymentStatus.values) s: 0,
+    };
+    for (final r in active) {
+      final s = tenantPaymentStatus(r, today: today);
+      payCounts[s] = payCounts[s]! + 1;
+    }
+    final filtered = residents
+        .where((r) => matchesTenantFilters(
+              r,
+              stay: _filter,
+              payment: _payment,
+              query: _searchQuery,
+              today: today,
+            ))
+        .toList();
 
     return ColoredBox(
       color: _H.bg,
@@ -155,11 +133,26 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
           _FilterChips(
             allCount: allCount,
             activeCount: activeCount,
-            dueCount: dueCount,
             checkedOutCount: checkedOutCount,
             selected: _filter,
-            onSelected: (f) => setState(() => _filter = f),
+            onSelected: (f) => setState(() {
+              _filter = f;
+              if (f != HostelGuestFilter.active) {
+                _payment = TenantPaymentFilter.all;
+              }
+            }),
           ),
+          if (_filter == HostelGuestFilter.active) ...[
+            const SizedBox(height: 8),
+            _PaymentChips(
+              allCount: activeCount,
+              paidCount: payCounts[TenantPaymentStatus.paid]!,
+              dueCount: payCounts[TenantPaymentStatus.due]!,
+              overdueCount: payCounts[TenantPaymentStatus.overdue]!,
+              selected: _payment,
+              onSelected: (p) => setState(() => _payment = p),
+            ),
+          ],
           const SizedBox(height: 10),
           Expanded(
             child: filtered.isEmpty
@@ -320,10 +313,54 @@ class _SearchRow extends StatelessWidget {
   }
 }
 
+class _PaymentChips extends StatelessWidget {
+  final int allCount;
+  final int paidCount;
+  final int dueCount;
+  final int overdueCount;
+  final TenantPaymentFilter selected;
+  final ValueChanged<TenantPaymentFilter> onSelected;
+
+  const _PaymentChips({
+    required this.allCount,
+    required this.paidCount,
+    required this.dueCount,
+    required this.overdueCount,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      (TenantPaymentFilter.all, 'All payments ($allCount)'),
+      (TenantPaymentFilter.paid, 'Paid ($paidCount)'),
+      (TenantPaymentFilter.due, 'Due ($dueCount)'),
+      (TenantPaymentFilter.overdue, 'Overdue ($overdueCount)'),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _Chip(
+              label: items[i].$2,
+              selected: selected == items[i].$1,
+              compact: true,
+              onTap: () => onSelected(items[i].$1),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _FilterChips extends StatelessWidget {
   final int allCount;
   final int activeCount;
-  final int dueCount;
   final int checkedOutCount;
   final HostelGuestFilter selected;
   final ValueChanged<HostelGuestFilter> onSelected;
@@ -331,7 +368,6 @@ class _FilterChips extends StatelessWidget {
   const _FilterChips({
     required this.allCount,
     required this.activeCount,
-    required this.dueCount,
     required this.checkedOutCount,
     required this.selected,
     required this.onSelected,
@@ -357,12 +393,6 @@ class _FilterChips extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           _Chip(
-            label: 'Due ($dueCount)',
-            selected: selected == HostelGuestFilter.due,
-            onTap: () => onSelected(HostelGuestFilter.due),
-          ),
-          const SizedBox(width: 8),
-          _Chip(
             label: 'Checked-out ($checkedOutCount)',
             selected: selected == HostelGuestFilter.checkedOut,
             onTap: () => onSelected(HostelGuestFilter.checkedOut),
@@ -377,11 +407,13 @@ class _Chip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final bool compact;
 
   const _Chip({
     required this.label,
     required this.selected,
     required this.onTap,
+    this.compact = false,
   });
 
   @override
@@ -397,11 +429,14 @@ class _Chip extends StatelessWidget {
         onTap: onTap,
         customBorder: const StadiumBorder(),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 14,
+            vertical: compact ? 6 : 8,
+          ),
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: compact ? 12 : 13,
               fontWeight: FontWeight.w600,
               color: selected ? Colors.white : _H.textSecondary,
             ),
@@ -423,7 +458,7 @@ class _TenantCard extends StatelessWidget {
     final name = resident['full_name']?.toString() ?? '';
     final phone = _formatPhone(resident['phone']?.toString() ?? '');
     final location = _roomLine(resident);
-    final status = _resolveDisplayStatus(resident);
+    final status = _resolvePill(resident);
     final initial = _firstInitial(name);
 
     return Material(
@@ -527,8 +562,10 @@ class _TenantCard extends StatelessWidget {
   }
 }
 
+enum _PillKind { paid, due, overdue, checkedOut, other }
+
 class _StatusPill extends StatelessWidget {
-  final _GuestDisplayStatus status;
+  final _PillKind status;
 
   const _StatusPill({required this.status});
 
@@ -539,18 +576,26 @@ class _StatusPill extends StatelessWidget {
     late String label;
 
     switch (status) {
-      case _GuestDisplayStatus.active:
+      case _PillKind.paid:
         bg = _H.greenBg;
         fg = _H.green;
-        label = 'Active';
-      case _GuestDisplayStatus.due:
+        label = 'Paid';
+      case _PillKind.due:
         bg = _H.orangeBg;
         fg = _H.orange;
         label = 'Due';
-      case _GuestDisplayStatus.checkedOut:
+      case _PillKind.overdue:
+        bg = _H.redBg;
+        fg = _H.red;
+        label = 'Overdue';
+      case _PillKind.checkedOut:
         bg = _H.slateBg;
         fg = _H.slate;
         label = 'Out';
+      case _PillKind.other:
+        bg = _H.slateBg;
+        fg = _H.slate;
+        label = 'Pending';
     }
 
     return Container(
@@ -619,15 +664,19 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-_GuestDisplayStatus _resolveDisplayStatus(Map<String, dynamic> r) {
-  if (r['status']?.toString() == 'ended') {
-    return _GuestDisplayStatus.checkedOut;
+/// Checked-out tenants always show Out, whatever they still owe.
+/// Active tenants show their payment status.
+_PillKind _resolvePill(Map<String, dynamic> r) {
+  if (isCheckedOutTenancy(r)) return _PillKind.checkedOut;
+  if (!isActiveTenancy(r)) return _PillKind.other;
+  switch (tenantPaymentStatus(r)) {
+    case TenantPaymentStatus.paid:
+      return _PillKind.paid;
+    case TenantPaymentStatus.due:
+      return _PillKind.due;
+    case TenantPaymentStatus.overdue:
+      return _PillKind.overdue;
   }
-  final hasDue = r['has_due'] == true ||
-      r['hasDue'] == true ||
-      r['has_due']?.toString() == 'true';
-  if (hasDue) return _GuestDisplayStatus.due;
-  return _GuestDisplayStatus.active;
 }
 
 String _firstInitial(String name) {

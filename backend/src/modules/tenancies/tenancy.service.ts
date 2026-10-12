@@ -7,6 +7,7 @@
 
 import { query } from '@config/db';
 import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
+import { ensureBillingSchema } from '@modules/billing/billing.service';
 
 interface CreateTenancyInput {
   propertyId: string;
@@ -62,6 +63,7 @@ export class TenancyService {
   }
 
   async listByProperty(propertyId: string) {
+    await ensureBillingSchema().catch(() => undefined);
     return query(
       `SELECT t.*, u.phone, u.name AS user_name, n.name AS node_name,
               l.display_name AS level_name,
@@ -69,8 +71,15 @@ export class TenancyService {
               EXISTS (
                 SELECT 1 FROM invoices i
                 WHERE i.tenancy_id = t.id
+                  AND i.sent_at IS NOT NULL
                   AND i.status IN ('pending', 'overdue', 'partial')
-              ) AS has_due
+              ) AS has_due,
+              (
+                SELECT MIN(i.due_date)::text FROM invoices i
+                WHERE i.tenancy_id = t.id
+                  AND i.sent_at IS NOT NULL
+                  AND i.status IN ('pending', 'overdue', 'partial')
+              ) AS earliest_open_due_date
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id

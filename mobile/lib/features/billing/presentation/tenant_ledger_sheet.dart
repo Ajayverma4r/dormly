@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/billing_repository.dart';
+import 'billing_invoice_helpers.dart' show isDraftInvoice;
 import 'create_invoice_screen.dart';
+import 'invoice_send_flow.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
 import 'record_payment_dialog.dart';
 import 'whatsapp_reminder.dart';
@@ -263,6 +265,18 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     await _load();
   }
 
+  Future<void> _sendInvoice(Map<String, dynamic> inv) async {
+    final sent = await confirmAndSendInvoice(
+      context,
+      ref,
+      propertyId: widget.propertyId,
+      invoice: inv,
+      tenantName: widget.tenantName,
+      phone: widget.phone,
+    );
+    if (sent) await _load();
+  }
+
   Future<void> _recordPaymentForInvoice(Map<String, dynamic> inv) async {
     final id = inv['id']?.toString();
     if (id == null) return;
@@ -404,6 +418,7 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
                                   onEdit: _editInvoice,
                                   onEditDueDate: _editDueDate,
                                   onRecordPayment: _recordPaymentForInvoice,
+                                  onSend: _sendInvoice,
                                 );
                               },
                             ),
@@ -456,6 +471,7 @@ class _MonthSection extends StatelessWidget {
   final Future<void> Function(Map<String, dynamic>) onEdit;
   final Future<void> Function(Map<String, dynamic>) onEditDueDate;
   final Future<void> Function(Map<String, dynamic>) onRecordPayment;
+  final Future<void> Function(Map<String, dynamic>) onSend;
 
   const _MonthSection({
     required this.title,
@@ -468,6 +484,7 @@ class _MonthSection extends StatelessWidget {
     required this.onEdit,
     required this.onEditDueDate,
     required this.onRecordPayment,
+    required this.onSend,
   });
 
   @override
@@ -494,8 +511,10 @@ class _MonthSection extends StatelessWidget {
                 amountOf(inv['paid_amount'] ?? inv['paidAmount']);
             final remaining = (total - paid).clamp(0.0, double.infinity);
             final items = lineItemsOf(inv);
-            final status =
-                inv['status']?.toString().toUpperCase() ?? 'PENDING';
+            final isDraft = isDraftInvoice(inv);
+            final status = isDraft
+                ? 'DRAFT · REVIEW & SEND'
+                : inv['status']?.toString().toUpperCase() ?? 'PENDING';
             final busy = id != null && id == busyInvoiceId;
 
             return Material(
@@ -521,9 +540,11 @@ class _MonthSection extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
-                                color: status == 'OVERDUE'
-                                    ? AppColors.danger
-                                    : AppColors.caution,
+                                color: isDraft
+                                    ? const Color(0xFF8B5CF6)
+                                    : status == 'OVERDUE'
+                                        ? AppColors.danger
+                                        : AppColors.caution,
                               ),
                             ),
                           ),
@@ -609,6 +630,18 @@ class _MonthSection extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          if (isDraft)
+                            Expanded(
+                              child: FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFF6D28D9),
+                                ),
+                                onPressed: busy ? null : () => onSend(inv),
+                                icon: const Icon(Icons.send_rounded, size: 16),
+                                label: const Text('Send'),
+                              ),
+                            )
+                          else
                           Expanded(
                             child: FilledButton.icon(
                               style: FilledButton.styleFrom(

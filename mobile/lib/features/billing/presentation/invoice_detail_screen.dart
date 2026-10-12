@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../data/billing_repository.dart';
+import 'billing_invoice_helpers.dart';
 import 'billing_providers.dart';
+import 'create_invoice_screen.dart';
+import 'invoice_send_flow.dart';
 import 'record_payment_dialog.dart';
 
 final invoiceDetailProvider = FutureProvider.autoDispose
@@ -91,6 +94,36 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
     }
   }
 
+  void _refresh() {
+    ref.invalidate(
+      invoiceDetailProvider((widget.propertyId, widget.invoiceId)),
+    );
+    ref.invalidate(invoicesProvider(widget.propertyId));
+  }
+
+  Future<void> _reviewAndEdit(Map<String, dynamic> invoice) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => CreateInvoiceScreen(
+          propertyId: widget.propertyId,
+          invoiceId: widget.invoiceId,
+          invoice: invoice,
+        ),
+      ),
+    );
+    _refresh();
+  }
+
+  Future<void> _sendToTenant(Map<String, dynamic> invoice) async {
+    final sent = await confirmAndSendInvoice(
+      context,
+      ref,
+      propertyId: widget.propertyId,
+      invoice: invoice,
+    );
+    if (sent) _refresh();
+  }
+
   Future<void> _sendReminder() async {
     try {
       await ref
@@ -174,8 +207,10 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                 sum + (double.tryParse(p['amount'].toString()) ?? 0),
           );
           final remaining = total - paid;
-          final status =
-              (invoice['status'] ?? 'pending').toString().toUpperCase();
+          final isDraft = isDraftInvoice(invoice);
+          final status = isDraft
+              ? 'DRAFT — REVIEW REQUIRED'
+              : (invoice['status'] ?? 'pending').toString().toUpperCase();
           final dueRaw =
               invoice['due_date']?.toString().split('T').first ?? '';
           final dueDate = DateTime.tryParse(dueRaw);
@@ -185,6 +220,36 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
+              if (isDraft && !widget.viewOnly) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEDE9FE),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFC4B5FD)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.rate_review_outlined,
+                          color: Color(0xFF6D28D9)),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Generated automatically and not yet visible to the '
+                          'tenant. Check rent, utilities and the due date, '
+                          'then send it.',
+                          style: TextStyle(
+                            color: Color(0xFF4C1D95),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -322,6 +387,32 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              if (!widget.viewOnly && isDraft) ...[
+                SizedBox(
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6D28D9),
+                    ),
+                    onPressed: () => _sendToTenant(invoice),
+                    icon: const Icon(Icons.send_rounded, color: Colors.white),
+                    label: const Text(
+                      'Send to Tenant',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _reviewAndEdit(invoice),
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Review & Edit Charges'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               if (!widget.viewOnly && remaining > 0) ...[
                 SizedBox(
                   height: 50,
@@ -340,15 +431,17 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 50,
-                  child: OutlinedButton.icon(
-                    onPressed: _sendReminder,
-                    icon: const Icon(Icons.notifications_active_outlined),
-                    label: const Text('Send Reminder'),
+                if (!isDraft) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      onPressed: _sendReminder,
+                      icon: const Icon(Icons.notifications_active_outlined),
+                      label: const Text('Send Reminder'),
+                    ),
                   ),
-                ),
+                ],
               ],
               if (payments.isNotEmpty) ...[
                 const SizedBox(height: 24),

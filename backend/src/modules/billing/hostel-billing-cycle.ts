@@ -1,14 +1,20 @@
 // Monthly billing cycle for every property type.
 // bill date = check-in anniversary + N calendar months (not +30 days)
-// default due date = bill date + 4 calendar days
+// default due date = bill date + DUE_DAYS_AFTER_BILL calendar days
 // Owner-edited due dates live on invoices.due_date and are never rewritten here.
+//
+// Month-end move-ins: every anniversary is computed from the original
+// check-in day and clamped to the target month's length, so 31 Jan bills on
+// 28/29 Feb, 31 Mar, 30 Apr, 31 May… and never drifts to the 28th.
+
+export const DUE_DAYS_AFTER_BILL = 5;
 
 export type Ymd = { year: number; month: number; day: number };
 
 export type HostelBillingCycle = {
   /** YYYY-MM-DD — check-in anniversary when the bill is created. */
   billDate: string;
-  /** YYYY-MM-DD — bill date + 4 calendar days. Owner may replace this on the invoice. */
+  /** YYYY-MM-DD — bill date + 5 calendar days. Owner may replace this on the invoice. */
   dueDate: string;
   /** First day of the completed stay (check-in anniversary). */
   periodStart: string;
@@ -81,7 +87,7 @@ export function addCalendarDays(date: Ymd, days: number): Ymd {
  * One completed stay.
  * period = check-in anniversary → day before the next anniversary
  * bill date = next anniversary (period end + 1 day)
- * due date = bill date + 4 calendar days
+ * due date = bill date + DUE_DAYS_AFTER_BILL calendar days
  */
 function cycleAt(checkIn: Ymd, index: number): HostelBillingCycle {
   const periodStartDate = addCalendarMonths(checkIn, index);
@@ -89,7 +95,7 @@ function cycleAt(checkIn: Ymd, index: number): HostelBillingCycle {
   const billDate = formatYmd(bill);
   return {
     billDate,
-    dueDate: formatYmd(addCalendarDays(bill, 4)),
+    dueDate: formatYmd(addCalendarDays(bill, DUE_DAYS_AFTER_BILL)),
     periodStart: formatYmd(periodStartDate),
     periodEnd: formatYmd(addCalendarDays(bill, -1)),
   };

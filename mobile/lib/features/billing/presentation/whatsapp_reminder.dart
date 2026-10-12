@@ -34,12 +34,26 @@ String whatsAppReminderMessage(String name, double amount) {
       'at your earliest convenience.';
 }
 
-/// Opens WhatsApp with a pre-filled dues reminder. Shows a SnackBar on failure.
+String whatsAppInvoiceMessage({
+  required String name,
+  required double amount,
+  required String periodLabel,
+  required String dueLabel,
+}) {
+  final displayName = name.trim().isEmpty ? 'there' : name.trim();
+  return 'Hi $displayName, your invoice for $periodLabel is ready. '
+      'Amount: ${_currency.format(amount)}, due by $dueLabel. '
+      'You can view the details in the Dormly app.';
+}
+
+/// Opens WhatsApp with a pre-filled dues reminder (or [message] when given).
+/// Shows a SnackBar on failure.
 Future<void> sendWhatsAppReminder(
   BuildContext context, {
   required String? phone,
   required String name,
   required double amount,
+  String? message,
 }) async {
   final normalized = normalizeWhatsAppPhone(phone);
   if (normalized == null) {
@@ -54,8 +68,8 @@ Future<void> sendWhatsAppReminder(
     return;
   }
 
-  final message = whatsAppReminderMessage(name, amount);
-  final encoded = Uri.encodeComponent(message);
+  final text = message ?? whatsAppReminderMessage(name, amount);
+  final encoded = Uri.encodeComponent(text);
 
   final native = Uri.parse(
     'whatsapp://send?phone=$normalized&text=$encoded',

@@ -505,6 +505,7 @@ export class DashboardService {
            ), 0) AS balance
          FROM invoices i
          WHERE i.property_id = $1
+           AND i.sent_at IS NOT NULL
            AND i.status IN ('overdue', 'pending', 'partial')
            AND i.due_date < CURRENT_DATE
        ),

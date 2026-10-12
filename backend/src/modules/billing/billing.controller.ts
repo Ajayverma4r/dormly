@@ -235,6 +235,19 @@ export class BillingController {
     }
   };
 
+  sendInvoice = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const invoice = await service.sendInvoice(
+        req.params.invoiceId,
+        req.params.propertyId,
+      );
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      res.json({ data: invoice });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   recordPayment = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const body = paymentSchema.parse(req.body);

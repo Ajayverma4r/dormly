@@ -57,6 +57,11 @@ double invoiceRemaining(Map<String, dynamic> inv) =>
 String invoiceStatus(Map<String, dynamic> inv) =>
     inv['status']?.toString().toLowerCase().trim() ?? 'pending';
 
+/// Auto-generated invoice awaiting owner review; the tenant cannot see it yet.
+/// Older API responses without `sent_at` are treated as already sent.
+bool isDraftInvoice(Map<String, dynamic> inv) =>
+    inv.containsKey('sent_at') && inv['sent_at'] == null;
+
 bool isOpenUnpaidInvoice(Map<String, dynamic> inv) {
   final status = invoiceStatus(inv);
   if (!{'pending', 'overdue', 'partial', 'partially_paid'}.contains(status)) {

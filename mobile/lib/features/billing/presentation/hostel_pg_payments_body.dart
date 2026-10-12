@@ -649,6 +649,10 @@ class _PaymentCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              if (group.hasDraft) ...[
+                const _StatusPill(status: 'review'),
+                const SizedBox(width: 4),
+              ],
               _StatusPill(status: group.displayStatus),
               PopupMenuButton<String>(
                 icon: const Icon(
@@ -690,6 +694,10 @@ class _StatusPill extends StatelessWidget {
     late String label;
 
     switch (status) {
+      case 'review':
+        bg = _H.purple.withValues(alpha: 0.18);
+        fg = _H.purple;
+        label = 'Review';
       case 'collected':
         bg = _H.greenBg;
         fg = _H.green;
@@ -814,6 +822,9 @@ class _PayGroup {
   }
 
   bool get hasOverdue => invoices.any((i) => invoiceStatus(i) == 'overdue');
+
+  /// At least one auto-generated invoice is waiting for the owner to send it.
+  bool get hasDraft => invoices.any(isDraftInvoice);
 
   /// collected | pending | overdue
   String get displayStatus {

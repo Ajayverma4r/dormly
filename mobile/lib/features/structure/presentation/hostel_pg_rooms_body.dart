@@ -4,11 +4,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../properties/domain/property_archetype.dart';
+import '../../tenancies/presentation/add_tenant_screen.dart'
+    show openAddTenantFlow;
 import '../../tenancies/presentation/node_detail_screen.dart';
 import 'property_shell_screen.dart' show propertyDetailProvider;
 import 'rooms/add_room_bottom_sheet.dart';
 import 'rooms/room_grid.dart';
-import 'rooms/rooms_structure_config.dart';
+import 'rooms/room_list_filter.dart';
 import 'rooms/rooms_tree_provider.dart';
 
 class _H {
@@ -29,15 +32,6 @@ class _H {
   static const iconWell = Color(0xFF1E2A40);
 }
 
-enum _RoomFilter { all, occupied, vacant }
-
-class _RoomEntry {
-  final RoomsTreeNode room;
-  final String blockName;
-
-  const _RoomEntry({required this.room, required this.blockName});
-}
-
 class HostelPgRoomsBody extends ConsumerStatefulWidget {
   final String propertyId;
   final bool canManage;
@@ -56,8 +50,6 @@ class HostelPgRoomsBody extends ConsumerStatefulWidget {
 }
 
 class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
-  _RoomFilter _filter = _RoomFilter.all;
-
   Future<void> _refresh() async {
     ref.invalidate(roomsTreeProvider(widget.propertyId));
     await ref.read(roomsTreeProvider(widget.propertyId).future);
@@ -90,63 +82,25 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
     if (ok) await _refresh();
   }
 
-  List<_RoomEntry> _collectRooms(RoomsTree tree) {
-    final out = <_RoomEntry>[];
-
-    void walk(RoomsTreeNode node, String? blockHint) {
-      if (isRoomParentFloorNode(node.level, tree.levels)) {
-        for (final room in node.children) {
-          final key = room.level.internalKey.toLowerCase();
-          if (key.contains('bed')) continue;
-          out.add(_RoomEntry(room: room, blockName: node.name));
-        }
-        return;
-      }
-
-      final key = node.level.internalKey.toLowerCase();
-      final looksLikeRoom = node.hasBedChildren ||
-          key == 'room' ||
-          (node.isAssignable && !key.contains('bed'));
-
-      if (looksLikeRoom &&
-          !isBuildingContainerLevel(node.level) &&
-          !isFloorLevel(node.level)) {
-        out.add(_RoomEntry(room: node, blockName: blockHint ?? 'Rooms'));
-        return;
-      }
-
-      final nextHint = isBuildingContainerLevel(node.level)
-          ? node.name
-          : (isFloorLevel(node.level) ? node.name : blockHint);
-      for (final child in node.children) {
-        walk(child, nextHint ?? node.name);
-      }
-    }
-
-    for (final root in tree.roots) {
-      walk(root, null);
-    }
-
-    if (out.isEmpty) {
-      for (final root in tree.roots) {
-        if (root.isAssignable || root.hasBedChildren) {
-          out.add(_RoomEntry(room: root, blockName: 'Rooms'));
-        } else {
-          for (final child in root.children) {
-            if (child.isAssignable || child.hasBedChildren) {
-              out.add(_RoomEntry(room: child, blockName: root.name));
-            }
-          }
-        }
-      }
-    }
-
-    return out;
+  Future<void> _addTenant(RoomsTreeNode unit) async {
+    await openAddTenantFlow(
+      context: context,
+      ref: ref,
+      propertyId: widget.propertyId,
+      nodeId: unit.id,
+    );
+    if (mounted) ref.invalidate(roomsTreeProvider(widget.propertyId));
   }
 
   @override
   Widget build(BuildContext context) {
     final treeAsync = ref.watch(roomsTreeProvider(widget.propertyId));
+    final filter = ref.watch(roomListFilterProvider(widget.propertyId));
+    final property =
+        ref.watch(propertyDetailProvider(widget.propertyId)).valueOrNull;
+    final isFlat = propertyArchetypeFromProperty(property) ==
+        PropertyArchetype.gatedCommunity;
+    final noun = isFlat ? 'Flat' : 'Room';
 
     return ColoredBox(
       color: _H.bg,
@@ -176,25 +130,13 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
           ),
         ),
         data: (tree) {
-          final rooms = _collectRooms(tree);
-          final occupiedCount = rooms
-              .where((e) => !RoomOccupancySummary.fromNode(e.room).isFullyVacant)
-              .length;
-          final vacantCount = rooms.length - occupiedCount;
+          final rooms = collectRoomListEntries(tree);
+          final counts = countRoomListEntries(rooms);
 
-          final visible = rooms.where((e) {
-            final occ = RoomOccupancySummary.fromNode(e.room);
-            switch (_filter) {
-              case _RoomFilter.all:
-                return true;
-              case _RoomFilter.occupied:
-                return !occ.isFullyVacant;
-              case _RoomFilter.vacant:
-                return occ.isFullyVacant;
-            }
-          }).toList();
+          final visible =
+              rooms.where((e) => roomListEntryMatches(e, filter)).toList();
 
-          final grouped = <String, List<_RoomEntry>>{};
+          final grouped = <String, List<RoomListEntry>>{};
           for (final e in visible) {
             grouped.putIfAbsent(e.blockName, () => []).add(e);
           }
@@ -207,18 +149,21 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                 child: _Header(
-                  count: rooms.length,
+                  count: counts.total,
+                  noun: noun,
                   canManage: widget.canManage,
                   onAdd: () => _openAddRoom(),
                 ),
               ),
               const SizedBox(height: 14),
               _FilterChips(
-                allCount: rooms.length,
-                occupiedCount: occupiedCount,
-                vacantCount: vacantCount,
-                selected: _filter,
-                onSelected: (f) => setState(() => _filter = f),
+                allCount: counts.total,
+                occupiedCount: counts.occupied,
+                vacantCount: counts.vacant,
+                selected: filter,
+                onSelected: (f) => ref
+                    .read(roomListFilterProvider(widget.propertyId).notifier)
+                    .state = f,
               ),
               const SizedBox(height: 10),
               Expanded(
@@ -233,6 +178,7 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
                             SizedBox(
                               height: 280,
                               child: _EmptyState(
+                                noun: noun,
                                 canManage: widget.canManage,
                                 onAdd: () => _openAddRoom(),
                               ),
@@ -242,13 +188,16 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
                       : visible.isEmpty
                           ? ListView(
                               physics: const AlwaysScrollableScrollPhysics(),
-                              children: const [
+                              children: [
                                 SizedBox(
                                   height: 220,
                                   child: Center(
                                     child: Text(
-                                      'No rooms match this filter.',
-                                      style: TextStyle(color: _H.textSecondary),
+                                      _emptyFilterMessage(filter, noun),
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: _H.textSecondary,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -287,8 +236,15 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
                                       if (i > 0) const SizedBox(height: 10),
                                       _RoomCard(
                                         entry: blockRooms[i],
+                                        isFlat: isFlat,
                                         onTap: () =>
                                             _openRoom(blockRooms[i].room),
+                                        onAddTenant: isFlat &&
+                                                widget.canManage &&
+                                                !blockRooms[i].isOccupied
+                                            ? () =>
+                                                _addTenant(blockRooms[i].room)
+                                            : null,
                                       ),
                                     ],
                                   ],
@@ -303,15 +259,29 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
       ),
     );
   }
+
+  static String _emptyFilterMessage(RoomListFilter filter, String noun) {
+    final plural = '${noun.toLowerCase()}s';
+    switch (filter) {
+      case RoomListFilter.occupied:
+        return 'No occupied $plural yet.';
+      case RoomListFilter.vacant:
+        return 'No vacant $plural — everything is occupied.';
+      case RoomListFilter.all:
+        return 'No $plural match this filter.';
+    }
+  }
 }
 
 class _Header extends StatelessWidget {
   final int count;
+  final String noun;
   final bool canManage;
   final VoidCallback onAdd;
 
   const _Header({
     required this.count,
+    required this.noun,
     required this.canManage,
     required this.onAdd,
   });
@@ -325,9 +295,9 @@ class _Header extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Rooms',
-                style: TextStyle(
+              Text(
+                '${noun}s',
+                style: const TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w800,
                   color: _H.textPrimary,
@@ -336,7 +306,7 @@ class _Header extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '$count Rooms',
+                '$count ${noun}s',
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -354,16 +324,17 @@ class _Header extends StatelessWidget {
             child: InkWell(
               onTap: onAdd,
               borderRadius: BorderRadius.circular(12),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.add, size: 18, color: Colors.white),
-                    SizedBox(width: 4),
+                    const Icon(Icons.add, size: 18, color: Colors.white),
+                    const SizedBox(width: 4),
                     Text(
-                      'Add Room',
-                      style: TextStyle(
+                      'Add $noun',
+                      style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 13,
                         color: Colors.white,
@@ -384,8 +355,8 @@ class _FilterChips extends StatelessWidget {
   final int allCount;
   final int occupiedCount;
   final int vacantCount;
-  final _RoomFilter selected;
-  final ValueChanged<_RoomFilter> onSelected;
+  final RoomListFilter selected;
+  final ValueChanged<RoomListFilter> onSelected;
 
   const _FilterChips({
     required this.allCount,
@@ -404,20 +375,20 @@ class _FilterChips extends StatelessWidget {
         children: [
           _Chip(
             label: 'All ($allCount)',
-            selected: selected == _RoomFilter.all,
-            onTap: () => onSelected(_RoomFilter.all),
+            selected: selected == RoomListFilter.all,
+            onTap: () => onSelected(RoomListFilter.all),
           ),
           const SizedBox(width: 8),
           _Chip(
             label: 'Occupied ($occupiedCount)',
-            selected: selected == _RoomFilter.occupied,
-            onTap: () => onSelected(_RoomFilter.occupied),
+            selected: selected == RoomListFilter.occupied,
+            onTap: () => onSelected(RoomListFilter.occupied),
           ),
           const SizedBox(width: 8),
           _Chip(
             label: 'Vacant ($vacantCount)',
-            selected: selected == _RoomFilter.vacant,
-            onTap: () => onSelected(_RoomFilter.vacant),
+            selected: selected == RoomListFilter.vacant,
+            onTap: () => onSelected(RoomListFilter.vacant),
           ),
         ],
       ),
@@ -463,12 +434,16 @@ class _Chip extends StatelessWidget {
 }
 
 class _RoomCard extends StatelessWidget {
-  final _RoomEntry entry;
+  final RoomListEntry entry;
+  final bool isFlat;
   final VoidCallback onTap;
+  final VoidCallback? onAddTenant;
 
   const _RoomCard({
     required this.entry,
+    required this.isFlat,
     required this.onTap,
+    this.onAddTenant,
   });
 
   @override
@@ -479,7 +454,7 @@ class _RoomCard extends StatelessWidget {
     final full = occ.isFullyOccupied;
     final statusLabel = vacant
         ? 'Vacant'
-        : 'Occupied ${occ.occupied}/${occ.total}';
+        : (isFlat ? 'Occupied' : 'Occupied ${occ.occupied}/${occ.total}');
     final statusBg = vacant
         ? _H.greenBg
         : full
@@ -491,11 +466,19 @@ class _RoomCard extends StatelessWidget {
             ? _H.red
             : _H.orange;
 
-    final title = room.name.toLowerCase().contains('room')
+    final noun = isFlat ? 'Flat' : 'Room';
+    final title = room.name.toLowerCase().contains(noun.toLowerCase())
         ? room.name
-        : 'Room ${room.name}';
+        : '$noun ${room.name}';
+    final subtitle = isFlat
+        ? (vacant
+            ? 'No tenant assigned'
+            : (room.tenantDisplayName ?? 'Occupied'))
+        : (occ.total > 1
+            ? '${occ.occupied}/${occ.total} beds'
+            : (vacant ? 'Available' : '1 bed occupied'));
 
-    return Material(
+    final card = Material(
       color: _H.card,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
@@ -514,7 +497,7 @@ class _RoomCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  Icons.bed_outlined,
+                  isFlat ? Icons.apartment_outlined : Icons.bed_outlined,
                   color: vacant ? _H.green : _H.purple,
                   size: 22,
                 ),
@@ -536,9 +519,7 @@ class _RoomCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      occ.total > 1
-                          ? '${occ.occupied}/${occ.total} beds'
-                          : (vacant ? 'Available' : '1 bed occupied'),
+                      subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -578,11 +559,11 @@ class _RoomCard extends StatelessWidget {
                   if (v == 'view') onTap();
                 },
                 itemBuilder: (_) => [
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'view',
                     child: Text(
-                      'View room',
-                      style: TextStyle(color: _H.textPrimary),
+                      'View ${noun.toLowerCase()}',
+                      style: const TextStyle(color: _H.textPrimary),
                     ),
                   ),
                 ],
@@ -592,14 +573,69 @@ class _RoomCard extends StatelessWidget {
         ),
       ),
     );
+
+    if (onAddTenant == null) return card;
+
+    return Material(
+      color: _H.card,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          card,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onAddTenant,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _H.purpleBright,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add Tenant'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onTap,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _H.textPrimary,
+                      side: const BorderSide(color: _H.border),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: const Icon(Icons.description_outlined, size: 18),
+                    label: const Text('View Details'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
 class _EmptyState extends StatelessWidget {
+  final String noun;
   final bool canManage;
   final VoidCallback onAdd;
 
-  const _EmptyState({required this.canManage, required this.onAdd});
+  const _EmptyState({
+    required this.noun,
+    required this.canManage,
+    required this.onAdd,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -615,26 +651,28 @@ class _EmptyState extends StatelessWidget {
               color: _H.textSecondary.withValues(alpha: 0.7),
             ),
             const SizedBox(height: 12),
-            const Text(
-              'No rooms yet',
-              style: TextStyle(
+            Text(
+              'No ${noun.toLowerCase()}s yet',
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: _H.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Add your first room to start assigning beds.',
+            Text(
+              noun == 'Flat'
+                  ? 'Add your first flat to start assigning tenants.'
+                  : 'Add your first room to start assigning beds.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: _H.textSecondary, fontSize: 13),
+              style: const TextStyle(color: _H.textSecondary, fontSize: 13),
             ),
             if (canManage) ...[
               const SizedBox(height: 16),
               TextButton(
                 onPressed: onAdd,
                 style: TextButton.styleFrom(foregroundColor: _H.purple),
-                child: const Text('+ Add Room'),
+                child: Text('+ Add $noun'),
               ),
             ],
           ],

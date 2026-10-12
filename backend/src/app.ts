@@ -14,7 +14,10 @@ import { invitationsRouter } from '@modules/staff/invitations.routes';
 import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscriptions/subscription.routes';
 import { scheduleSubscriptionDowngradeJob } from '@shared/jobs/subscription-downgrade.job';
 import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-expiry-warning.job';
-import { scheduleHostelBillingJob } from '@shared/jobs/hostel-billing.job';
+import {
+  hostelBillingCronHandler,
+  scheduleHostelBillingJob,
+} from '@shared/jobs/hostel-billing.job';
 
 import { ensureLiveOpsSchema } from '@modules/notifications/notify';
 import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
@@ -38,6 +41,7 @@ export function createApp() {
   );
 
   app.get('/health', (_req, res: Response) => res.json({ status: 'ok' }));
+  app.post('/v1/internal/billing/run', hostelBillingCronHandler);
 
   app.use('/v1/auth',                                    authRouter);
   app.use('/v1/property-types',                          propertyTypesRouter);
@@ -57,7 +61,7 @@ export function createApp() {
   // Subscription maintenance jobs
   scheduleSubscriptionDowngradeJob();       // hourly: expire → free (no data delete)
   scheduleSubscriptionExpiryWarningJob();   // daily: 7-day in-app renew reminders
-  scheduleHostelBillingJob();               // hourly: hostel/PG anniversary rent bills
+  scheduleHostelBillingJob();               // hourly: anniversary draft invoices + overdue notices
 
   // Ensure shared live-ops tables exist (complaints photos, mess, meters, gate passes).
   void ensureNotificationsSchema().catch(() => undefined);
