@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/billing_repository.dart';
-import 'billing_invoice_helpers.dart' show isDraftInvoice;
+import 'billing_invoice_helpers.dart' show isDraftInvoice, outstandingTotal;
 import 'create_invoice_screen.dart';
 import 'invoice_send_flow.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
@@ -194,17 +194,9 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     }
   }
 
-  double get _totalRemaining {
-    var sum = 0.0;
-    for (final g in _groups) {
-      for (final inv in g.invoices) {
-        sum += (_asAmount(inv['total_amount'] ?? inv['totalAmount']) -
-                _asAmount(inv['paid_amount'] ?? inv['paidAmount']))
-            .clamp(0.0, double.infinity);
-      }
-    }
-    return sum;
-  }
+  /// Drafts stay listed for review but are not owed until sent.
+  double get _totalRemaining =>
+      outstandingTotal(_groups.expand((g) => g.invoices));
 
   List<Map<String, dynamic>> _lineItems(Map<String, dynamic> inv) {
     final raw = inv['lineItems'] ?? inv['line_items'];

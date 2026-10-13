@@ -17,27 +17,20 @@ bool isActiveTenancy(Map<String, dynamic> r) =>
 bool isCheckedOutTenancy(Map<String, dynamic> r) =>
     r['status']?.toString() == 'ended';
 
-bool _hasOpenInvoice(Map<String, dynamic> r) {
-  final raw = r['has_due'] ?? r['hasDue'];
+bool _hasOpenInvoice(Map<String, dynamic> r) => _flag(r, 'has_due', 'hasDue');
+
+bool _flag(Map<String, dynamic> r, String snake, String camel) {
+  final raw = r[snake] ?? r[camel];
   if (raw is bool) return raw;
   return raw?.toString().toLowerCase() == 'true';
 }
 
 /// Paid = no open invoice. Due = open invoice not yet past its due date.
-/// Overdue = an open invoice whose due date has passed (due day itself is Due).
-TenantPaymentStatus tenantPaymentStatus(
-  Map<String, dynamic> r, {
-  DateTime? today,
-}) {
+/// Overdue = the backend's `has_overdue`, judged in the property's calendar
+/// (the due day itself is Due). The device date is never used.
+TenantPaymentStatus tenantPaymentStatus(Map<String, dynamic> r) {
   if (!_hasOpenInvoice(r)) return TenantPaymentStatus.paid;
-  final raw =
-      (r['earliest_open_due_date'] ?? r['earliestOpenDueDate'])?.toString();
-  if (raw == null || raw.length < 10) return TenantPaymentStatus.due;
-  final due = DateTime.tryParse(raw.substring(0, 10));
-  if (due == null) return TenantPaymentStatus.due;
-  final now = today ?? DateTime.now();
-  final todayDate = DateTime(now.year, now.month, now.day);
-  return due.isBefore(todayDate)
+  return _flag(r, 'has_overdue', 'hasOverdue')
       ? TenantPaymentStatus.overdue
       : TenantPaymentStatus.due;
 }
@@ -47,7 +40,6 @@ bool matchesTenantFilters(
   required HostelGuestFilter stay,
   required TenantPaymentFilter payment,
   required String query,
-  DateTime? today,
 }) {
   switch (stay) {
     case HostelGuestFilter.all:
@@ -57,7 +49,7 @@ bool matchesTenantFilters(
     case HostelGuestFilter.active:
       if (!isActiveTenancy(r)) return false;
       if (payment != TenantPaymentFilter.all) {
-        final status = tenantPaymentStatus(r, today: today);
+        final status = tenantPaymentStatus(r);
         final wanted = switch (payment) {
           TenantPaymentFilter.paid => TenantPaymentStatus.paid,
           TenantPaymentFilter.due => TenantPaymentStatus.due,

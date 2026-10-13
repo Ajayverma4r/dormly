@@ -6,6 +6,12 @@
 // warehouse...). Nothing here is hardcoded to a specific level name.
 
 import { query } from '@config/db';
+import {
+  INVOICE_BALANCE_SQL,
+  OUTSTANDING_INVOICE_SQL,
+  overdueInvoiceSql,
+  propertyClock,
+} from '@modules/billing/billing-metrics';
 
 export class AnalyticsService {
   async getPropertyAnalytics(propertyId: string) {
@@ -17,18 +23,20 @@ export class AnalyticsService {
       [propertyId],
     );
 
+    // Same rules as the dashboard: only sent invoices are dues.
     const [{ pending_rent }] = await query<{ pending_rent: string }>(
-      `SELECT COALESCE(SUM(
-         i.total_amount - COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0)
-       ), 0)::text AS pending_rent
+      `SELECT COALESCE(SUM(${INVOICE_BALANCE_SQL}), 0)::text AS pending_rent
        FROM invoices i
-       WHERE i.property_id = $1 AND i.status != 'paid'`,
+       WHERE i.property_id = $1 AND ${OUTSTANDING_INVOICE_SQL}`,
       [propertyId],
     );
 
+    const clock = await propertyClock(propertyId);
     const [{ overdue_count }] = await query<{ overdue_count: string }>(
-      `SELECT COUNT(*)::text AS overdue_count FROM invoices WHERE property_id = $1 AND status = 'overdue'`,
-      [propertyId],
+      `SELECT COUNT(*)::text AS overdue_count
+       FROM invoices i
+       WHERE i.property_id = $1 AND ${overdueInvoiceSql('$2')}`,
+      [propertyId, clock.today],
     );
 
     const [{ total_units, occupied_units }] = await query<{ total_units: string; occupied_units: string }>(

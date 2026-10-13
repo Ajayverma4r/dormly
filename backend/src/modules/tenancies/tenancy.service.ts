@@ -5,9 +5,17 @@
 // when they eventually log in with OTP using that same phone, our
 // ContextService will find this tenancy and offer it as a login context.
 
-import { query } from '@config/db';
+import { query, withTransaction } from '@config/db';
 import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
-import { ensureBillingSchema } from '@modules/billing/billing.service';
+import {
+  assertMoveInEditAllowed,
+  ensureBillingSchema,
+} from '@modules/billing/billing.service';
+import {
+  OUTSTANDING_INVOICE_SQL,
+  overdueInvoiceSql,
+  propertyClock,
+} from '@modules/billing/billing-metrics';
 
 interface CreateTenancyInput {
   propertyId: string;
@@ -51,19 +59,20 @@ interface UpdateTenancyInput {
 }
 
 export class TenancyService {
-  async listByNode(nodeId: string) {
+  async listByNode(propertyId: string, nodeId: string) {
     return query(
       `SELECT t.*, u.phone, u.name AS user_name
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
-       WHERE t.node_id = $1
+       WHERE t.node_id = $1 AND t.property_id = $2
        ORDER BY t.created_at DESC`,
-      [nodeId],
+      [nodeId, propertyId],
     );
   }
 
   async listByProperty(propertyId: string) {
     await ensureBillingSchema().catch(() => undefined);
+    const clock = await propertyClock(propertyId);
     return query(
       `SELECT t.*, u.phone, u.name AS user_name, n.name AS node_name,
               l.display_name AS level_name,
@@ -71,15 +80,18 @@ export class TenancyService {
               EXISTS (
                 SELECT 1 FROM invoices i
                 WHERE i.tenancy_id = t.id
-                  AND i.sent_at IS NOT NULL
-                  AND i.status IN ('pending', 'overdue', 'partial')
+                  AND ${OUTSTANDING_INVOICE_SQL}
               ) AS has_due,
               (
                 SELECT MIN(i.due_date)::text FROM invoices i
                 WHERE i.tenancy_id = t.id
-                  AND i.sent_at IS NOT NULL
-                  AND i.status IN ('pending', 'overdue', 'partial')
-              ) AS earliest_open_due_date
+                  AND ${OUTSTANDING_INVOICE_SQL}
+              ) AS earliest_open_due_date,
+              EXISTS (
+                SELECT 1 FROM invoices i
+                WHERE i.tenancy_id = t.id
+                  AND ${overdueInvoiceSql('$2')}
+              ) AS has_overdue
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
@@ -102,7 +114,7 @@ export class TenancyService {
        ) floor_node ON true
        WHERE t.property_id = $1
        ORDER BY t.full_name ASC NULLS LAST, t.created_at DESC`,
-      [propertyId],
+      [propertyId, clock.today],
     );
   }
 
@@ -445,10 +457,14 @@ export class TenancyService {
     }
     fields.push('updated_at = now()');
     values.push(tenancyId);
-    const updated = await query(
-      `UPDATE tenancies SET ${fields.join(', ')} WHERE id = $${i} RETURNING id`,
-      values,
-    );
+    const updateSql = `UPDATE tenancies SET ${fields.join(', ')} WHERE id = $${i} RETURNING id`;
+    const updated =
+      payload.moveInAt !== undefined
+        ? await withTransaction(async (q) => {
+            await assertMoveInEditAllowed(q, tenancyId, payload.moveInAt!);
+            return q(updateSql, values);
+          })
+        : await query(updateSql, values);
     if (!updated[0]) {
       throw new Error('Tenancy not found.');
     }

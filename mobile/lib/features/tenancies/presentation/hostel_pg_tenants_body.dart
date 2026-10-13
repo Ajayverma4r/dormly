@@ -57,7 +57,6 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
   @override
   Widget build(BuildContext context) {
     final residents = widget.residents;
-    final today = DateTime.now();
     final active = residents.where(isActiveTenancy).toList();
     final allCount = residents.length;
     final activeCount = active.length;
@@ -66,7 +65,7 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
       for (final s in TenantPaymentStatus.values) s: 0,
     };
     for (final r in active) {
-      final s = tenantPaymentStatus(r, today: today);
+      final s = tenantPaymentStatus(r);
       payCounts[s] = payCounts[s]! + 1;
     }
     final filtered = residents
@@ -75,7 +74,6 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
               stay: _filter,
               payment: _payment,
               query: _searchQuery,
-              today: today,
             ))
         .toList();
 

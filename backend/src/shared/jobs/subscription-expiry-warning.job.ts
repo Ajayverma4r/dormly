@@ -21,19 +21,23 @@ export async function runSubscriptionExpiryWarningJob(): Promise<void> {
 }
 
 /**
- * Schedules the daily 7-day expiry warning job.
- * Default: every 24 hours, plus one run shortly after startup.
+ * Schedules the daily 7-day expiry warning job (every 24 hours). Started only
+ * when SUBSCRIPTION_JOBS_ENABLED=true; [runOnBoot] adds one run 15 s after
+ * startup.
  */
-export function scheduleSubscriptionExpiryWarningJob(
+export function scheduleSubscriptionExpiryWarningJob({
   intervalMs = 24 * 60 * 60 * 1000,
-): NodeJS.Timeout {
-  // Delay startup run slightly so DB pool is ready
-  setTimeout(() => {
-    runSubscriptionExpiryWarningJob().catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error('[subscription-expiry-warning] Startup run failed:', err);
-    });
-  }, 15_000);
+  runOnBoot = false,
+}: { intervalMs?: number; runOnBoot?: boolean } = {}): NodeJS.Timeout {
+  if (runOnBoot) {
+    // Delay startup run slightly so DB pool is ready
+    setTimeout(() => {
+      runSubscriptionExpiryWarningJob().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[subscription-expiry-warning] Startup run failed:', err);
+      });
+    }, 15_000);
+  }
 
   return setInterval(() => {
     runSubscriptionExpiryWarningJob().catch((err) => {

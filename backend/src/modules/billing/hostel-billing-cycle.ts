@@ -119,6 +119,102 @@ export function hostelCyclesDue(checkInRaw: string, todayRaw: string): HostelBil
   return cycles;
 }
 
+export type BilledPeriod = { periodStart: string; periodEnd: string };
+
+export type CyclePlan = {
+  cycles: HostelBillingCycle[];
+  /** Days between the last billed period and the first new cycle, if any. */
+  gap: { from: string; to: string } | null;
+};
+
+/**
+ * Cycles to draft now for one tenancy.
+ * Existing cycle invoices are never rewritten. Billing resumes with the first
+ * anniversary period that starts after the last billed period, so a changed
+ * move-in date can never produce overlapping or duplicate periods. Cycles
+ * whose bill date falls after move-out are left to move-out settlement.
+ */
+export function planHostelCycles(opts: {
+  checkIn: string;
+  today: string;
+  moveOut: string | null;
+  billed: BilledPeriod[];
+}): CyclePlan {
+  const lastBilledEnd = opts.billed.reduce<string | null>(
+    (max, p) => (max == null || compareYmd(p.periodEnd, max) > 0 ? p.periodEnd : max),
+    null,
+  );
+  const cycles = hostelCyclesDue(opts.checkIn, opts.today).filter(
+    (cycle) =>
+      !(opts.moveOut && compareYmd(cycle.billDate, opts.moveOut) > 0) &&
+      (lastBilledEnd == null || compareYmd(cycle.periodStart, lastBilledEnd) > 0),
+  );
+
+  let gap: CyclePlan['gap'] = null;
+  if (lastBilledEnd != null && cycles.length > 0) {
+    const resumeFrom = formatYmd(addCalendarDays(parseYmd(lastBilledEnd), 1));
+    if (compareYmd(cycles[0].periodStart, resumeFrom) > 0) {
+      gap = {
+        from: resumeFrom,
+        to: formatYmd(addCalendarDays(parseYmd(cycles[0].periodStart), -1)),
+      };
+    }
+  }
+  return { cycles, gap };
+}
+
+export type MoveInEditCheck =
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: 'anniversary_changed' | 'after_billed_period' | 'misaligned';
+      firstBilledStart: string;
+      lastBilledEnd: string;
+    };
+
+/**
+ * Whether a tenancy's move-in date may change once cycle invoices exist.
+ * Allowed only when every billed period still starts on a billing
+ * anniversary of the new date and billing would resume the day after the
+ * last billed period, so no period is shifted, overlapped or left unbilled.
+ */
+export function checkMoveInEdit(opts: {
+  currentCheckIn: string | null;
+  newCheckIn: string;
+  billed: BilledPeriod[];
+}): MoveInEditCheck {
+  if (opts.billed.length === 0) return { allowed: true };
+  if (opts.currentCheckIn === opts.newCheckIn) return { allowed: true };
+
+  let firstBilledStart = opts.billed[0].periodStart;
+  let lastBilledEnd = opts.billed[0].periodEnd;
+  for (const p of opts.billed) {
+    if (compareYmd(p.periodStart, firstBilledStart) < 0) firstBilledStart = p.periodStart;
+    if (compareYmd(p.periodEnd, lastBilledEnd) > 0) lastBilledEnd = p.periodEnd;
+  }
+  const blocked = (reason: 'anniversary_changed' | 'after_billed_period' | 'misaligned') =>
+    ({ allowed: false, reason, firstBilledStart, lastBilledEnd }) as const;
+
+  const next = parseYmd(opts.newCheckIn);
+  if (opts.currentCheckIn && parseYmd(opts.currentCheckIn).day !== next.day) {
+    return blocked('anniversary_changed');
+  }
+  if (compareYmd(opts.newCheckIn, firstBilledStart) > 0) {
+    return blocked('after_billed_period');
+  }
+
+  const resumeFrom = formatYmd(addCalendarDays(parseYmd(lastBilledEnd), 1));
+  const starts = new Set<string>();
+  for (let n = 0; n < 1200; n += 1) {
+    const start = formatYmd(addCalendarMonths(next, n));
+    starts.add(start);
+    if (compareYmd(start, resumeFrom) >= 0) break;
+  }
+  const aligned =
+    starts.has(resumeFrom) && opts.billed.every((p) => starts.has(p.periodStart));
+  return aligned ? { allowed: true } : blocked('misaligned');
+}
+
 /**
  * Cycle shown on Add Utilities.
  * Before the first anniversary, this is the in-progress stay (bill date still ahead).
@@ -149,13 +245,26 @@ export function calendarDateInTimeZone(instant: Date, timeZone: string): string 
   return fmt.format(instant);
 }
 
+/** Billing calendar zone when a property has no usable timezone configured. */
+export const DEFAULT_PROPERTY_TIME_ZONE = 'Asia/Kolkata';
+
 /**
- * Check-in pickers send local midnight as UTC. Property timezone defaults to
- * UTC, which would shift the calendar day. Hostel billing uses the property
- * zone, and Asia/Kolkata when the zone is missing or still the UTC default.
+ * Time zone policy for every property-local billing date (bill/due dates,
+ * overdue, reading dates, month bounds):
+ * - a valid IANA zone stored on the property is used as configured, UTC
+ *   included;
+ * - a missing, blank or unrecognised value falls back to
+ *   DEFAULT_PROPERTY_TIME_ZONE.
+ * The configured spelling is kept: ICU would canonicalise Asia/Kolkata to the
+ * legacy Asia/Calcutta.
  */
 export function hostelBillingTimeZone(propertyTimeZone: string | null | undefined): string {
   const tz = (propertyTimeZone ?? '').trim();
-  if (!tz || tz.toUpperCase() === 'UTC') return 'Asia/Kolkata';
-  return tz;
+  if (!tz) return DEFAULT_PROPERTY_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return tz;
+  } catch {
+    return DEFAULT_PROPERTY_TIME_ZONE;
+  }
 }

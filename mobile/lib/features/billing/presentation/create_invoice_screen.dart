@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../data/billing_repository.dart';
+import 'billing_invoice_helpers.dart'
+    show invoiceRemaining, isOpenUnpaidInvoice;
 import 'billing_providers.dart';
 
 class CreateInvoiceScreen extends ConsumerStatefulWidget {
@@ -84,13 +86,6 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
   static final _currency =
       NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
   static final _dateFormat = DateFormat('d MMM yyyy');
-
-  static const _openStatuses = {
-    'pending',
-    'overdue',
-    'partial',
-    'partially_paid',
-  };
 
   static const _dueDaysAfterBill = 5;
 
@@ -570,20 +565,8 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
           .trim()
           .toLowerCase();
       if (tid != selectedId) continue;
-
-      final status = inv['status']?.toString().toLowerCase().trim() ?? '';
-      if (!_openStatuses.contains(status)) continue;
-
-      final total = double.tryParse(
-            (inv['total_amount'] ?? inv['totalAmount'])?.toString() ?? '',
-          ) ??
-          0;
-      final paid = double.tryParse(
-            (inv['paid_amount'] ?? inv['paidAmount'])?.toString() ?? '',
-          ) ??
-          0;
-      final remaining = total - paid;
-      if (remaining > 0) dues += remaining;
+      if (!isOpenUnpaidInvoice(inv)) continue;
+      dues += invoiceRemaining(inv);
     }
 
     // Include unbilled past-rent preview so the note stays informative.

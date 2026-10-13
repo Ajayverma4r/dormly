@@ -5,6 +5,8 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show isDraftInvoice;
 import '../../complaints/data/complaints_repository.dart';
 import '../../properties/domain/property_archetype.dart';
 import '../data/tenant_portal_repository.dart';
@@ -17,9 +19,13 @@ final myTenancyProvider =
   return ref.watch(tenantPortalRepositoryProvider).getMyTenancy();
 });
 
+/// The API only returns sent invoices; drafts are dropped defensively so a
+/// tenant can never be shown an amount the owner has not sent yet.
 final myInvoicesProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-  return ref.watch(tenantPortalRepositoryProvider).listMyInvoices();
+  final invoices =
+      await ref.watch(tenantPortalRepositoryProvider).listMyInvoices();
+  return invoices.where((inv) => !isDraftInvoice(inv)).toList();
 });
 
 final myComplaintsProvider =

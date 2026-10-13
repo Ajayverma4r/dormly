@@ -649,7 +649,7 @@ class _PaymentCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (group.hasDraft) ...[
+              if (group.hasDraft && group.displayStatus != 'review') ...[
                 const _StatusPill(status: 'review'),
                 const SizedBox(width: 4),
               ],
@@ -812,24 +812,18 @@ class _PayGroup {
     return sum;
   }
 
-  double get pending {
-    var sum = 0.0;
-    for (final inv in invoices) {
-      if (invoiceStatus(inv) == 'paid') continue;
-      sum += invoiceRemaining(inv);
-    }
-    return sum;
-  }
+  double get pending => outstandingTotal(invoices);
 
-  bool get hasOverdue => invoices.any((i) => invoiceStatus(i) == 'overdue');
+  bool get hasOverdue => invoices.any((i) => isOverdueInvoice(i));
 
   /// At least one auto-generated invoice is waiting for the owner to send it.
   bool get hasDraft => invoices.any(isDraftInvoice);
 
-  /// collected | pending | overdue
+  /// collected | pending | overdue | review (only drafts left to act on)
   String get displayStatus {
-    if (hasOverdue && pending > 0.009) return 'overdue';
+    if (hasOverdue) return 'overdue';
     if (pending > 0.009) return 'pending';
+    if (hasDraft) return 'review';
     return 'collected';
   }
 }

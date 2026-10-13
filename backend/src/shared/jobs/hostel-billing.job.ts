@@ -28,13 +28,20 @@ export function runHostelBillingJob(): Promise<number> {
   return inFlight;
 }
 
-export function scheduleHostelBillingJob(
+/**
+ * In-process hourly timer. Started only when BILLING_SCHEDULER_ENABLED=true;
+ * the first run waits a full interval unless [runOnBoot] is set.
+ */
+export function scheduleHostelBillingJob({
   intervalMs = 60 * 60 * 1000,
-): NodeJS.Timeout {
-  runHostelBillingJob().catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error('[hostel-billing] Startup run failed:', err);
-  });
+  runOnBoot = false,
+}: { intervalMs?: number; runOnBoot?: boolean } = {}): NodeJS.Timeout {
+  if (runOnBoot) {
+    runHostelBillingJob().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[hostel-billing] Startup run failed:', err);
+    });
+  }
 
   return setInterval(() => {
     runHostelBillingJob().catch((err) => {
@@ -47,7 +54,9 @@ export function scheduleHostelBillingJob(
 /**
  * POST /v1/internal/billing/run — for an external scheduler (Render Cron Job,
  * cron-job.org) so billing still runs when the web service has been asleep.
- * Requires header `x-cron-secret: $CRON_SECRET`; disabled when CRON_SECRET is unset.
+ * Requires header `x-cron-secret: $CRON_SECRET` (constant-time compare; 401 on
+ * mismatch). Returns 404 while CRON_SECRET is unset. Independent of
+ * BILLING_SCHEDULER_ENABLED: production should use one or the other.
  */
 export async function hostelBillingCronHandler(req: Request, res: Response) {
   const secret = process.env.CRON_SECRET ?? '';

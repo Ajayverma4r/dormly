@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show invoiceDueDate, isOpenUnpaidInvoice, outstandingTotal;
 import '../../complaints/presentation/complaint_details_screen.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../notifications/presentation/notifications_providers.dart';
@@ -912,21 +914,12 @@ class _TenantPaymentsTab extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Could not load payments: $e')),
         data: (invoices) {
-          double totalDue = 0;
+          final totalDue = outstandingTotal(invoices);
           DateTime? nearestDue;
-          for (final inv in invoices) {
-            final total =
-                double.tryParse(inv['total_amount']?.toString() ?? '') ?? 0;
-            final paid =
-                double.tryParse(inv['paid_amount']?.toString() ?? '') ?? 0;
-            final rem = total - paid;
-            if (rem > 0.009) {
-              totalDue += rem;
-              final d = DateTime.tryParse(inv['due_date']?.toString() ?? '');
-              if (d != null &&
-                  (nearestDue == null || d.isBefore(nearestDue))) {
-                nearestDue = d;
-              }
+          for (final inv in invoices.where(isOpenUnpaidInvoice)) {
+            final d = invoiceDueDate(inv);
+            if (d != null && (nearestDue == null || d.isBefore(nearestDue))) {
+              nearestDue = d;
             }
           }
 

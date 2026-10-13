@@ -179,11 +179,8 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
       var dueHere = 0.0;
       for (final inv in g.invoices) {
         if (!isOpenUnpaidInvoice(inv)) continue;
-        final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
-        if (raw == null) continue;
-        final d = DateTime.tryParse(raw)?.toLocal();
-        if (d == null) continue;
-        final day = DateTime(d.year, d.month, d.day);
+        final day = invoiceDueDate(inv);
+        if (day == null) continue;
         if (!day.isBefore(today) && day.isBefore(weekEnd)) {
           dueHere += invoiceRemaining(inv);
         }
@@ -206,11 +203,8 @@ class _LiveCollectionTabState extends ConsumerState<LiveCollectionTab> {
       if (g.grandTotalPending <= 0.009) continue;
       final hasDue = g.invoices.any((inv) {
         if (!isOpenUnpaidInvoice(inv)) return false;
-        final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
-        if (raw == null) return false;
-        final d = DateTime.tryParse(raw)?.toLocal();
-        if (d == null) return false;
-        final day = DateTime(d.year, d.month, d.day);
+        final day = invoiceDueDate(inv);
+        if (day == null) return false;
         return !day.isBefore(today) && day.isBefore(weekEnd);
       });
       if (hasDue) targets.add(g);
@@ -846,14 +840,7 @@ class _TenantPaymentGroup {
     return room;
   }
 
-  double get grandTotalPending {
-    var sum = 0.0;
-    for (final inv in invoices) {
-      if (invoiceStatus(inv) == 'paid') continue;
-      sum += invoiceRemaining(inv);
-    }
-    return sum;
-  }
+  double get grandTotalPending => outstandingTotal(invoices);
 
   double get totalBilled =>
       invoices.fold<double>(0, (s, i) => s + invoiceTotalAmount(i));
@@ -861,8 +848,7 @@ class _TenantPaymentGroup {
   List<DateTime> get unpaidMonths {
     final months = <String, DateTime>{};
     for (final inv in invoices) {
-      if (invoiceStatus(inv) == 'paid') continue;
-      if (invoiceRemaining(inv) <= 0.009) continue;
+      if (!isOpenUnpaidInvoice(inv)) continue;
       final d = invoiceMonthDate(inv);
       if (d != null) {
         months['${d.year}-${d.month}'] = d;
@@ -875,7 +861,7 @@ class _TenantPaymentGroup {
   int get unpaidMonthCount {
     final n = unpaidMonths.length;
     if (n > 0) return n;
-    return invoices.where((i) => invoiceStatus(i) != 'paid').length;
+    return invoices.where(isOpenUnpaidInvoice).length;
   }
 
   String get duesTitle {
@@ -883,29 +869,32 @@ class _TenantPaymentGroup {
     if (displayStatus == 'paid') {
       return '${invoices.length} paid';
     }
+    if (displayStatus == 'draft') return 'Draft';
     return '$n month${n == 1 ? '' : 's'}';
   }
 
   String get duesSubtitle {
     if (displayStatus == 'paid') return 'Cleared';
+    if (displayStatus == 'draft') return 'Review & send';
     final labels =
         unpaidMonths.map((d) => DateFormat('MMM').format(d)).toList();
     if (labels.isEmpty) return '—';
     return labels.join(', ');
   }
 
-  bool get hasOverdue => invoices.any((i) => invoiceStatus(i) == 'overdue');
+  bool get hasOverdue => invoices.any((i) => isOverdueInvoice(i));
 
-  bool get hasPartial => invoices.any((i) {
-        final s = invoiceStatus(i);
-        return s == 'partial' || s == 'partially_paid';
-      });
+  bool get hasPartial => invoices.any(
+        (i) => isOpenUnpaidInvoice(i) && invoicePaidAmount(i) > 0.009,
+      );
 
+  /// overdue | partial | pending | draft | paid — drafts never count as dues.
   String get displayStatus {
     if (hasOverdue) return 'overdue';
     if (grandTotalPending > 0.009) {
       return hasPartial ? 'partial' : 'pending';
     }
+    if (invoices.any(isDraftInvoice)) return 'draft';
     if (invoices.any((i) => invoiceStatus(i) == 'paid')) return 'paid';
     return 'pending';
   }
@@ -1165,6 +1154,10 @@ class _InvoiceStatusBadge extends StatelessWidget {
         bg = AppColors.caution.withValues(alpha: 0.12);
         fg = AppColors.caution;
         label = 'Partial';
+      case 'draft':
+        bg = AppColors.primarySoft;
+        fg = AppColors.primary;
+        label = 'Draft';
       default:
         bg = const Color(0xFFFFF7ED);
         fg = const Color(0xFFD97706);

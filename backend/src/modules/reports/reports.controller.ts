@@ -47,10 +47,11 @@ export class ReportsController {
       const rows = await service.getRentCollectionRows(req.params.propertyId, startDate, endDate);
 
       const headers = ['Tenant', 'Phone', 'Unit', 'Period Start', 'Period End', 'Due Date', 'Status', 'Total', 'Paid', 'Pending'];
+      // Dates arrive as YYYY-MM-DD text, so the server time zone cannot shift them.
       const dataRows = rows.map((r) => [
         r.full_name, r.phone, r.node_name,
-        r.period_start?.toISOString().split('T')[0], r.period_end?.toISOString().split('T')[0],
-        r.due_date?.toISOString().split('T')[0], r.status,
+        r.period_start ?? '', r.period_end ?? '',
+        r.due_date ?? '', r.status,
         Number(r.total_amount).toFixed(0), Number(r.paid_amount).toFixed(0),
         (Number(r.total_amount) - Number(r.paid_amount)).toFixed(0),
       ]);

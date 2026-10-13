@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../data/tenant_portal_repository.dart';
+import '../domain/meter_reading_errors.dart';
 import 'tenant_portal_providers.dart';
 
 const _brand = Color(0xFF6D28D9);
@@ -81,7 +82,7 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
         );
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = meterReadingErrorMessage(e));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -162,7 +163,10 @@ class _MeterReadingScreenState extends ConsumerState<MeterReadingScreen> {
               padding: EdgeInsets.all(24),
               child: Center(child: CircularProgressIndicator()),
             ),
-            error: (e, _) => Text('$e', style: const TextStyle(color: _muted)),
+            error: (e, _) => Text(
+              meterReadingErrorMessage(e, action: MeterReadingAction.load),
+              style: const TextStyle(color: _muted),
+            ),
             data: (rows) {
               if (rows.isEmpty) {
                 return const Text(

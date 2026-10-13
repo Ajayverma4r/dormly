@@ -167,7 +167,7 @@ export class TenancyController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const data = req.query.nodeId
-        ? await service.listByNode(req.query.nodeId as string)
+        ? await service.listByNode(req.params.propertyId, req.query.nodeId as string)
         : await service.listByProperty(req.params.propertyId);
       res.json({ data });
     } catch (err) { next(err); }

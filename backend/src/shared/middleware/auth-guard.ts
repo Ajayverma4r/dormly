@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '@config/env';
+import { query } from '@config/db';
 
 export interface AuthedRequest extends Request {
   userId?: string;
@@ -52,15 +53,62 @@ export function requireRole(...allowedRoles: string[]) {
   };
 }
 
-// For manager/staff contexts, restricts access to only their assigned property.
-// Owner/admin contexts (whole-organization) always pass.
-export function requirePropertyAccess(req: AuthedRequest, res: Response, next: NextFunction) {
-  const requestedPropertyId = req.params.propertyId;
-  if (req.ctxRole === 'owner' || req.ctxRole === 'admin') {
-    return next(); // org-wide access
+/** Organization that owns a property, or null when it does not exist. */
+export type PropertyOrganizationLookup = (propertyId: string) => Promise<string | null>;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const defaultPropertyOrganization: PropertyOrganizationLookup = async (propertyId) => {
+  const rows = await query<{ organization_id: string }>(
+    `SELECT organization_id FROM properties WHERE id = $1::uuid`,
+    [propertyId],
+  );
+  return rows[0]?.organization_id ?? null;
+};
+
+const NO_PROPERTY_ACCESS = { error: 'You do not have access to this property.' };
+
+// Owner/admin contexts reach every property of their own organization.
+// Manager/staff/tenant contexts reach only the property they are bound to.
+export function propertyAccessGuard(
+  lookup: PropertyOrganizationLookup = defaultPropertyOrganization,
+) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const requestedPropertyId = req.params.propertyId;
+    if (req.ctxRole === 'owner' || req.ctxRole === 'admin') {
+      if (
+        req.ctxType !== 'organization' ||
+        !req.ctxId ||
+        !UUID_RE.test(String(requestedPropertyId ?? ''))
+      ) {
+        return res.status(403).json(NO_PROPERTY_ACCESS);
+      }
+      try {
+        const organizationId = await lookup(requestedPropertyId);
+        if (organizationId && organizationId === req.ctxId) return next();
+        return res.status(403).json(NO_PROPERTY_ACCESS);
+      } catch (err) {
+        return next(err);
+      }
+    }
+    if (req.ctxPropertyId && req.ctxPropertyId === requestedPropertyId) {
+      return next();
+    }
+    return res.status(403).json(NO_PROPERTY_ACCESS);
+  };
+}
+
+export const requirePropertyAccess = propertyAccessGuard();
+
+// Organization-wide endpoints: only that organization's owner/admin contexts.
+export function requireOrganizationAccess(req: AuthedRequest, res: Response, next: NextFunction) {
+  if (
+    req.ctxType === 'organization' &&
+    (req.ctxRole === 'owner' || req.ctxRole === 'admin') &&
+    req.ctxId &&
+    req.ctxId === req.params.organizationId
+  ) {
+    return next();
   }
-  if (req.ctxPropertyId && req.ctxPropertyId === requestedPropertyId) {
-    return next(); // manager/staff scoped correctly
-  }
-  return res.status(403).json({ error: 'You do not have access to this property.' });
+  return res.status(403).json({ error: 'You do not have access to this organization.' });
 }

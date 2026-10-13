@@ -1,11 +1,18 @@
 // modules/meter-readings/meter-readings.service.ts
-import { query } from '@config/db';
+import { query, withTransaction } from '@config/db';
+import { ensureLiveOpsSchema, notifyPropertyOwners } from '@modules/notifications/notify';
+import { assertMeterTarget, type TenantMeterScope } from './meter-access';
 import {
-  createNotification,
-  ensureLiveOpsSchema,
-  notifyPropertyOwners,
-} from '@modules/notifications/notify';
-import { BillingService, ensureBillingSchema } from '@modules/billing/billing.service';
+  BillingService,
+  billingSchemaCaps,
+  ensureBillingSchema,
+} from '@modules/billing/billing.service';
+import {
+  DUE_DAYS_AFTER_BILL,
+  DEFAULT_PROPERTY_TIME_ZONE,
+  calendarDateInTimeZone,
+  hostelBillingTimeZone,
+} from '@modules/billing/hostel-billing-cycle';
 
 const billing = new BillingService();
 
@@ -15,13 +22,32 @@ function defaultBillingCycle(d = new Date()): string {
   return `${y}-${m}`;
 }
 
-function cycleBounds(cycle: string): { start: string; end: string; due: string } {
-  const [y, m] = cycle.split('-').map(Number);
-  const start = new Date(y, m - 1, 1);
-  const end = new Date(y, m, 0);
-  const due = new Date(y, m, 5);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(end), due: iso(due) };
+/**
+ * Days after a period ends in which a reading still closes that period:
+ * from the bill date (period end + 1) through the default due date.
+ */
+export const READING_CLOSE_WINDOW_DAYS = 1 + DUE_DAYS_AFTER_BILL;
+
+/**
+ * The draft a new reading may join: the tenancy's unsent rent-cycle draft
+ * whose anniversary period ended just before the reading date (within
+ * READING_CLOSE_WINDOW_DAYS), for a tenancy living in the reading's unit.
+ * Readings outside that window stay pending and are added when the next
+ * cycle draft is generated.
+ */
+export function closingDraftSql(hasInvoiceKind: boolean): string {
+  return `SELECT i.id FROM invoices i
+     JOIN tenancies t ON t.id = i.tenancy_id
+     WHERE i.tenancy_id = $1
+       AND i.property_id = $2
+       AND t.node_id = $3
+       AND i.sent_at IS NULL
+       AND ${hasInvoiceKind ? `i.invoice_kind = 'cycle'` : `(i.is_auto_generated OR i.period_start <> i.period_end)`}
+       AND $4::date > i.period_end
+       AND $4::date <= i.period_end + $5::int
+     ORDER BY i.period_start DESC
+     LIMIT 1
+     FOR UPDATE OF i`;
 }
 
 export class MeterReadingsService {
@@ -39,14 +65,15 @@ export class MeterReadingsService {
     );
   }
 
-  async listByUnit(unitId: string) {
+  /** A tenant's own readings: their tenancy, on their unit, in their property. */
+  async listForTenancy(scope: TenantMeterScope) {
     await ensureLiveOpsSchema();
     return query(
       `SELECT * FROM meter_readings
-       WHERE unit_id = $1
+       WHERE tenancy_id = $1 AND unit_id = $2 AND property_id = $3
        ORDER BY created_at DESC
        LIMIT 50`,
-      [unitId],
+      [scope.tenancyId, scope.unitId, scope.propertyId],
     );
   }
 
@@ -60,10 +87,10 @@ export class MeterReadingsService {
     submittedBy: string;
     ratePerUnit?: number;
     notifyOwners?: boolean;
-    notifyTenantUserId?: string | null;
   }) {
     await ensureLiveOpsSchema();
     await ensureBillingSchema();
+    await assertMeterTarget(input.propertyId, input.unitId, input.tenancyId);
 
     const cycle = input.billingCycle?.trim() || defaultBillingCycle();
     const prevRows = await query<{ meter_reading_value: string }>(
@@ -97,85 +124,94 @@ export class MeterReadingsService {
     const amount = Number((units * rate).toFixed(2));
 
     let tenancyId = input.tenancyId ?? null;
-    let tenantUserId = input.notifyTenantUserId ?? null;
-    if (!tenancyId || !tenantUserId) {
-      const active = await query<{ id: string; user_id: string }>(
-        `SELECT id, user_id FROM tenancies
+    if (!tenancyId) {
+      const active = await query<{ id: string }>(
+        `SELECT id FROM tenancies
          WHERE node_id = $1 AND property_id = $2 AND status = 'active'
          ORDER BY created_at DESC LIMIT 1`,
         [input.unitId, input.propertyId],
       );
-      tenancyId = tenancyId ?? active[0]?.id ?? null;
-      tenantUserId = tenantUserId ?? active[0]?.user_id ?? null;
+      tenancyId = active[0]?.id ?? null;
     }
 
-    let invoiceId: string | null = null;
-    let lineItemId: string | null = null;
+    const chargeTypes = await billing.listChargeTypes(input.propertyId);
+    const electricity = chargeTypes.find((c: any) =>
+      String(c.name).toLowerCase().includes('electric'),
+    ) as any;
+    const lineDesc = `Electricity (${cycle}): ${units} units @ ₹${rate}`;
 
-    if (tenancyId && amount > 0) {
-      const bounds = cycleBounds(cycle);
-      const existingInv = await query<{ id: string }>(
-        `SELECT id FROM invoices
-         WHERE tenancy_id = $1
-           AND property_id = $2
-           AND period_start = $3::date
-           AND period_end = $4::date
-           AND status IN ('pending', 'partial', 'overdue')
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [tenancyId, input.propertyId, bounds.start, bounds.end],
-      );
-
-      const chargeTypes = await billing.listChargeTypes(input.propertyId);
-      const electricity = chargeTypes.find((c: any) =>
-        String(c.name).toLowerCase().includes('electric'),
-      ) as any;
-      const lineDesc = `Electricity (${cycle}): ${units} units @ ₹${rate}`;
-
-      if (existingInv[0]) {
-        // Attach immediately to the open cycle invoice.
-        invoiceId = existingInv[0].id;
-        const [li] = await query<{ id: string }>(
-          `INSERT INTO invoice_line_items
-             (invoice_id, charge_type_id, description, amount, charge_kind)
-           VALUES ($1, $2, $3, $4, 'electricity') RETURNING id`,
-          [invoiceId, electricity?.id ?? null, lineDesc, amount],
-        );
-        lineItemId = li.id;
-        await query(
-          `UPDATE invoices
-           SET total_amount = total_amount + $1, updated_at = now()
-           WHERE id = $2`,
-          [amount, invoiceId],
-        );
-      }
-      // Otherwise leave invoice_id NULL — picked up by addPendingChargesToInvoice
-      // when the owner generates / finalizes the monthly invoice.
-    }
-
-    const [row] = await query<any>(
-      `INSERT INTO meter_readings (
-         property_id, unit_id, tenancy_id, meter_reading_value, previous_reading,
-         units_consumed, rate_per_unit, amount, meter_image_url, billing_cycle,
-         submitted_by, invoice_id, invoice_line_item_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       RETURNING *`,
-      [
-        input.propertyId,
-        input.unitId,
-        tenancyId,
-        input.readingValue,
-        previous,
-        units,
-        rate,
-        amount,
-        input.meterImageUrl ?? null,
-        cycle,
-        input.submittedBy,
-        invoiceId,
-        lineItemId,
-      ],
+    const caps = await billingSchemaCaps();
+    const [property] = await query<{ timezone: string | null }>(
+      `SELECT timezone FROM properties WHERE id = $1`,
+      [input.propertyId],
     );
+    let readingDate: string;
+    try {
+      readingDate = calendarDateInTimeZone(new Date(), hostelBillingTimeZone(property?.timezone));
+    } catch {
+      readingDate = calendarDateInTimeZone(new Date(), DEFAULT_PROPERTY_TIME_ZONE);
+    }
+
+    const { row, invoiceId } = await withTransaction(async (q) => {
+      let invoiceId: string | null = null;
+      let lineItemId: string | null = null;
+
+      if (tenancyId && amount > 0) {
+        // Only an unsent draft may absorb the reading; a sent invoice is an
+        // issued bill. The row lock re-checks sent_at if a send races this.
+        const [draft] = await q<{ id: string }>(closingDraftSql(caps.invoiceKind), [
+          tenancyId,
+          input.propertyId,
+          input.unitId,
+          readingDate,
+          READING_CLOSE_WINDOW_DAYS,
+        ]);
+
+        if (draft) {
+          invoiceId = draft.id;
+          const [li] = await q<{ id: string }>(
+            `INSERT INTO invoice_line_items
+               (invoice_id, charge_type_id, description, amount, charge_kind)
+             VALUES ($1, $2, $3, $4, 'electricity') RETURNING id`,
+            [invoiceId, electricity?.id ?? null, lineDesc, amount],
+          );
+          lineItemId = li.id;
+          await q(
+            `UPDATE invoices
+             SET total_amount = total_amount + $1, updated_at = now()
+             WHERE id = $2`,
+            [amount, invoiceId],
+          );
+        }
+        // Otherwise leave invoice_id NULL — picked up by addPendingChargesToInvoice
+        // when the next invoice is generated or created.
+      }
+
+      const [row] = await q<any>(
+        `INSERT INTO meter_readings (
+           property_id, unit_id, tenancy_id, meter_reading_value, previous_reading,
+           units_consumed, rate_per_unit, amount, meter_image_url, billing_cycle,
+           submitted_by, invoice_id, invoice_line_item_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         RETURNING *`,
+        [
+          input.propertyId,
+          input.unitId,
+          tenancyId,
+          input.readingValue,
+          previous,
+          units,
+          rate,
+          amount,
+          input.meterImageUrl ?? null,
+          cycle,
+          input.submittedBy,
+          invoiceId,
+          lineItemId,
+        ],
+      );
+      return { row, invoiceId };
+    });
 
     const unitRows = await query<{ name: string }>(
       `SELECT name FROM hierarchy_nodes WHERE id = $1`,
@@ -191,7 +227,7 @@ export class MeterReadingsService {
         body:
           amount > 0
             ? invoiceId
-              ? `${input.readingValue} units • ₹${amount} added to ${cycle} dues`
+              ? `${input.readingValue} units • ₹${amount} added to the draft invoice — review and send it`
               : `${input.readingValue} units • ₹${amount} pending for next invoice`
             : `New reading ${input.readingValue} recorded for ${cycle}`,
         data: {
@@ -205,22 +241,7 @@ export class MeterReadingsService {
       }).catch((e) => console.warn('[meter] owner notify failed:', e));
     }
 
-    if (tenantUserId && amount > 0) {
-      await createNotification({
-        userId: tenantUserId,
-        propertyId: input.propertyId,
-        type: 'meter_bill',
-        title: 'Electricity charge added',
-        body: `${units} units × ₹${rate} = ₹${amount} for ${cycle}`,
-        data: {
-          meter_reading_id: String(row.id),
-          invoice_id: invoiceId,
-          property_id: input.propertyId,
-          route: '/tenant-home',
-        },
-      }).catch((e) => console.warn('[meter] tenant notify failed:', e));
-    }
-
+    // The tenant hears about the charge only when the owner sends the invoice.
     return row;
   }
 }

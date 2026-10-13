@@ -475,7 +475,7 @@ List<_Defaulter> _groupDefaulters(
 
   final map = <String, _DefaulterAcc>{};
   for (final inv in invoices) {
-    if (invoiceRemaining(inv) <= 0.009) continue;
+    if (!isOpenUnpaidInvoice(inv)) continue;
 
     final tenancyId =
         (inv['tenancy_id'] ?? inv['tenancyId'])?.toString() ?? '';

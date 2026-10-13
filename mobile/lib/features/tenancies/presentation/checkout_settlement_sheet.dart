@@ -14,6 +14,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/image_compress.dart';
 import '../../billing/data/billing_repository.dart';
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show outstandingTotal;
 import '../../billing/presentation/whatsapp_reminder.dart';
 import '../../properties/domain/property_archetype.dart';
 import '../../structure/presentation/property_shell_screen.dart'
@@ -141,28 +143,13 @@ class _CheckoutSettlementSheetState
       final invoices = await ref
           .read(billingRepositoryProvider)
           .listInvoices(widget.propertyId);
-      var dues = 0.0;
-      for (final inv in invoices) {
-        final tid =
-            (inv['tenancy_id'] ?? inv['tenancyId'])?.toString() ?? '';
-        if (tid != _tenancyId) continue;
-        final status = inv['status']?.toString().toLowerCase() ?? '';
-        if (!{'pending', 'partial', 'overdue'}.contains(status)) continue;
-        final total = double.tryParse(
-              inv['total_amount']?.toString() ??
-                  inv['totalAmount']?.toString() ??
-                  '',
-            ) ??
-            0;
-        final paid = double.tryParse(
-              inv['paid_amount']?.toString() ??
-                  inv['paidAmount']?.toString() ??
-                  '',
-            ) ??
-            0;
-        final balance = total - paid;
-        if (balance > 0) dues += balance;
-      }
+      final dues = outstandingTotal(
+        invoices.where(
+          (inv) =>
+              ((inv['tenancy_id'] ?? inv['tenancyId'])?.toString() ?? '') ==
+              _tenancyId,
+        ),
+      );
       if (mounted) {
         setState(() {
           _pendingRent = dues;

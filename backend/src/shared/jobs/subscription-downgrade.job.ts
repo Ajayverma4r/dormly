@@ -27,18 +27,21 @@ export async function runSubscriptionDowngradeJob(): Promise<void> {
 
 /**
  * Starts a recurring in-process job that checks for expired subscriptions.
- * Default interval: every hour.
+ * Default interval: every hour. Started only when SUBSCRIPTION_JOBS_ENABLED=true;
+ * [runOnBoot] (SUBSCRIPTION_JOBS_RUN_ON_BOOT) also runs it once immediately.
  *
  * @returns The interval handle — pass to clearInterval() to stop on shutdown.
  */
-export function scheduleSubscriptionDowngradeJob(
+export function scheduleSubscriptionDowngradeJob({
   intervalMs = 60 * 60 * 1000,
-): NodeJS.Timeout {
-  // Run once immediately on startup to catch any backlog
-  runSubscriptionDowngradeJob().catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error('[subscription-downgrade] Startup run failed:', err);
-  });
+  runOnBoot = false,
+}: { intervalMs?: number; runOnBoot?: boolean } = {}): NodeJS.Timeout {
+  if (runOnBoot) {
+    runSubscriptionDowngradeJob().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[subscription-downgrade] Startup run failed:', err);
+    });
+  }
 
   return setInterval(() => {
     runSubscriptionDowngradeJob().catch((err) => {

@@ -4,6 +4,7 @@
 // for owners when they open the notifications list.
 
 import { query } from '@config/db';
+import { schemaAutoMigrateEnabled } from '@config/runtime-flags';
 
 export type MoveOutNotifInput = {
   userId: string;
@@ -17,8 +18,25 @@ export type MoveOutNotifInput = {
 
 let schemaReady: Promise<boolean> | null = null;
 
-/** Idempotent: adds `notifications.data` if missing. */
+/**
+ * Whether `notifications.data` exists. Adds it (idempotent) only when
+ * DB_SCHEMA_AUTO_MIGRATE is on; otherwise a read-only catalog check.
+ */
 export async function ensureNotificationsSchema(): Promise<boolean> {
+  if (!schemaReady && !schemaAutoMigrateEnabled()) {
+    schemaReady = query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'notifications'
+           AND column_name = 'data'
+       ) AS exists`,
+    )
+      .then(([row]) => row?.exists === true)
+      .catch(() => {
+        schemaReady = null;
+        return false;
+      });
+  }
   if (!schemaReady) {
     schemaReady = (async () => {
       try {

@@ -4,6 +4,7 @@
 // Any state change that should alert the other party goes through here.
 
 import { query } from '@config/db';
+import { schemaAutoMigrateEnabled } from '@config/runtime-flags';
 import {
   ensureNotificationsSchema,
   resolvePropertyOwnerIds,
@@ -86,10 +87,14 @@ export async function notifyPropertyOwners(opts: {
   return ok;
 }
 
-/** Ensure live-ops tables exist even if SQL migration was not applied yet. */
+/**
+ * Creates live-ops schema (migrations 017/018) when DB_SCHEMA_AUTO_MIGRATE is
+ * on. Otherwise a no-op: startup has already verified the schema read-only.
+ */
 let liveOpsReady: Promise<void> | null = null;
 
 export async function ensureLiveOpsSchema(): Promise<void> {
+  if (!liveOpsReady && !schemaAutoMigrateEnabled()) return;
   if (!liveOpsReady) {
     liveOpsReady = (async () => {
       try {

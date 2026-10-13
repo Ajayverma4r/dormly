@@ -62,13 +62,53 @@ String invoiceStatus(Map<String, dynamic> inv) =>
 bool isDraftInvoice(Map<String, dynamic> inv) =>
     inv.containsKey('sent_at') && inv['sent_at'] == null;
 
-bool isOpenUnpaidInvoice(Map<String, dynamic> inv) {
-  final status = invoiceStatus(inv);
-  if (!{'pending', 'overdue', 'partial', 'partially_paid'}.contains(status)) {
-    return false;
+/// Sent to the tenant with a balance still owed — the same rule the backend
+/// uses for dues, `has_due` and dashboard pending totals. Drafts never count.
+bool isOpenUnpaidInvoice(Map<String, dynamic> inv) =>
+    !isDraftInvoice(inv) && invoiceRemaining(inv) > 0.009;
+
+/// Calendar due date of the invoice (date only, no time-of-day).
+DateTime? invoiceDueDate(Map<String, dynamic> inv) {
+  final raw = (inv['due_date'] ?? inv['dueDate'])?.toString().trim();
+  if (raw == null || raw.isEmpty) return null;
+  final dateOnly = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
+  if (dateOnly != null) {
+    return DateTime(
+      int.parse(dateOnly.group(1)!),
+      int.parse(dateOnly.group(2)!),
+      int.parse(dateOnly.group(3)!),
+    );
   }
-  return invoiceRemaining(inv) > 0.009;
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return null;
+  // A UTC-midnight timestamp is a serialized SQL date; keep its calendar day.
+  final d = parsed.isUtc &&
+          parsed.hour == 0 &&
+          parsed.minute == 0 &&
+          parsed.second == 0 &&
+          parsed.millisecond == 0
+      ? parsed
+      : parsed.toLocal();
+  return DateTime(d.year, d.month, d.day);
 }
+
+/// Outstanding and past due in the property's calendar, partially paid
+/// included. Uses the backend's derived `is_overdue`; older responses without
+/// it fall back to the stored `overdue` status. Never uses the device date.
+bool isOverdueInvoice(Map<String, dynamic> inv) {
+  if (!isOpenUnpaidInvoice(inv)) return false;
+  final flag = inv['is_overdue'] ?? inv['isOverdue'];
+  if (flag is bool) return flag;
+  if (flag != null) return flag.toString().toLowerCase() == 'true';
+  return invoiceStatus(inv) == 'overdue';
+}
+
+/// Sum of remaining balances on sent invoices; drafts and paid excluded.
+double outstandingTotal(Iterable<Map<String, dynamic>> invoices) =>
+    invoices.where(isOpenUnpaidInvoice).fold<double>(
+          0,
+          (sum, inv) => sum + invoiceRemaining(inv),
+        );
 
 String tenantDisplayName(Map<String, dynamic> inv) =>
     inv['full_name']?.toString() ??

@@ -7,6 +7,32 @@
 // are not yet present on the database (e.g. production lagging behind dev).
 
 import { query } from '@config/db';
+import {
+  INVOICE_BALANCE_SQL,
+  SENT_INVOICE_SQL,
+  overdueInvoiceSql,
+  propertyClock,
+  type PropertyClock,
+} from '@modules/billing/billing-metrics';
+
+/**
+ * Dues and "billed" figures count only invoices sent to the tenant; drafts
+ * stay on the owner's review screens. Balances subtract recorded payments.
+ */
+const OPEN_BALANCES_CTE = `open_balances AS (
+         SELECT i.tenancy_id, ${INVOICE_BALANCE_SQL} AS balance
+         FROM invoices i
+         WHERE i.property_id = $1
+           AND ${SENT_INVOICE_SQL}
+       )`;
+
+/** Invoices sent during the property-local month ($2 zone, $3..$4 dates). */
+const BILLED_THIS_MONTH_SQL = `(SELECT COALESCE(SUM(i.total_amount), 0)::text
+          FROM invoices i
+          WHERE i.property_id = $1
+            AND ${SENT_INVOICE_SQL}
+            AND (i.sent_at AT TIME ZONE $2::text) >= $3::date
+            AND (i.sent_at AT TIME ZONE $2::text) < $4::date) AS billed_this_month`;
 
 export interface DashboardDefaulter {
   tenancy_id: string;
@@ -53,10 +79,11 @@ export interface PropertyDashboard {
 
 export class DashboardService {
   async getPropertyDashboard(propertyId: string): Promise<PropertyDashboard> {
+    const clock = await propertyClock(propertyId);
     const [hero_stats, overview, actionable_insights] = await Promise.all([
       this.getHeroStats(propertyId),
-      this.getOverview(propertyId),
-      this.getActionableInsights(propertyId),
+      this.getOverview(propertyId, clock),
+      this.getActionableInsights(propertyId, clock),
     ]);
 
     return { hero_stats, overview, actionable_insights };
@@ -137,16 +164,20 @@ export class DashboardService {
     };
   }
 
-  private async getOverview(propertyId: string) {
+  private async getOverview(propertyId: string, clock: PropertyClock) {
     try {
-      return await this.getOverviewWithExpenses(propertyId);
+      return await this.getOverviewWithExpenses(propertyId, clock);
     } catch (err) {
       console.warn('[dashboard] overview v2 failed, using legacy query:', err);
-      return this.getOverviewLegacy(propertyId);
+      return this.getOverviewLegacy(propertyId, clock);
     }
   }
 
-  private async getOverviewWithExpenses(propertyId: string) {
+  private overviewParams(propertyId: string, clock: PropertyClock) {
+    return [propertyId, clock.timeZone, clock.monthStart, clock.nextMonthStart];
+  }
+
+  private async getOverviewWithExpenses(propertyId: string, clock: PropertyClock) {
     const [row] = await query<{
       total_active_tenants: string;
       open_complaints: string;
@@ -161,16 +192,7 @@ export class DashboardService {
            date_trunc('month', CURRENT_DATE)::date AS month_start,
            (date_trunc('month', CURRENT_DATE) + interval '1 month')::date AS month_end
        ),
-       open_balances AS (
-         SELECT
-           i.tenancy_id,
-           i.total_amount - COALESCE((
-             SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id
-           ), 0) AS balance
-         FROM invoices i
-         WHERE i.property_id = $1
-           AND i.status <> 'paid'
-       )
+       ${OPEN_BALANCES_CTE}
        SELECT
          (SELECT COUNT(*)::text FROM tenancies
           WHERE property_id = $1 AND status = 'active') AS total_active_tenants,
@@ -189,20 +211,16 @@ export class DashboardService {
             AND p.paid_at < mb.month_end::timestamptz) AS rent_received,
          (SELECT COALESCE(SUM(balance), 0)::text
           FROM open_balances WHERE balance > 0) AS rent_pending,
-         (SELECT COALESCE(SUM(i.total_amount), 0)::text
-          FROM invoices i, month_bounds mb
-          WHERE i.property_id = $1
-            AND i.created_at >= mb.month_start::timestamptz
-            AND i.created_at < mb.month_end::timestamptz) AS billed_this_month,
+         ${BILLED_THIS_MONTH_SQL},
          (SELECT COUNT(DISTINCT tenancy_id)::text
           FROM open_balances WHERE balance > 0.009) AS tenants_with_dues`,
-      [propertyId],
+      this.overviewParams(propertyId, clock),
     );
 
     return this.formatOverview(row);
   }
 
-  private async getOverviewLegacy(propertyId: string) {
+  private async getOverviewLegacy(propertyId: string, clock: PropertyClock) {
     const [row] = await query<{
       total_active_tenants: string;
       open_complaints: string;
@@ -216,16 +234,7 @@ export class DashboardService {
            date_trunc('month', CURRENT_DATE)::date AS month_start,
            (date_trunc('month', CURRENT_DATE) + interval '1 month')::date AS month_end
        ),
-       open_balances AS (
-         SELECT
-           i.tenancy_id,
-           i.total_amount - COALESCE((
-             SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id
-           ), 0) AS balance
-         FROM invoices i
-         WHERE i.property_id = $1
-           AND i.status <> 'paid'
-       )
+       ${OPEN_BALANCES_CTE}
        SELECT
          (SELECT COUNT(*)::text FROM tenancies
           WHERE property_id = $1 AND status = 'active') AS total_active_tenants,
@@ -239,14 +248,10 @@ export class DashboardService {
             AND p.paid_at < mb.month_end::timestamptz) AS rent_received,
          (SELECT COALESCE(SUM(balance), 0)::text
           FROM open_balances WHERE balance > 0) AS rent_pending,
-         (SELECT COALESCE(SUM(i.total_amount), 0)::text
-          FROM invoices i, month_bounds mb
-          WHERE i.property_id = $1
-            AND i.created_at >= mb.month_start::timestamptz
-            AND i.created_at < mb.month_end::timestamptz) AS billed_this_month,
+         ${BILLED_THIS_MONTH_SQL},
          (SELECT COUNT(DISTINCT tenancy_id)::text
           FROM open_balances WHERE balance > 0.009) AS tenants_with_dues`,
-      [propertyId],
+      this.overviewParams(propertyId, clock),
     );
 
     return {
@@ -275,10 +280,10 @@ export class DashboardService {
     };
   }
 
-  private async getActionableInsights(propertyId: string) {
+  private async getActionableInsights(propertyId: string, clock: PropertyClock) {
     const [counts, defaulters, upcomingItems] = await Promise.all([
       this.getInsightCounts(propertyId),
-      this.getDefaulters(propertyId).catch((err) => {
+      this.getDefaulters(propertyId, clock).catch((err) => {
         console.warn('[dashboard] defaulters query failed:', err);
         return [] as DashboardDefaulter[];
       }),
@@ -485,7 +490,10 @@ export class DashboardService {
     };
   }
 
-  private async getDefaulters(propertyId: string): Promise<DashboardDefaulter[]> {
+  private async getDefaulters(
+    propertyId: string,
+    clock: PropertyClock,
+  ): Promise<DashboardDefaulter[]> {
     const rows = await query<{
       tenancy_id: string;
       name: string;
@@ -500,14 +508,10 @@ export class DashboardService {
            i.id AS invoice_id,
            i.tenancy_id,
            i.due_date,
-           i.total_amount - COALESCE((
-             SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id = i.id
-           ), 0) AS balance
+           ${INVOICE_BALANCE_SQL} AS balance
          FROM invoices i
          WHERE i.property_id = $1
-           AND i.sent_at IS NOT NULL
-           AND i.status IN ('overdue', 'pending', 'partial')
-           AND i.due_date < CURRENT_DATE
+           AND ${overdueInvoiceSql('$2')}
        ),
        tenant_balances AS (
          SELECT
@@ -532,7 +536,7 @@ export class DashboardService {
        JOIN users u ON u.id = t.user_id
        ORDER BY tb.amount_due DESC
        LIMIT 10`,
-      [propertyId],
+      [propertyId, clock.today],
     );
 
     return rows.map((r) => ({

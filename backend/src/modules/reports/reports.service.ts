@@ -1,18 +1,25 @@
 // modules/reports/reports.service.ts
 import { query } from '@config/db';
+import { SENT_INVOICE_SQL } from '@modules/billing/billing-metrics';
 
 export class ReportsService {
+  /** Bills issued to tenants only; drafts awaiting review are not part of collections. */
   async getRentCollectionRows(propertyId: string, startDate: string, endDate: string) {
     return query<any>(
       `SELECT t.full_name, u.phone, n.name AS node_name,
-              i.period_start, i.period_end, i.due_date, i.status,
+              i.period_start::text AS period_start,
+              i.period_end::text AS period_end,
+              i.due_date::text AS due_date,
+              i.status,
               i.total_amount,
               COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0) AS paid_amount
        FROM invoices i
        JOIN tenancies t ON t.id = i.tenancy_id
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
-       WHERE i.property_id = $1 AND i.due_date BETWEEN $2 AND $3
+       WHERE i.property_id = $1
+         AND ${SENT_INVOICE_SQL}
+         AND i.due_date BETWEEN $2 AND $3
        ORDER BY i.due_date`,
       [propertyId, startDate, endDate],
     );

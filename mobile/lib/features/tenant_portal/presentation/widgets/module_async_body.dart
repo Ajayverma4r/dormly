@@ -15,6 +15,9 @@ class ModuleAsyncBody<T> extends StatelessWidget {
   final VoidCallback? onRetry;
   final double skeletonHeight;
 
+  /// User-facing detail for an error; defaults to the error's text.
+  final String Function(Object error)? errorDetail;
+
   const ModuleAsyncBody({
     super.key,
     required this.async,
@@ -22,6 +25,7 @@ class ModuleAsyncBody<T> extends StatelessWidget {
     this.errorLabel = 'Failed to load',
     this.onRetry,
     this.skeletonHeight = 72,
+    this.errorDetail,
   });
 
   @override
@@ -30,7 +34,7 @@ class ModuleAsyncBody<T> extends StatelessWidget {
       loading: () => _Skeleton(height: skeletonHeight),
       error: (e, _) => _ModuleError(
         label: errorLabel,
-        detail: e.toString(),
+        detail: errorDetail?.call(e) ?? e.toString(),
         onRetry: onRetry,
       ),
       data: builder,

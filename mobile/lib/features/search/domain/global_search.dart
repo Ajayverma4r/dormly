@@ -3,6 +3,9 @@
 // Property-wide search over data the app already loads (tenants, rooms,
 // invoices, complaints). Pure Dart so it can be tested without Flutter.
 
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show isDraftInvoice, isOpenUnpaidInvoice, isOverdueInvoice;
+
 enum SearchQuickFilter { overdue, drafts, vacant, checkedOut }
 
 extension SearchQuickFilterLabel on SearchQuickFilter {
@@ -62,10 +65,6 @@ String _s(dynamic v) => (v ?? '').toString().toLowerCase();
 
 String _digits(String s) => s.replaceAll(RegExp(r'\D'), '');
 
-double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0;
-
-DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
-
 /// Text match with digit-only phone matching ("98765" finds "+91 98765 43210").
 bool _textMatches(String query, List<String> fields, {List<String> phones = const []}) {
   final q = query.trim().toLowerCase();
@@ -82,33 +81,13 @@ bool _textMatches(String query, List<String> fields, {List<String> phones = cons
   return false;
 }
 
-bool isDraftInvoiceRow(Map<String, dynamic> inv) =>
-    inv.containsKey('sent_at') && inv['sent_at'] == null;
-
-double invoiceBalance(Map<String, dynamic> inv) {
-  final b = _num(inv['total_amount']) - _num(inv['paid_amount']);
-  return b < 0 ? 0 : b;
-}
-
-/// Sent, unpaid and past its saved due date (the due day itself is not overdue).
-bool isOverdueInvoiceRow(Map<String, dynamic> inv, DateTime today) {
-  if (isDraftInvoiceRow(inv)) return false;
-  if (_s(inv['status']) == 'paid' || invoiceBalance(inv) <= 0.009) return false;
-  final raw = inv['due_date']?.toString() ?? '';
-  if (raw.length < 10) return _s(inv['status']) == 'overdue';
-  final due = DateTime.tryParse(raw.substring(0, 10));
-  if (due == null) return _s(inv['status']) == 'overdue';
-  return due.isBefore(_dateOnly(today));
-}
-
 bool _tenantHasOverdue(
   Map<String, dynamic> tenant,
   List<Map<String, dynamic>> invoices,
-  DateTime today,
 ) {
   final id = _s(tenant['id']);
   return invoices.any(
-    (i) => _s(i['tenancy_id']) == id && isOverdueInvoiceRow(i, today),
+    (i) => _s(i['tenancy_id']) == id && isOverdueInvoice(i),
   );
 }
 
@@ -122,14 +101,14 @@ bool _invoiceMonthMatches(String q, Map<String, dynamic> inv) {
   return _monthNames[month - 1].startsWith(q);
 }
 
-bool _invoiceStatusWordMatches(String q, Map<String, dynamic> inv, DateTime today) {
+bool _invoiceStatusWordMatches(String q, Map<String, dynamic> inv) {
   if (q.length < 3) return false;
-  if ('draft'.startsWith(q) || 'review'.startsWith(q)) return isDraftInvoiceRow(inv);
-  if ('overdue'.startsWith(q)) return isOverdueInvoiceRow(inv, today);
-  if ('paid'.startsWith(q)) return !isDraftInvoiceRow(inv) && _s(inv['status']) == 'paid';
+  if ('draft'.startsWith(q) || 'review'.startsWith(q)) return isDraftInvoice(inv);
+  if ('overdue'.startsWith(q)) return isOverdueInvoice(inv);
+  if ('paid'.startsWith(q)) return !isDraftInvoice(inv) && _s(inv['status']) == 'paid';
   if ('partial'.startsWith(q)) return _s(inv['status']) == 'partial';
   if ('pending'.startsWith(q) || 'unpaid'.startsWith(q)) {
-    return !isDraftInvoiceRow(inv) && invoiceBalance(inv) > 0.009;
+    return isOpenUnpaidInvoice(inv);
   }
   return false;
 }
@@ -141,10 +120,8 @@ GlobalSearchResults runGlobalSearch({
   List<SearchRoom> rooms = const [],
   List<Map<String, dynamic>> invoices = const [],
   List<Map<String, dynamic>> complaints = const [],
-  DateTime? today,
   int limitPerSection = 20,
 }) {
-  final now = today ?? DateTime.now();
   final q = query.trim().toLowerCase();
   if (q.isEmpty && filter == null) return const GlobalSearchResults();
 
@@ -174,7 +151,7 @@ GlobalSearchResults runGlobalSearch({
         phones: [i['phone']?.toString() ?? ''],
       ) ||
       _invoiceMonthMatches(q, i) ||
-      _invoiceStatusWordMatches(q, i, now);
+      _invoiceStatusWordMatches(q, i);
 
   bool complaintMatches(Map<String, dynamic> c) => _textMatches(
         q,
@@ -193,15 +170,15 @@ GlobalSearchResults runGlobalSearch({
       return GlobalSearchResults(
         tenants: take(tenants.where((t) =>
             _s(t['status']) == 'active' &&
-            _tenantHasOverdue(t, invoices, now) &&
+            _tenantHasOverdue(t, invoices) &&
             tenantMatches(t))),
         invoices: take(invoices.where(
-            (i) => isOverdueInvoiceRow(i, now) && invoiceMatches(i))),
+            (i) => isOverdueInvoice(i) && invoiceMatches(i))),
       );
     case SearchQuickFilter.drafts:
       return GlobalSearchResults(
         invoices: take(
-            invoices.where((i) => isDraftInvoiceRow(i) && invoiceMatches(i))),
+            invoices.where((i) => isDraftInvoice(i) && invoiceMatches(i))),
       );
     case SearchQuickFilter.vacant:
       return GlobalSearchResults(

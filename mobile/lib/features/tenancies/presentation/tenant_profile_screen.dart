@@ -3,12 +3,21 @@
 // Tenant Details — card + tab layout matching the product mock:
 // Overview / Personal / KYC / Payments / Complaints.
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show
+        invoiceDueDate,
+        invoicePaidAmount,
+        invoiceTotalAmount,
+        isDraftInvoice,
+        isOpenUnpaidInvoice,
+        outstandingTotal;
 import '../../billing/presentation/tenant_ledger_sheet.dart';
 import '../../billing/presentation/whatsapp_reminder.dart';
 import '../../complaints/data/complaints_repository.dart';
@@ -51,44 +60,39 @@ final tenancyLedgerSummaryProvider = FutureProvider.autoDispose
   (ref, args) async {
     final invoices =
         await ref.watch(billingRepositoryProvider).listInvoices(args.$1);
-    var billed = 0.0;
-    var paid = 0.0;
-    DateTime? nextDue;
-    for (final inv in invoices) {
-      final tid = (inv['tenancy_id'] ?? inv['tenancyId'])?.toString() ?? '';
-      if (tid != args.$2) continue;
-      final total = double.tryParse(
-            inv['total_amount']?.toString() ??
-                inv['totalAmount']?.toString() ??
-                '',
-          ) ??
-          0;
-      final paidAmt = double.tryParse(
-            inv['paid_amount']?.toString() ??
-                inv['paidAmount']?.toString() ??
-                '',
-          ) ??
-          0;
-      billed += total;
-      paid += paidAmt;
-      final dueLeft = total - paidAmt;
-      if (dueLeft <= 0.009) continue;
-      final dueRaw = inv['due_date'] ??
-          inv['dueDate'] ??
-          inv['period_end'] ??
-          inv['periodEnd'];
-      final due = DateTime.tryParse(dueRaw?.toString() ?? '');
-      if (due == null) continue;
-      if (nextDue == null || due.isBefore(nextDue)) nextDue = due;
-    }
-    return (
-      billed: billed,
-      paid: paid,
-      outstanding: (billed - paid).clamp(0.0, 1e12).toDouble(),
-      nextDue: nextDue,
+    return tenancyLedgerTotals(
+      invoices.where(
+        (inv) =>
+            ((inv['tenancy_id'] ?? inv['tenancyId'])?.toString() ?? '') ==
+            args.$2,
+      ),
     );
   },
 );
+
+/// Drafts are excluded: they are not billed to the tenant until sent.
+TenancyLedgerTotals tenancyLedgerTotals(
+  Iterable<Map<String, dynamic>> invoices,
+) {
+  var billed = 0.0;
+  var paid = 0.0;
+  DateTime? nextDue;
+  for (final inv in invoices) {
+    if (isDraftInvoice(inv)) continue;
+    billed += invoiceTotalAmount(inv);
+    paid += invoicePaidAmount(inv);
+    if (!isOpenUnpaidInvoice(inv)) continue;
+    final due = invoiceDueDate(inv);
+    if (due == null) continue;
+    if (nextDue == null || due.isBefore(nextDue)) nextDue = due;
+  }
+  return (
+    billed: billed,
+    paid: paid,
+    outstanding: outstandingTotal(invoices),
+    nextDue: nextDue,
+  );
+}
 
 final tenantNodeComplaintsProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String nodeId)>(
@@ -527,6 +531,132 @@ class _ProfileBodyState extends ConsumerState<_ProfileBody> {
     }
   }
 
+  Future<void> _addCharge() async {
+    final reasonCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Charge'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: reasonCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Reason',
+                  hintText: 'e.g. Electricity',
+                ),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Enter a reason' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: amountCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Amount',
+                  prefixText: '₹ ',
+                ),
+                validator: (v) {
+                  final n = double.tryParse(v?.trim() ?? '');
+                  if (n == null || n <= 0) return 'Enter a valid amount';
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.pop(ctx, true);
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final reason = reasonCtrl.text.trim();
+    final amount = double.tryParse(amountCtrl.text.trim());
+    if (amount == null) return;
+
+    final today = DateTime.now();
+    String iso(DateTime d) => d.toIso8601String().split('T').first;
+    try {
+      await ref.read(billingRepositoryProvider).createInvoice(
+            _propertyId,
+            tenancyId: _tenancyId,
+            periodStart: iso(today),
+            periodEnd: iso(today),
+            dueDate: iso(today.add(const Duration(days: 7))),
+            lineItems: [
+              {'description': reason, 'amount': amount},
+            ],
+          );
+      await widget.onRefresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Charge added: $reason')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not add charge: $e'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _uploadAgreement() async {
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
+    final path = result?.files.single.path;
+    if (path == null) return;
+    try {
+      await ref
+          .read(tenancyRepositoryProvider)
+          .uploadAgreement(_propertyId, _tenancyId, path);
+      await widget.onRefresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Agreement uploaded')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _viewAgreement(String relativeUrl) async {
+    final baseUrl = ref.read(tenancyRepositoryProvider).baseUrl;
+    final url =
+        relativeUrl.startsWith('http') ? relativeUrl : '$baseUrl$relativeUrl';
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _raiseComplaint() async {
     if (_nodeId.isEmpty) return;
     final categoryCtrl = TextEditingController();
@@ -718,6 +848,7 @@ class _ProfileBodyState extends ConsumerState<_ProfileBody> {
               isEnded: _isEnded,
               onViewHistory: _openLedger,
               onRecordPayment: _openLedger,
+              onAddCharge: _addCharge,
             ),
             if (_tab == _TenantTab.overview) const SizedBox(height: 12),
           ],
@@ -726,6 +857,14 @@ class _ProfileBodyState extends ConsumerState<_ProfileBody> {
               tenancy: tenancy,
               docsAsync: docsAsync,
               onUpload: _isEnded || _nodeId.isEmpty ? null : _openKycEdit,
+            ),
+            const SizedBox(height: 12),
+            _AgreementCard(
+              agreementUrl: (tenancy['agreement_pdf_url'] ??
+                      tenancy['agreementPdfUrl'])
+                  ?.toString(),
+              onView: _viewAgreement,
+              onUpload: _isEnded ? null : _uploadAgreement,
             ),
             if (_tab == _TenantTab.overview) const SizedBox(height: 12),
           ],
@@ -1299,6 +1438,7 @@ class _RentPaymentsCard extends StatelessWidget {
   final bool isEnded;
   final VoidCallback onViewHistory;
   final VoidCallback onRecordPayment;
+  final VoidCallback onAddCharge;
 
   const _RentPaymentsCard({
     required this.totalsAsync,
@@ -1308,6 +1448,7 @@ class _RentPaymentsCard extends StatelessWidget {
     required this.isEnded,
     required this.onViewHistory,
     required this.onRecordPayment,
+    required this.onAddCharge,
   });
 
   @override
@@ -1354,7 +1495,22 @@ class _RentPaymentsCard extends StatelessWidget {
                 t.nextDue == null ? '—' : _dateFmt.format(t.nextDue!),
               ),
               if (!isEnded) ...[
-                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: onAddCharge,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      padding: EdgeInsets.zero,
+                    ),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text(
+                      'Add Charge',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 SizedBox(
                   height: 46,
                   width: double.infinity,
@@ -1408,6 +1564,54 @@ class _RentPaymentsCard extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _AgreementCard extends StatelessWidget {
+  final String? agreementUrl;
+  final Future<void> Function(String url) onView;
+  final VoidCallback? onUpload;
+
+  const _AgreementCard({
+    required this.agreementUrl,
+    required this.onView,
+    required this.onUpload,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final url = agreementUrl?.trim() ?? '';
+    final hasAgreement = url.isNotEmpty;
+    if (!hasAgreement && onUpload == null) return const SizedBox.shrink();
+
+    return _CardShell(
+      icon: Icons.description_outlined,
+      title: 'Rental Agreement',
+      child: SizedBox(
+        height: 46,
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: hasAgreement ? () => onView(url) : onUpload,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.primary),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          icon: Icon(
+            hasAgreement
+                ? Icons.picture_as_pdf_outlined
+                : Icons.upload_file_outlined,
+            size: 18,
+          ),
+          label: Text(
+            hasAgreement ? 'View Agreement' : 'Upload Agreement',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
       ),
     );
   }

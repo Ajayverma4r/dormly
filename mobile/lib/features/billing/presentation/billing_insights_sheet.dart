@@ -130,11 +130,13 @@ class _BillingInsightsSheetState extends ConsumerState<BillingInsightsSheet> {
           collected: allRecent.fold<double>(0, (s, i) => s + i.paidAmount),
           unpaid: allRecent.fold<double>(0, (s, i) => s + i.remaining),
         );
-        final billedLive =
-            allRecent.fold<double>(0, (s, i) => s + i.amount);
-        final billedDisplay = invoicesAsync.hasValue
-            ? billedLive
-            : widget.billedThisMonth;
+        final billedDisplay = ref
+                .watch(propertyDashboardProvider(widget.propertyId))
+                .asData
+                ?.value
+                .overview
+                .billedThisMonth ??
+            widget.billedThisMonth;
         final recent = _applyFilter(allRecent);
         final unbilledCount = _unbilledCount(
           invoices: invoices,
@@ -688,23 +690,30 @@ class _StatusChip extends StatelessWidget {
     final paid = status == 'paid';
     final partial = status == 'partial' || status == 'partially_paid';
     final overdue = status == 'overdue';
+    final draft = status == 'draft';
     final color = paid
         ? AppColors.positive
         : overdue
             ? AppColors.danger
-            : _unpaidOrange;
+            : draft
+                ? AppColors.primary
+                : _unpaidOrange;
     final bg = paid
         ? const Color(0xFFDCFCE7)
         : overdue
             ? const Color(0xFFFEE2E2)
-            : const Color(0xFFFEF3C7);
+            : draft
+                ? AppColors.primarySoft
+                : const Color(0xFFFEF3C7);
     final label = paid
         ? 'Paid'
         : overdue
             ? 'Overdue'
-            : partial
-                ? 'Partial'
-                : 'Pending';
+            : draft
+                ? 'Draft'
+                : partial
+                    ? 'Partial'
+                    : 'Pending';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -775,31 +784,22 @@ List<_RecentInvoice> _recentInvoices(
   final monthInvoices = invoices
       .where((inv) => _invoiceInSheetMonth(inv, month))
       .map((inv) {
-        final rawStatus = inv['status']?.toString() ?? '';
-        final status = invoiceStatus(inv);
-        final paid = invoicePaidAmount(inv);
-        final remaining = invoiceRemaining(inv);
-        final total = invoiceTotalAmount(inv);
-        debugPrint(
-          '[BillingInsights] id=${inv['id']} tenant=${tenantDisplayName(inv)} '
-          'rawStatus="$rawStatus" status=$status total=$total '
-          'paid=$paid remaining=$remaining',
-        );
+        final draft = isDraftInvoice(inv);
         return _RecentInvoice(
           id: (inv['id'] ?? '').toString(),
           tenantName: tenantDisplayName(inv),
-          amount: total,
-          paidAmount: paid,
-          remaining: remaining,
-          status: status,
+          amount: invoiceTotalAmount(inv),
+          paidAmount: invoicePaidAmount(inv),
+          // Drafts are not owed until sent, so they never count as unpaid.
+          remaining: draft ? 0 : invoiceRemaining(inv),
+          status: draft
+              ? 'draft'
+              : isOverdueInvoice(inv)
+                  ? 'overdue'
+                  : invoiceStatus(inv),
         );
       })
       .toList();
-  debugPrint(
-    '[BillingInsights] month invoices=${monthInvoices.length} '
-    'collected=${monthInvoices.fold<double>(0, (s, i) => s + i.paidAmount)} '
-    'unpaid=${monthInvoices.fold<double>(0, (s, i) => s + i.remaining)}',
-  );
   return monthInvoices;
 }
 

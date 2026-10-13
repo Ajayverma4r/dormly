@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../billing/presentation/billing_invoice_helpers.dart'
+    show invoiceRemaining, isDraftInvoice, isOverdueInvoice;
 import '../../billing/presentation/billing_providers.dart';
 import '../../billing/presentation/invoice_detail_screen.dart';
 import '../../billing/presentation/whatsapp_reminder.dart'
@@ -517,7 +519,6 @@ class _ResultsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
     return ListView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
@@ -594,9 +595,9 @@ class _ResultsList extends StatelessWidget {
         if (results.invoices.isNotEmpty) ...[
           _SectionTitle('Invoices', results.invoices.length),
           ...results.invoices.map((i) {
-            final draft = isDraftInvoiceRow(i);
-            final overdue = isOverdueInvoiceRow(i, today);
-            final balance = invoiceBalance(i);
+            final draft = isDraftInvoice(i);
+            final overdue = isOverdueInvoice(i);
+            final balance = invoiceRemaining(i);
             final paid = !draft && balance <= 0.009;
             final (label, color) = draft
                 ? ('Draft', _C.purple)

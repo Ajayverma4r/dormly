@@ -5,6 +5,7 @@ Map<String, dynamic> _t(
   String name, {
   String status = 'active',
   bool hasDue = false,
+  bool? hasOverdue,
   String? due,
   String room = 'G01',
   String phone = '9000456700',
@@ -14,19 +15,20 @@ Map<String, dynamic> _t(
       'status': status,
       'has_due': hasDue,
       'earliest_open_due_date': due,
+      if (hasOverdue != null) 'has_overdue': hasOverdue,
       'node_name': room,
       'phone': phone,
     };
 
 void main() {
-  final today = DateTime(2026, 10, 10);
-
+  // `has_overdue` is decided by the backend in the property's calendar.
   final residents = [
     _t('paid'),
-    _t('due', hasDue: true, due: '2026-10-12'),
-    _t('dueToday', hasDue: true, due: '2026-10-10'),
-    _t('overdue', hasDue: true, due: '2026-10-05', room: 'G05'),
-    _t('outWithDues', status: 'ended', hasDue: true, due: '2026-09-05'),
+    _t('due', hasDue: true, hasOverdue: false, due: '2026-10-12'),
+    _t('dueToday', hasDue: true, hasOverdue: false, due: '2026-10-10'),
+    _t('overdue', hasDue: true, hasOverdue: true, due: '2026-10-05', room: 'G05'),
+    _t('outWithDues',
+        status: 'ended', hasDue: true, hasOverdue: true, due: '2026-09-05'),
     _t('outClean', status: 'ended'),
   ];
 
@@ -41,7 +43,6 @@ void main() {
                 stay: stay,
                 payment: payment,
                 query: query,
-                today: today,
               ))
           .map((r) => r['full_name'] as String)
           .toList();
@@ -70,16 +71,22 @@ void main() {
         ['overdue']);
   });
 
-  test('due day itself is Due, day after is Overdue', () {
-    final r = _t('x', hasDue: true, due: '2026-10-10');
-    expect(tenantPaymentStatus(r, today: today), TenantPaymentStatus.due);
-    expect(tenantPaymentStatus(r, today: DateTime(2026, 10, 11)),
-        TenantPaymentStatus.overdue);
+  test('overdue follows the backend flag, not the due date', () {
+    // Device may already be past the due date; the property is not.
+    final dueToday = _t('x', hasDue: true, hasOverdue: false, due: '2020-01-01');
+    expect(tenantPaymentStatus(dueToday), TenantPaymentStatus.due);
+    final overdue = _t('x', hasDue: true, hasOverdue: true, due: '2099-01-01');
+    expect(tenantPaymentStatus(overdue), TenantPaymentStatus.overdue);
   });
 
-  test('missing due date falls back to Due, not Overdue', () {
-    final r = _t('x', hasDue: true);
-    expect(tenantPaymentStatus(r, today: today), TenantPaymentStatus.due);
+  test('missing has_overdue falls back to Due, not Overdue', () {
+    final r = _t('x', hasDue: true, due: '2020-01-01');
+    expect(tenantPaymentStatus(r), TenantPaymentStatus.due);
+  });
+
+  test('a stale overdue flag without dues is Paid', () {
+    final r = _t('x', hasOverdue: true);
+    expect(tenantPaymentStatus(r), TenantPaymentStatus.paid);
   });
 
   test('search combines with filters', () {

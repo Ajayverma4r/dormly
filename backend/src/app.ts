@@ -12,17 +12,12 @@ import { orgAnalyticsRouter } from '@modules/analytics/org-analytics.routes';
 import { notificationsRouter } from '@modules/notifications/notifications.routes';
 import { invitationsRouter } from '@modules/staff/invitations.routes';
 import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscriptions/subscription.routes';
-import { scheduleSubscriptionDowngradeJob } from '@shared/jobs/subscription-downgrade.job';
-import { scheduleSubscriptionExpiryWarningJob } from '@shared/jobs/subscription-expiry-warning.job';
-import {
-  hostelBillingCronHandler,
-  scheduleHostelBillingJob,
-} from '@shared/jobs/hostel-billing.job';
+import { hostelBillingCronHandler } from '@shared/jobs/hostel-billing.job';
 
-import { ensureLiveOpsSchema } from '@modules/notifications/notify';
-import { ensureNotificationsSchema } from '@modules/notifications/move-out-notifications';
-import { ensureBillingSchema } from '@modules/billing/billing.service';
-
+/**
+ * Builds the Express app only. Schema checks and background jobs are started
+ * by server.ts through shared/startup, behind explicit flags.
+ */
 export function createApp() {
   const app = express();
 
@@ -57,20 +52,6 @@ export function createApp() {
 
   app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
   app.use(errorHandler);
-
-  // Subscription maintenance jobs
-  scheduleSubscriptionDowngradeJob();       // hourly: expire → free (no data delete)
-  scheduleSubscriptionExpiryWarningJob();   // daily: 7-day in-app renew reminders
-  scheduleHostelBillingJob();               // hourly: anniversary draft invoices + overdue notices
-
-  // Ensure shared live-ops tables exist (complaints photos, mess, meters, gate passes).
-  void ensureNotificationsSchema().catch(() => undefined);
-  void ensureLiveOpsSchema().catch((err) =>
-    console.warn('[boot] live-ops schema ensure failed:', err),
-  );
-  void ensureBillingSchema().catch((err) =>
-    console.warn('[boot] billing schema ensure failed:', err),
-  );
 
   return app;
 }

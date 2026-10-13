@@ -2,10 +2,14 @@
 import { Router } from 'express';
 import { BillingController } from './billing.controller';
 import { requireRole } from '@shared/middleware/auth-guard';
+import { scopeParamToProperty } from '@shared/middleware/property-scope';
 
 const controller = new BillingController();
 export const billingRouter = Router({ mergeParams: true });
 billingRouter.use(requireRole('owner', 'admin', 'manager')); // Staff has no billing access at all, per role matrix
+billingRouter.param('invoiceId', scopeParamToProperty('invoices'));
+billingRouter.param('tenancyId', scopeParamToProperty('tenancies'));
+billingRouter.param('chargeTypeId', scopeParamToProperty('charge_types'));
 
 billingRouter.get('/charge-types', controller.listChargeTypes);
 billingRouter.post('/charge-types', controller.createChargeType);

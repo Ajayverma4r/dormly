@@ -206,16 +206,18 @@ class _InvoiceDetailScreenState extends ConsumerState<InvoiceDetailScreen> {
             (sum, p) =>
                 sum + (double.tryParse(p['amount'].toString()) ?? 0),
           );
-          final remaining = total - paid;
+          final remaining = (total - paid).clamp(0.0, double.infinity);
           final isDraft = isDraftInvoice(invoice);
+          final backendStatus =
+              (invoice['status'] ?? 'pending').toString().toUpperCase();
           final status = isDraft
               ? 'DRAFT — REVIEW REQUIRED'
-              : (invoice['status'] ?? 'pending').toString().toUpperCase();
-          final dueRaw =
-              invoice['due_date']?.toString().split('T').first ?? '';
-          final dueDate = DateTime.tryParse(dueRaw);
+              : isOverdueInvoice(invoice) && backendStatus != 'OVERDUE'
+                  ? '$backendStatus · OVERDUE'
+                  : backendStatus;
+          final dueDate = invoiceDueDate(invoice);
           final dueLabel = dueDate == null
-              ? (dueRaw.isEmpty ? '—' : dueRaw)
+              ? '—'
               : DateFormat('d MMM yyyy').format(dueDate);
           return ListView(
             padding: const EdgeInsets.all(20),

@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../domain/meter_reading_errors.dart';
 import '../meter_reading_screen.dart';
 import '../tenant_portal_providers.dart';
 import 'module_async_body.dart';
@@ -26,6 +27,8 @@ class RentalMeterUploadWidget extends ConsumerWidget {
     return ModuleAsyncBody<List<Map<String, dynamic>>>(
       async: async,
       errorLabel: 'Failed to load meter readings',
+      errorDetail: (e) =>
+          meterReadingErrorMessage(e, action: MeterReadingAction.load),
       onRetry: () => ref.invalidate(tenantMeterReadingsProvider),
       builder: (rows) => Material(
         color: Colors.white,

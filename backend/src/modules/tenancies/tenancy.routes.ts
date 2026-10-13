@@ -3,8 +3,10 @@ import { Router } from 'express';
 import { TenancyController } from './tenancy.controller';
 import { uploadAgreementMiddleware, uploadProfilePhotoMiddleware, uploadTenantDocumentMiddleware } from './tenancy.controller';
 import { requireRole } from '@shared/middleware/auth-guard';
+import { scopeParamToProperty } from '@shared/middleware/property-scope';
 const controller = new TenancyController();
 export const tenancyRouter = Router({ mergeParams: true });
+tenancyRouter.param('tenancyId', scopeParamToProperty('tenancies'));
 
 tenancyRouter.get('/', controller.list);
 tenancyRouter.get('/:tenancyId', controller.getById);
