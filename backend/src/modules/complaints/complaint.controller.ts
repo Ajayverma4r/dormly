@@ -1,27 +1,15 @@
 // modules/complaints/complaint.controller.ts
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
-import fs from 'fs';
-import path from 'path';
 import multer from 'multer';
 import { ComplaintService } from './complaint.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
+import { safeImageExtension, saveUpload } from '@shared/storage/file-storage';
 
 const service = new ComplaintService();
 
-const photoDir = path.join(__dirname, '../../../uploads/complaints');
-fs.mkdirSync(photoDir, { recursive: true });
-
-const photoStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, photoDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-  },
-});
-
 export const uploadComplaintPhotosMiddleware = multer({
-  storage: photoStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024, files: 3 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
@@ -44,9 +32,17 @@ const updateSchema = z.object({
   resolutionNote: z.string().optional(),
 });
 
-function filesToUrls(req: AuthedRequest): string[] {
+async function filesToUrls(req: AuthedRequest): Promise<string[]> {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-  return files.map((f) => `/uploads/complaints/${f.filename}`);
+  return Promise.all(
+    files.map((f) =>
+      saveUpload(
+        'complaints',
+        `${Date.now()}-${Math.random().toString(36).slice(2)}${safeImageExtension(f.originalname)}`,
+        f,
+      ),
+    ),
+  );
 }
 
 export class ComplaintController {
@@ -68,7 +64,7 @@ export class ComplaintController {
             : req.body.photoUrls
           : undefined,
       });
-      const photoUrls = [...(body.photoUrls ?? []), ...filesToUrls(req)];
+      const photoUrls = [...(body.photoUrls ?? []), ...(await filesToUrls(req))];
       const complaint = await service.create(
         req.params.propertyId,
         body.nodeId,
@@ -126,7 +122,7 @@ export class ComplaintController {
               : req.body.photoUrls
             : undefined,
         });
-      const photoUrls = [...(body.photoUrls ?? []), ...filesToUrls(req)];
+      const photoUrls = [...(body.photoUrls ?? []), ...(await filesToUrls(req))];
       const complaint = await service.create(
         body.propertyId,
         body.nodeId,

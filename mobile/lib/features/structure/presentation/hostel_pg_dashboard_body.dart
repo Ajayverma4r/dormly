@@ -8,6 +8,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/domain/user_profile.dart';
+import '../../dashboard/domain/dashboard_financials.dart';
+import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
 import '../domain/hierarchy_level.dart';
@@ -15,22 +17,36 @@ import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider, nodeCountProvider;
 import 'rooms/room_list_filter.dart';
 import 'rooms/rooms_tree_provider.dart';
+import '../../../core/theme/theme_mode.dart';
 
 /// Colors sampled from 01_exact_dashboard_reference.png
 class HostelPgDashboardColors {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const cardElevated = Color(0xFF172337);
-  static const cardBorder = Color(0x14FFFFFF);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const purpleBright = Color(0xFF7C3AED);
-  static const blue = Color(0xFF3B82F6);
-  static const cyan = Color(0xFF22D3EE);
-  static const green = Color(0xFF22C55E);
-  static const red = Color(0xFFF87171);
-  static const orange = Color(0xFFF2835F);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get cardElevated =>
+      themed(const Color(0xFF172337), const Color(0xFFFFFFFF));
+  static Color get cardBorder =>
+      themed(const Color(0x14FFFFFF), const Color(0xFFE6E8EF));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get purpleBright =>
+      themed(const Color(0xFF7C3AED), const Color(0xFF7C3AED));
+  static Color get blue =>
+      themed(const Color(0xFF3B82F6), const Color(0xFF3B82F6));
+  static Color get cyan =>
+      themed(const Color(0xFF22D3EE), const Color(0xFF06B6D4));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get red =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
 }
 
 class HostelPgDashboardBody extends ConsumerWidget {
@@ -134,7 +150,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
               ),
               const SizedBox(height: 10),
               dashboardAsync.when(
-                loading: () => const Padding(
+                loading: () => Padding(
                   padding: EdgeInsets.symmetric(vertical: 48),
                   child: Center(
                     child: CircularProgressIndicator(
@@ -187,28 +203,19 @@ class HostelPgDashboardBody extends ConsumerWidget {
                         ),
                       ],
                       const SizedBox(height: 14),
-                      _SectionTitle(
-                        title: 'Financial Overview',
-                        trailing: _MonthPill(),
-                      ),
-                      const SizedBox(height: 8),
-                      _FinancePair(
-                        collected: overview.rentReceived,
-                        expenses: overview.totalExpenses,
+                      _FinancialOverview(
+                        propertyId: propertyId,
+                        thisMonthFallback: overview,
                         onCollectedTap: onCollectedTap,
                         onExpensesTap: onExpensesTap,
-                      ),
-                      const SizedBox(height: 8),
-                      _NetProfitCard(
-                        netProfit: overview.netProfit,
-                        onTap: onNetProfitTap,
+                        onNetProfitTap: onNetProfitTap,
                       ),
                       const SizedBox(height: 14),
                       _SectionTitle(
                         title: '$containerKind Occupancy',
                         trailing: GestureDetector(
                           onTap: onViewAllRooms,
-                          child: const Text(
+                          child: Text(
                             'View All →',
                             style: TextStyle(
                               color: HostelPgDashboardColors.purple,
@@ -281,7 +288,7 @@ class _Header extends StatelessWidget {
                   children: [
                     TextSpan(
                       text: '$greeting, $name ',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: HostelPgDashboardColors.textPrimary,
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
@@ -296,7 +303,7 @@ class _Header extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
-              const Text(
+              Text(
                 'Manage your hostel/PG efficiently today.',
                 style: TextStyle(
                   color: HostelPgDashboardColors.textSecondary,
@@ -314,7 +321,7 @@ class _Header extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.all(6),
             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            icon: const Icon(
+            icon: Icon(
               Icons.search_rounded,
               color: HostelPgDashboardColors.textPrimary,
               size: 22,
@@ -328,7 +335,7 @@ class _Header extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.all(6),
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              icon: const Icon(
+              icon: Icon(
                 Icons.notifications_none_rounded,
                 color: HostelPgDashboardColors.textPrimary,
                 size: 22,
@@ -404,7 +411,7 @@ class _HeroCard extends ConsumerWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF101B2C),
+        color: themed(const Color(0xFF101B2C), const Color(0xFFFFFFFF)),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: HostelPgDashboardColors.cardBorder),
       ),
@@ -420,7 +427,7 @@ class _HeroCard extends ConsumerWidget {
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    const ColoredBox(color: Color(0xFF101B2C)),
+                    ColoredBox(color: themed(const Color(0xFF101B2C), const Color(0xFFFFFFFF))),
                     Align(
                       alignment: Alignment.centerRight,
                       child: FractionallySizedBox(
@@ -446,21 +453,21 @@ class _HeroCard extends ConsumerWidget {
                             fit: BoxFit.cover,
                             alignment: const Alignment(0.15, 0),
                             errorBuilder: (_, __, ___) =>
-                                const ColoredBox(color: Color(0xFF1A2233)),
+                                ColoredBox(color: themed(const Color(0xFF1A2233), const Color(0xFFF1F5F9))),
                           ),
                         ),
                       ),
                     ),
-                    const DecoratedBox(
+                    DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.centerLeft,
                           end: Alignment.centerRight,
                           colors: [
-                            Color(0xFF101B2C),
-                            Color(0xE6101B2C),
-                            Color(0x66101B2C),
-                            Color(0x00101B2C),
+                            themed(const Color(0xFF101B2C), const Color(0xFFFFFFFF)),
+                            themed(const Color(0xE6101B2C), const Color(0xE6FFFFFF)),
+                            themed(const Color(0x66101B2C), const Color(0x66FFFFFF)),
+                            themed(const Color(0x00101B2C), const Color(0x00FFFFFF)),
                           ],
                           stops: [0.0, 0.28, 0.55, 0.78],
                         ),
@@ -478,14 +485,14 @@ class _HeroCard extends ConsumerWidget {
                                 width: 32,
                                 height: 32,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF0B1A33),
+                                  color: themed(const Color(0xFF0B1A33), const Color(0xFFEEF2FF)),
                                   borderRadius: BorderRadius.circular(9),
                                   border: Border.all(
                                       color: const Color(0x554B76F1)),
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.apartment_rounded,
-                                  color: Color(0xFF93C5FD),
+                                  color: themed(const Color(0xFF93C5FD), const Color(0xFF2563EB)),
                                   size: 17,
                                 ),
                               ),
@@ -498,8 +505,9 @@ class _HeroCard extends ConsumerWidget {
                                       propertyName,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: themed(Colors.white,
+                                            const Color(0xFF111827)),
                                         fontSize: 14.5,
                                         fontWeight: FontWeight.w800,
                                       ),
@@ -508,8 +516,8 @@ class _HeroCard extends ConsumerWidget {
                                       subtitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Color(0xB3CBD5E1),
+                                      style: TextStyle(
+                                        color: themed(const Color(0xB3CBD5E1), const Color(0xFF6B7280)),
                                         fontSize: 11,
                                       ),
                                     ),
@@ -518,7 +526,7 @@ class _HeroCard extends ConsumerWidget {
                               ),
                               const SizedBox(width: 4),
                               Material(
-                                color: const Color(0x66243044),
+                                color: themed(const Color(0x66243044), const Color(0xFFFFFFFF)),
                                 borderRadius: BorderRadius.circular(16),
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(16),
@@ -527,8 +535,8 @@ class _HeroCard extends ConsumerWidget {
                                     ref,
                                     currentPropertyId: propertyId,
                                   ),
-                                  child: const Padding(
-                                    padding: EdgeInsets.symmetric(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
                                       horizontal: 8,
                                       vertical: 5,
                                     ),
@@ -538,7 +546,9 @@ class _HeroCard extends ConsumerWidget {
                                         Text(
                                           'All Properties',
                                           style: TextStyle(
-                                            color: Color(0xEBFFFFFF),
+                                            color: themed(
+                                                const Color(0xEBFFFFFF),
+                                                const Color(0xFF111827)),
                                             fontSize: 10,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -546,7 +556,9 @@ class _HeroCard extends ConsumerWidget {
                                         Icon(
                                           Icons.keyboard_arrow_down_rounded,
                                           size: 14,
-                                          color: Color(0xE6FFFFFF),
+                                          color: themed(
+                                              const Color(0xE6FFFFFF),
+                                              const Color(0xFF111827)),
                                         ),
                                       ],
                                     ),
@@ -596,18 +608,20 @@ class _HeroCard extends ConsumerWidget {
                               children: [
                                 TextSpan(
                                   text: '$occupancyPct%',
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: themed(Colors.white,
+                                        const Color(0xFF111827)),
                                     fontSize: 28,
                                     fontWeight: FontWeight.w800,
                                     letterSpacing: -0.6,
                                     height: 1,
                                   ),
                                 ),
-                                const TextSpan(
+                                TextSpan(
                                   text: '  Occupied',
                                   style: TextStyle(
-                                    color: Color(0xE6FFFFFF),
+                                    color: themed(const Color(0xE6FFFFFF),
+                                        const Color(0xFF374151)),
                                     fontSize: 14,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -624,19 +638,19 @@ class _HeroCard extends ConsumerWidget {
                                 height: 8,
                                 child: Stack(
                                   children: [
-                                    const Positioned.fill(
+                                    Positioned.fill(
                                       child: ColoredBox(
-                                          color: Color(0x55334155)),
+                                          color: themed(const Color(0x55334155), const Color(0xFFE5E7EB))),
                                     ),
                                     FractionallySizedBox(
                                       widthFactor: bar,
-                                      child: const DecoratedBox(
+                                      child: DecoratedBox(
                                         decoration: BoxDecoration(
                                           gradient: LinearGradient(
                                             colors: [
-                                              Color(0xFF8B5CF6),
+                                              themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED)),
                                               Color(0xFF4B76F1),
-                                              Color(0xFF22D3EE),
+                                              themed(const Color(0xFF22D3EE), const Color(0xFF06B6D4)),
                                             ],
                                           ),
                                         ),
@@ -657,10 +671,10 @@ class _HeroCard extends ConsumerWidget {
           ),
           // Bottom stats — same card, compact
           Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFF0C1522),
+            decoration: BoxDecoration(
+              color: themed(const Color(0xFF0C1522), const Color(0xFFFFFFFF)),
               border: Border(
-                top: BorderSide(color: Color(0x18FFFFFF)),
+                top: BorderSide(color: themed(const Color(0x18FFFFFF), const Color(0xFFE5E7EB))),
               ),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
@@ -677,7 +691,7 @@ class _HeroCard extends ConsumerWidget {
                 Container(
                   width: 1,
                   height: 28,
-                  color: const Color(0x22FFFFFF),
+                  color: themed(const Color(0x22FFFFFF), const Color(0xFFE5E7EB)),
                 ),
                 _InlineStat(
                   icon: Icons.bed_outlined,
@@ -690,7 +704,7 @@ class _HeroCard extends ConsumerWidget {
                 Container(
                   width: 1,
                   height: 28,
-                  color: const Color(0x22FFFFFF),
+                  color: themed(const Color(0x22FFFFFF), const Color(0xFFE5E7EB)),
                 ),
                 _InlineStat(
                   icon: Icons.apartment_outlined,
@@ -749,7 +763,7 @@ class _InlineStat extends StatelessWidget {
               const SizedBox(width: 4),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   color: HostelPgDashboardColors.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
@@ -761,7 +775,7 @@ class _InlineStat extends StatelessWidget {
           Text(
             label,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               color: HostelPgDashboardColors.textSecondary,
               fontSize: 10,
             ),
@@ -791,8 +805,8 @@ class _QuickActions extends StatelessWidget {
           child: _ActionTile(
             label: 'Add Tenant',
             icon: Icons.person_add_alt_1_rounded,
-            cardColor: const Color(0xFF3B2B78),
-            iconColor: const Color(0xFF8B5CF6),
+            cardColor: themed(const Color(0xFF3B2B78), const Color(0xFF5B4BD6)),
+            iconColor: themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED)),
             onTap: onAddTenant,
           ),
         ),
@@ -801,8 +815,8 @@ class _QuickActions extends StatelessWidget {
           child: _ActionTile(
             label: 'New Invoice',
             icon: Icons.receipt_long_rounded,
-            cardColor: const Color(0xFF4A3228),
-            iconColor: const Color(0xFFF2835F),
+            cardColor: themed(const Color(0xFF4A3228), const Color(0xFF7A5244)),
+            iconColor: themed(const Color(0xFFF2835F), const Color(0xFFEA580C)),
             onTap: onNewInvoice,
           ),
         ),
@@ -811,7 +825,7 @@ class _QuickActions extends StatelessWidget {
           child: _ActionTile(
             label: 'Add Expense',
             icon: Icons.credit_card_rounded,
-            cardColor: const Color(0xFF14463F),
+            cardColor: themed(const Color(0xFF14463F), const Color(0xFF2E8B5E)),
             iconColor: const Color(0xFF06AD6A),
             onTap: onAddExpense,
           ),
@@ -895,7 +909,7 @@ class _SectionTitle extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: HostelPgDashboardColors.textPrimary,
               fontSize: 15.5,
               fontWeight: FontWeight.w800,
@@ -908,32 +922,167 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _MonthPill extends StatelessWidget {
+/// Collected / Expenses / Net Profit for the period picked in the pill.
+/// While "This Month" loads (or on an older backend) it shows the dashboard's
+/// own month figures without comparison badges.
+class _FinancialOverview extends ConsumerWidget {
+  final String propertyId;
+  final DashboardOverview thisMonthFallback;
+  final VoidCallback? onCollectedTap;
+  final VoidCallback? onExpensesTap;
+  final VoidCallback? onNetProfitTap;
+
+  const _FinancialOverview({
+    required this.propertyId,
+    required this.thisMonthFallback,
+    this.onCollectedTap,
+    this.onExpensesTap,
+    this.onNetProfitTap,
+  });
+
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0x338B5CF6),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+  Widget build(BuildContext context, WidgetRef ref) {
+    final period = ref.watch(financialPeriodProvider(propertyId));
+    final async = ref.watch(dashboardFinancialsProvider((propertyId, period)));
+    final isThisMonth = period == FinancialPeriod.thisMonth;
+    final fallback = isThisMonth
+        ? DashboardFinancials(
+            period: period,
+            collected: thisMonthFallback.rentReceived,
+            expenses: thisMonthFallback.totalExpenses,
+            netProfit: thisMonthFallback.netProfit,
+          )
+        : null;
+    final data = async.valueOrNull ?? fallback;
+    // Breakdown sheets list the current month only.
+    final tapsApply = isThisMonth;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle(
+          title: 'Financial Overview',
+          trailing: _PeriodPill(
+            selected: period,
+            onSelected: (p) =>
+                ref.read(financialPeriodProvider(propertyId).notifier).state = p,
+          ),
+        ),
+        if (data?.rangeCaption != null) ...[
+          const SizedBox(height: 2),
           Text(
-            'This Month',
+            data!.rangeCaption!,
             style: TextStyle(
-              color: HostelPgDashboardColors.purple,
-              fontWeight: FontWeight.w600,
-              fontSize: 12.5,
+              color: HostelPgDashboardColors.textSecondary,
+              fontSize: 11,
             ),
           ),
-          Icon(
-            Icons.keyboard_arrow_down_rounded,
-            size: 16,
-            color: HostelPgDashboardColors.purple,
+        ],
+        const SizedBox(height: 8),
+        if (data == null)
+          async.hasError
+              ? _ErrorCard(
+                  onRetry: () => ref.invalidate(
+                    dashboardFinancialsProvider((propertyId, period)),
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: HostelPgDashboardColors.purple,
+                    ),
+                  ),
+                )
+        else ...[
+          _FinancePair(
+            collected: data.collected,
+            expenses: data.expenses,
+            collectedBadge: changeBadgeText(data.collectedChangePct),
+            collectedUp: (data.collectedChangePct ?? 0) >= 0,
+            expensesBadge: changeBadgeText(data.expensesChangePct),
+            expensesUp: (data.expensesChangePct ?? 0) >= 0,
+            onCollectedTap: tapsApply ? onCollectedTap : null,
+            onExpensesTap: tapsApply ? onExpensesTap : null,
+          ),
+          const SizedBox(height: 8),
+          _NetProfitCard(
+            netProfit: data.netProfit,
+            onTap: tapsApply ? onNetProfitTap : null,
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _PeriodPill extends StatelessWidget {
+  final FinancialPeriod selected;
+  final ValueChanged<FinancialPeriod> onSelected;
+
+  const _PeriodPill({required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<FinancialPeriod>(
+      initialValue: selected,
+      onSelected: onSelected,
+      color: HostelPgDashboardColors.cardElevated,
+      tooltip: 'Choose period',
+      position: PopupMenuPosition.under,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      itemBuilder: (_) => [
+        for (final p in FinancialPeriod.values)
+          PopupMenuItem(
+            value: p,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    p.label,
+                    style: TextStyle(
+                      color: p == selected
+                          ? HostelPgDashboardColors.purple
+                          : HostelPgDashboardColors.textPrimary,
+                      fontWeight:
+                          p == selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (p == selected)
+                  Icon(
+                    Icons.check_rounded,
+                    size: 18,
+                    color: HostelPgDashboardColors.purple,
+                  ),
+              ],
+            ),
+          ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+        decoration: BoxDecoration(
+          color: themed(const Color(0x338B5CF6), const Color(0x1F7C3AED)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              selected.label,
+              style: TextStyle(
+                color: HostelPgDashboardColors.purple,
+                fontWeight: FontWeight.w600,
+                fontSize: 12.5,
+              ),
+            ),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: HostelPgDashboardColors.purple,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -942,12 +1091,20 @@ class _MonthPill extends StatelessWidget {
 class _FinancePair extends StatelessWidget {
   final double collected;
   final double expenses;
+  final String? collectedBadge;
+  final bool collectedUp;
+  final String? expensesBadge;
+  final bool expensesUp;
   final VoidCallback? onCollectedTap;
   final VoidCallback? onExpensesTap;
 
   const _FinancePair({
     required this.collected,
     required this.expenses,
+    this.collectedBadge,
+    this.collectedUp = true,
+    this.expensesBadge,
+    this.expensesUp = true,
     this.onCollectedTap,
     this.onExpensesTap,
   });
@@ -958,26 +1115,31 @@ class _FinancePair extends StatelessWidget {
       children: [
         Expanded(
           child: _FinanceCard(
-            bg: const Color(0xFF1B2350),
+            bg: themed(const Color(0xFF1B2350), const Color(0xFFEFEBFF)),
             icon: Icons.bar_chart_rounded,
             iconColor: HostelPgDashboardColors.purple,
             value: _inr(collected),
             label: 'Collected',
-            badge: collected > 0 ? '↑ 12%' : null,
-            badgeColor: HostelPgDashboardColors.green,
+            badge: collectedBadge,
+            badgeColor: collectedUp
+                ? HostelPgDashboardColors.green
+                : HostelPgDashboardColors.red,
             onTap: onCollectedTap,
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: _FinanceCard(
-            bg: const Color(0xFF3E232B),
+            bg: themed(const Color(0xFF3E232B), const Color(0xFFFDECEC)),
             icon: Icons.description_outlined,
             iconColor: HostelPgDashboardColors.red,
             value: _inr(expenses),
             label: 'Expenses',
-            badge: expenses > 0 ? '↑ 8%' : null,
-            badgeColor: HostelPgDashboardColors.red,
+            badge: expensesBadge,
+            // Rising expenses are bad news, falling ones good.
+            badgeColor: expensesUp
+                ? HostelPgDashboardColors.red
+                : HostelPgDashboardColors.green,
             onTap: onExpensesTap,
           ),
         ),
@@ -1048,7 +1210,7 @@ class _FinanceCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   color: HostelPgDashboardColors.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
@@ -1057,7 +1219,7 @@ class _FinanceCard extends StatelessWidget {
               const SizedBox(height: 1),
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   color: HostelPgDashboardColors.textSecondary,
                   fontSize: 11,
                 ),
@@ -1079,7 +1241,7 @@ class _NetProfitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFF172046),
+      color: themed(const Color(0xFF172046), const Color(0xFFFFFFFF)),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1092,10 +1254,10 @@ class _NetProfitCard extends StatelessWidget {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: const Color(0x338B5CF6),
+                  color: themed(const Color(0x338B5CF6), const Color(0x1F7C3AED)),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.insights_rounded,
                   color: HostelPgDashboardColors.purple,
                   size: 18,
@@ -1107,14 +1269,16 @@ class _NetProfitCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _inr(netProfit),
-                      style: const TextStyle(
-                        color: HostelPgDashboardColors.textPrimary,
+                      netProfit < 0 ? '−${_inr(-netProfit)}' : _inr(netProfit),
+                      style: TextStyle(
+                        color: netProfit < 0
+                            ? HostelPgDashboardColors.red
+                            : HostelPgDashboardColors.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const Text(
+                    Text(
                       'Net Profit',
                       style: TextStyle(
                         color: HostelPgDashboardColors.textSecondary,
@@ -1231,13 +1395,13 @@ class _OccupancyCard extends StatelessWidget {
                       children: [
                         Text(
                           '$occupancyPct%',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: HostelPgDashboardColors.textPrimary,
                             fontSize: 17,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const Text(
+                        Text(
                           'Occupied',
                           style: TextStyle(
                             color: HostelPgDashboardColors.textSecondary,
@@ -1284,6 +1448,8 @@ class _OccupancyCard extends StatelessWidget {
 
 class _DonutPainter extends CustomPainter {
   final double progress;
+  final bool dark = DormlyThemeMode.isDark;
+
   _DonutPainter({required this.progress});
 
   @override
@@ -1299,7 +1465,7 @@ class _DonutPainter extends CustomPainter {
       math.pi * 2,
       false,
       Paint()
-        ..color = const Color(0xFF2A3142)
+        ..color = themed(const Color(0xFF2A3142), const Color(0xFFE5E7EB))
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
         ..strokeCap = StrokeCap.round
@@ -1328,7 +1494,8 @@ class _DonutPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _DonutPainter old) => old.progress != progress;
+  bool shouldRepaint(covariant _DonutPainter old) =>
+      old.progress != progress || old.dark != dark;
 }
 
 class _Legend extends StatelessWidget {
@@ -1360,7 +1527,7 @@ class _Legend extends StatelessWidget {
         Expanded(
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: HostelPgDashboardColors.textSecondary,
               fontSize: 13,
             ),
@@ -1368,7 +1535,7 @@ class _Legend extends StatelessWidget {
         ),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             color: HostelPgDashboardColors.textPrimary,
             fontWeight: FontWeight.w800,
             fontSize: 15,
@@ -1393,7 +1560,7 @@ class _ErrorCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const Text(
+          Text(
             'Could not load dashboard data.',
             style: TextStyle(color: HostelPgDashboardColors.textPrimary),
           ),

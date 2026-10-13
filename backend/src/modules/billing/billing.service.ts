@@ -6,8 +6,10 @@ import {
   DEFAULT_PROPERTY_TIME_ZONE,
   hostelBillingTimeZone,
   checkMoveInEdit,
+  invoiceFormCycle,
   planHostelCycles,
   type CyclePlan,
+  type InvoiceFormCycle,
   type MoveInEditCheck,
 } from './hostel-billing-cycle';
 import {
@@ -273,11 +275,13 @@ function billedCyclesSql(hasInvoiceKind: boolean): string {
   return `SELECT period_start::text AS period_start, period_end::text AS period_end
           FROM invoices
           WHERE tenancy_id = $1
-            AND ${
-              hasInvoiceKind
-                ? `invoice_kind = 'cycle'`
-                : `NOT (NOT is_auto_generated AND period_start = period_end)`
-            }`;
+            AND ${cycleInvoiceSql(hasInvoiceKind)}`;
+}
+
+function cycleInvoiceSql(hasInvoiceKind: boolean): string {
+  return hasInvoiceKind
+    ? `invoice_kind = 'cycle'`
+    : `NOT (NOT is_auto_generated AND period_start = period_end)`;
 }
 
 function calendarDateOrNull(raw: Date | string | null, timeZone: string): string | null {
@@ -777,6 +781,69 @@ export class BillingService {
       `UPDATE charge_types SET is_active = false WHERE id = $1 AND property_id = $2`,
       [chargeTypeId, propertyId],
     );
+  }
+
+  // ---- Add Utilities period ----
+
+  /**
+   * Period, due date and unbilled-stay summary for the manual invoice form,
+   * on the property's calendar. `cycle` is null when the tenancy has no
+   * move-in date. `draft` is the oldest unsent cycle invoice, which the owner
+   * should review instead of creating another invoice.
+   */
+  async invoiceFormCycle(
+    propertyId: string,
+    tenancyId: string,
+  ): Promise<{
+    today: string;
+    cycle: InvoiceFormCycle | null;
+    draft: { id: string; periodStart: string; periodEnd: string } | null;
+  }> {
+    await ensureBillingSchema();
+    const [tenancy] = await query<{
+      move_in_at: Date | string | null;
+      move_out_at: Date | string | null;
+    }>(
+      `SELECT move_in_at, move_out_at FROM tenancies WHERE id = $1 AND property_id = $2`,
+      [tenancyId, propertyId],
+    );
+    if (!tenancy) throw new Error('Tenant not found for this property.');
+
+    const clock = await propertyClock(propertyId);
+    const caps = await billingSchemaCaps();
+    const [draft] = await query<{ id: string; period_start: string; period_end: string }>(
+      `SELECT id, period_start::text AS period_start, period_end::text AS period_end
+       FROM invoices
+       WHERE tenancy_id = $1 AND sent_at IS NULL AND ${cycleInvoiceSql(caps.invoiceKind)}
+       ORDER BY period_start
+       LIMIT 1`,
+      [tenancyId],
+    );
+    const draftSummary = draft
+      ? {
+          id: draft.id,
+          periodStart: dbDateToYmd(draft.period_start),
+          periodEnd: dbDateToYmd(draft.period_end),
+        }
+      : null;
+
+    const checkIn = calendarDateOrNull(tenancy.move_in_at, clock.timeZone);
+    if (!checkIn) return { today: clock.today, cycle: null, draft: draftSummary };
+
+    const billed = await query<BilledRow>(billedCyclesSql(caps.invoiceKind), [tenancyId]);
+    return {
+      today: clock.today,
+      cycle: invoiceFormCycle({
+        checkIn,
+        today: clock.today,
+        moveOut: calendarDateOrNull(tenancy.move_out_at, clock.timeZone),
+        billed: billed.map((b) => ({
+          periodStart: dbDateToYmd(b.period_start),
+          periodEnd: dbDateToYmd(b.period_end),
+        })),
+      }),
+      draft: draftSummary,
+    };
   }
 
   // ---- Arrears engine ----

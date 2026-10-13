@@ -6,6 +6,7 @@ import 'add_tenant_screen.dart';
 import 'hostel_pg_tenants_body.dart';
 import 'tenant_profile_screen.dart';
 import 'tenancy_providers.dart';
+import '../../../core/theme/theme_mode.dart';
 
 export 'tenancy_providers.dart' show propertyResidentsProvider;
 
@@ -61,16 +62,17 @@ class _ResidentsListScreenState extends ConsumerState<ResidentsListScreen> {
     ref.watch(tenancyRepositoryProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1623),
+      backgroundColor: themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB)),
       body: SafeArea(
         child: residentsAsync.when(
-          loading: () => const Center(
-            child: CircularProgressIndicator(color: Color(0xFF8B5CF6)),
+          loading: () => Center(
+            child: CircularProgressIndicator(color: themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED))),
           ),
           error: (err, _) => Center(
             child: Text(
               'Something went wrong: $err',
-              style: const TextStyle(color: Colors.white70),
+              style: TextStyle(
+                  color: themed(Colors.white70, const Color(0xFF6B7280))),
             ),
           ),
           data: (residents) => HostelPgTenantsBody(

@@ -72,6 +72,17 @@ class BillingRepository {
   }
 
   /// Unbilled past-rent arrears for a tenancy relative to [periodStart].
+  /// Oldest unbilled stay, due date and pending draft on the property calendar.
+  Future<Map<String, dynamic>> invoiceFormCycle(
+    String propertyId,
+    String tenancyId,
+  ) async {
+    final res = await _client.dio.get(
+      '/v1/properties/$propertyId/billing/tenancies/$tenancyId/invoice-cycle',
+    );
+    return Map<String, dynamic>.from(res.data['data']);
+  }
+
   Future<Map<String, dynamic>> arrearsPreview(
     String propertyId,
     String tenancyId, {

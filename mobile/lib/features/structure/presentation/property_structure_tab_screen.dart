@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/theme_mode.dart';
 import '../../tenancies/presentation/node_detail_screen.dart';
 import '../data/structure_repository.dart';
 import '../domain/hierarchy_level.dart';
@@ -19,7 +20,8 @@ import 'hostel_pg_rooms_body.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
 
-const _occupiedGreen = Color(0xFF22C55E);
+Color get _occupiedGreen =>
+    themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
 
 enum _RoomsVacancyFilter { all, vacant, occupied }
 
@@ -337,7 +339,7 @@ class _PropertyStructureTabScreenState
 
     if (isHostelPg) {
       return Scaffold(
-        backgroundColor: const Color(0xFF0D1623),
+        backgroundColor: themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB)),
         body: SafeArea(
           child: HostelPgRoomsBody(
             propertyId: widget.propertyId,
@@ -656,7 +658,7 @@ class _RoomsSummaryCard extends StatelessWidget {
             VerticalDivider(color: Colors.grey.shade300, width: 16, thickness: 1),
             Expanded(
               child: _SummarySegment(
-                leading: const _StatusDot(color: _occupiedGreen),
+                leading: _StatusDot(color: _occupiedGreen),
                 value: '${summary.occupied}',
                 label: 'Occupied',
               ),
@@ -1182,7 +1184,7 @@ class _BuildingStatusRow extends StatelessWidget {
     final pct = _occupancyPercent(summary);
     return Row(
       children: [
-        const _StatusDot(color: _occupiedGreen),
+        _StatusDot(color: _occupiedGreen),
         const SizedBox(width: 6),
         Flexible(
           child: Text(

@@ -13,9 +13,13 @@ import {
 } from '@modules/billing/billing.service';
 import {
   OUTSTANDING_INVOICE_SQL,
+  SENT_INVOICE_SQL,
   overdueInvoiceSql,
   propertyClock,
 } from '@modules/billing/billing-metrics';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface CreateTenancyInput {
   propertyId: string;
@@ -91,7 +95,15 @@ export class TenancyService {
                 SELECT 1 FROM invoices i
                 WHERE i.tenancy_id = t.id
                   AND ${overdueInvoiceSql('$2')}
-              ) AS has_overdue
+              ) AS has_overdue,
+              EXISTS (
+                SELECT 1 FROM invoices i
+                WHERE i.tenancy_id = t.id AND NOT (${SENT_INVOICE_SQL})
+              ) AS has_draft,
+              EXISTS (
+                SELECT 1 FROM invoices i
+                WHERE i.tenancy_id = t.id AND ${SENT_INVOICE_SQL}
+              ) AS has_sent_invoice
        FROM tenancies t
        JOIN users u ON u.id = t.user_id
        JOIN hierarchy_nodes n ON n.id = t.node_id
@@ -162,6 +174,15 @@ export class TenancyService {
       `SELECT * FROM tenant_documents WHERE tenancy_id = $1 ORDER BY uploaded_at DESC`,
       [tenancyId],
     );
+  }
+
+  async getDocument(tenancyId: string, documentId: string) {
+    if (!UUID_PATTERN.test(documentId)) return null;
+    const rows = await query<{ id: string; file_url: string }>(
+      `SELECT id, file_url FROM tenant_documents WHERE id = $1::uuid AND tenancy_id = $2::uuid`,
+      [documentId, tenancyId],
+    );
+    return rows[0] ?? null;
   }
 
   async create(input: CreateTenancyInput) {

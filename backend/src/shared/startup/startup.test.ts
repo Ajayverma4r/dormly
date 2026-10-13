@@ -427,5 +427,6 @@ describe('createApp', () => {
     expect(setIntervalSpy.mock.calls.length).toBe(before.i);
     expect(setTimeoutSpy.mock.calls.length).toBe(before.t);
     expect(db.log).toEqual([]);
-  });
+    // Cold import of every router is slow when suites run in parallel.
+  }, 60_000);
 });

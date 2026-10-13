@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/theme_mode.dart';
 import 'core/routing/app_router.dart';
 
 void main() async {
@@ -41,6 +42,8 @@ void main() async {
     debugPrint('AdMob init failed (non-fatal): $e');
   }
 
+  await DormlyThemeMode.load();
+
   runApp(const ProviderScope(child: DormlyApp()));
 }
 
@@ -57,7 +60,9 @@ class DormlyApp extends StatelessWidget {
       builder: (context, child) {
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: AppTheme.systemUi,
-          child: child ?? const SizedBox.shrink(),
+          child: DormlyThemeRebuilder(
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
       },
     );

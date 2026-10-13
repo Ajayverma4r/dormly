@@ -1,11 +1,10 @@
 // modules/meter-readings/meter-readings.controller.ts
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
-import fs from 'fs';
-import path from 'path';
 import multer from 'multer';
 import { MeterReadingsService } from './meter-readings.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
+import { discardUpload, safeImageExtension, saveUpload } from '@shared/storage/file-storage';
 import { assertFeatureAllowed } from '@modules/tenant-portal/property-type-access';
 import {
   MeterAccessError,
@@ -16,19 +15,8 @@ import {
 
 const service = new MeterReadingsService();
 
-const meterDir = path.join(__dirname, '../../../uploads/meter-readings');
-fs.mkdirSync(meterDir, { recursive: true });
-
-const meterStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, meterDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-  },
-});
-
 export const uploadMeterImageMiddleware = multer({
-  storage: meterStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
@@ -46,13 +34,28 @@ const submitSchema = z.object({
   tenancyId: z.string().uuid().optional(),
 });
 
-/** Drops an upload that will not be stored, so rejected requests leave no file. */
-function discardUpload(req: AuthedRequest) {
-  if (req.file?.path) fs.unlink(req.file.path, () => undefined);
+/**
+ * Stores the meter photo only once the request has passed its checks, and
+ * removes it again if the reading is rejected, so failures leave no file.
+ */
+async function withMeterImage<T>(
+  req: AuthedRequest,
+  submit: (meterImageUrl: string | null) => Promise<T>,
+): Promise<T> {
+  const imageUrl = req.file
+    ? await saveUpload(
+        'meter-readings',
+        `${Date.now()}-${Math.random().toString(36).slice(2)}${safeImageExtension(req.file.originalname)}`,
+        req.file,
+      )
+    : null;
+  try {
+    return await submit(imageUrl);
+  } catch (err) {
+    await discardUpload(imageUrl);
+    throw err;
+  }
 }
-
-const imageUrlOf = (req: AuthedRequest) =>
-  req.file ? `/uploads/meter-readings/${req.file.filename}` : null;
 
 /**
  * Tenant submit: unit and tenancy come from the caller's own active tenancy.
@@ -70,16 +73,18 @@ async function submitAsTenant(
     throw new MeterAccessError();
   }
   assertFeatureAllowed(scope, 'meter_reading');
-  return service.submit({
-    propertyId: scope.propertyId,
-    unitId: scope.unitId,
-    tenancyId: scope.tenancyId,
-    readingValue: body.readingValue,
-    meterImageUrl: imageUrlOf(req),
-    billingCycle: body.billingCycle,
-    submittedBy: req.userId!,
-    notifyOwners: true,
-  });
+  return withMeterImage(req, (meterImageUrl) =>
+    service.submit({
+      propertyId: scope.propertyId,
+      unitId: scope.unitId,
+      tenancyId: scope.tenancyId,
+      readingValue: body.readingValue,
+      meterImageUrl,
+      billingCycle: body.billingCycle,
+      submittedBy: req.userId!,
+      notifyOwners: true,
+    }),
+  );
 }
 
 /** Tenant scope for a property route; MeterAccessError if it is not theirs. */
@@ -111,24 +116,25 @@ export class MeterReadingsController {
         return res.status(201).json({ data: await submitAsTenant(req, scope, body) });
       }
       if (!body.unitId) {
-        discardUpload(req);
         return res.status(400).json({ error: 'unitId is required' });
       }
+      const unitId = body.unitId;
       // The service verifies unitId / tenancyId belong to this property.
-      const row = await service.submit({
-        propertyId: req.params.propertyId,
-        unitId: body.unitId,
-        tenancyId: body.tenancyId,
-        readingValue: body.readingValue,
-        meterImageUrl: imageUrlOf(req),
-        billingCycle: body.billingCycle,
-        ratePerUnit: body.ratePerUnit,
-        submittedBy: req.userId!,
-        notifyOwners: false,
-      });
+      const row = await withMeterImage(req, (meterImageUrl) =>
+        service.submit({
+          propertyId: req.params.propertyId,
+          unitId,
+          tenancyId: body.tenancyId,
+          readingValue: body.readingValue,
+          meterImageUrl,
+          billingCycle: body.billingCycle,
+          ratePerUnit: body.ratePerUnit,
+          submittedBy: req.userId!,
+          notifyOwners: false,
+        }),
+      );
       res.status(201).json({ data: row });
     } catch (err) {
-      discardUpload(req);
       next(err);
     }
   };
@@ -148,13 +154,11 @@ export class MeterReadingsController {
     try {
       const scope = await resolveTenantMeterScope(req);
       if (!scope) {
-        discardUpload(req);
         return res.status(404).json({ error: 'No active tenancy' });
       }
       const body = submitSchema.parse(req.body);
       res.status(201).json({ data: await submitAsTenant(req, scope, body) });
     } catch (err) {
-      discardUpload(req);
       const message = err instanceof Error ? err.message : 'Could not submit reading';
       if (message.includes('cannot be less')) {
         return res.status(400).json({ error: message });

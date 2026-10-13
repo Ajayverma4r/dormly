@@ -9,20 +9,33 @@ import '../../tenancies/domain/assignable_unit.dart';
 import '../../tenancies/presentation/assignable_units_provider.dart';
 import '../../tenancies/presentation/create_space_screen.dart';
 import '../../tenancies/presentation/rental_space_detail_screen.dart';
+import '../../../core/theme/theme_mode.dart';
 
 class _H {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const purpleBright = Color(0xFF7C3AED);
-  static const green = Color(0xFF22C55E);
-  static const greenBg = Color(0xFF14352A);
-  static const orange = Color(0xFFF2835F);
-  static const orangeBg = Color(0xFF3E2A22);
-  static const border = Color(0xFF243044);
-  static const iconWell = Color(0xFF1E2A40);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get purpleBright =>
+      themed(const Color(0xFF7C3AED), const Color(0xFF7C3AED));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get greenBg =>
+      themed(const Color(0xFF14352A), const Color(0xFFDCFCE7));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
+  static Color get orangeBg =>
+      themed(const Color(0xFF3E2A22), const Color(0xFFFFEDD5));
+  static Color get border =>
+      themed(const Color(0xFF243044), const Color(0xFFE5E7EB));
+  static Color get iconWell =>
+      themed(const Color(0xFF1E2A40), const Color(0xFFF1F0FB));
 }
 
 enum _SpaceFilter { all, occupied, vacant }
@@ -118,13 +131,13 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
       backgroundColor: _H.bg,
       body: SafeArea(
         child: spacesAsync.when(
-          loading: () => const Center(
+          loading: () => Center(
             child: CircularProgressIndicator(color: _H.purple),
           ),
           error: (e, _) => Center(
             child: Text(
               'Could not load spaces: $e',
-              style: const TextStyle(color: _H.textSecondary),
+              style: TextStyle(color: _H.textSecondary),
             ),
           ),
           data: (all) {
@@ -144,7 +157,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Spaces',
                               style: TextStyle(
                                 fontSize: 28,
@@ -156,7 +169,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                             const SizedBox(height: 4),
                             Text(
                               '${all.length} Spaces',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
                                 color: _H.textSecondary,
@@ -203,7 +216,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                   child: TextField(
                     controller: _searchController,
                     onChanged: (v) => setState(() => _query = v),
-                    style: const TextStyle(color: _H.textPrimary, fontSize: 14),
+                    style: TextStyle(color: _H.textPrimary, fontSize: 14),
                     cursorColor: _H.purple,
                     decoration: InputDecoration(
                       hintText: 'Search spaces...',
@@ -211,13 +224,13 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                         color: _H.textSecondary.withValues(alpha: 0.85),
                         fontSize: 13,
                       ),
-                      prefixIcon: const Icon(
+                      prefixIcon: Icon(
                         Icons.search,
                         color: _H.textSecondary,
                         size: 20,
                       ),
                       filled: true,
-                      fillColor: const Color(0xFF121C2C),
+                      fillColor: themed(const Color(0xFF121C2C), const Color(0xFFF3F4F6)),
                       contentPadding: const EdgeInsets.symmetric(vertical: 0),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -230,7 +243,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                         borderSide:
-                            const BorderSide(color: _H.purple, width: 1.2),
+                            BorderSide(color: _H.purple, width: 1.2),
                       ),
                     ),
                   ),
@@ -286,7 +299,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                         : spaces.isEmpty
                             ? ListView(
                                 physics: const AlwaysScrollableScrollPhysics(),
-                                children: const [
+                                children: [
                                   SizedBox(
                                     height: 220,
                                     child: Center(
@@ -416,7 +429,7 @@ class _SpaceCard extends StatelessWidget {
                       space.pathLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         color: _H.textPrimary,
@@ -427,7 +440,7 @@ class _SpaceCard extends StatelessWidget {
                       rentLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: _H.textSecondary,
@@ -441,7 +454,7 @@ class _SpaceCard extends StatelessWidget {
                         space.tenantName!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: _H.textSecondary,
@@ -468,7 +481,7 @@ class _SpaceCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const Icon(Icons.more_vert, color: _H.textSecondary, size: 20),
+              Icon(Icons.more_vert, color: _H.textSecondary, size: 20),
             ],
           ),
         ),
@@ -497,7 +510,7 @@ class _EmptyState extends StatelessWidget {
               color: _H.textSecondary.withValues(alpha: 0.7),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'No spaces yet',
               style: TextStyle(
                 fontSize: 16,
@@ -506,7 +519,7 @@ class _EmptyState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Add your first rental space to get started.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _H.textSecondary, fontSize: 13),

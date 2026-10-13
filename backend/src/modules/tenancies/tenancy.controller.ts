@@ -4,23 +4,10 @@ import { z } from 'zod';
 import { TenancyService } from './tenancy.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-
-const uploadDir = path.join(__dirname, '../../../uploads/agreements');
-const profilePhotoDir = path.join(__dirname, '../../../uploads/tenant-photos');
-const tenantDocDir = path.join(__dirname, '../../../uploads/tenant-documents');
-fs.mkdirSync(uploadDir, { recursive: true });
-fs.mkdirSync(profilePhotoDir, { recursive: true });
-fs.mkdirSync(tenantDocDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (req, _file, cb) => cb(null, `${req.params.tenancyId}-${Date.now()}.pdf`),
-});
+import { readUpload, keyFromUploadUrl, saveUpload } from '@shared/storage/file-storage';
 
 export const uploadAgreementMiddleware = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (file.mimetype !== 'application/pdf') {
       return cb(new Error('Only PDF files are allowed'));
@@ -30,14 +17,8 @@ export const uploadAgreementMiddleware = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 }).single('agreement');
 
-const profilePhotoStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, profilePhotoDir),
-  filename: (req, _file, cb) =>
-    cb(null, `${req.params.tenancyId}-photo-${Date.now()}.jpg`),
-});
-
 export const uploadProfilePhotoMiddleware = multer({
-  storage: profilePhotoStorage,
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
       return cb(new Error('Only image uploads are allowed'));
@@ -47,14 +28,8 @@ export const uploadProfilePhotoMiddleware = multer({
   limits: { fileSize: 150 * 1024 }, // 150KB server cap (client targets 100KB)
 }).single('photo');
 
-const tenantDocStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, tenantDocDir),
-  filename: (req, _file, cb) =>
-    cb(null, `${req.params.tenancyId}-doc-${Date.now()}.jpg`),
-});
-
 export const uploadTenantDocumentMiddleware = multer({
-  storage: tenantDocStorage,
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
       return cb(new Error('Only image uploads are allowed'));
@@ -207,7 +182,8 @@ export class TenancyController {
   uploadAgreement = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-      const url = `/uploads/agreements/${req.file.filename}`;
+      const url = await saveUpload(
+        'agreements', `${req.params.tenancyId}-${Date.now()}.pdf`, req.file);
       const tenancy = await service.setAgreementUrl(req.params.tenancyId, url);
       res.json({ data: tenancy });
     } catch (err) { next(err); }
@@ -216,7 +192,8 @@ export class TenancyController {
   uploadProfilePhoto = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
-      const url = `/uploads/tenant-photos/${req.file.filename}`;
+      const url = await saveUpload(
+        'tenant-photos', `${req.params.tenancyId}-photo-${Date.now()}.jpg`, req.file);
       const tenancy = await service.setProfilePhotoUrl(req.params.tenancyId, url);
       res.json({ data: tenancy });
     } catch (err) { next(err); }
@@ -230,9 +207,22 @@ export class TenancyController {
       if (!allowed.includes(docType)) {
         return res.status(400).json({ error: 'Invalid document type' });
       }
-      const url = `/uploads/tenant-documents/${req.file.filename}`;
+      const url = await saveUpload(
+        'tenant-documents', `${req.params.tenancyId}-doc-${Date.now()}.jpg`, req.file);
       const doc = await service.upsertDocument(req.params.tenancyId, docType, url);
       res.json({ data: doc });
+    } catch (err) { next(err); }
+  };
+
+  documentFile = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const doc = await service.getDocument(req.params.tenancyId, req.params.documentId);
+      const key = keyFromUploadUrl(doc?.file_url);
+      const stored = key ? await readUpload(key) : null;
+      if (!stored) return res.status(404).json({ error: 'Document not found' });
+      res.setHeader('Content-Type', stored.contentType);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.send(stored.body);
     } catch (err) { next(err); }
   };
 

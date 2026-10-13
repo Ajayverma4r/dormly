@@ -22,6 +22,7 @@ import 'property_structure_tab_screen.dart';
 import 'property_more_screen.dart';
 import 'rental_spaces_tab_screen.dart';
 import '../../tenancies/presentation/residents_list_screen.dart';
+import '../../../core/theme/theme_mode.dart';
 
 final propertyDetailProvider =
     FutureProvider.autoDispose.family<Map<String, dynamic>, String>(
@@ -262,7 +263,7 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
 
             // Dark 5-tab shell for every property type (hostel / apartment / rental).
             const selectedIconColor = Colors.white;
-            const unselectedIconColor = Color(0xFF94A3B8);
+            final unselectedIconColor = themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
 
             return PopScope(
               canPop: false,
@@ -273,14 +274,14 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
               child: Scaffold(
                 key: const ValueKey('property-bottom-nav-v2'),
                 extendBody: false,
-                backgroundColor: const Color(0xFF0D1623),
+                backgroundColor: themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB)),
                 body: IndexedStack(
                   index: _index,
                   sizing: StackFit.expand,
                   children: tabs,
                 ),
                 bottomNavigationBar: ColoredBox(
-                  color: const Color(0xFF0A0D14),
+                  color: themed(const Color(0xFF0A0D14), const Color(0xFFFFFFFF)),
                   child: SafeArea(
                     top: false,
                     child: NavigationBarTheme(
@@ -295,8 +296,8 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                                 ? FontWeight.w700
                                 : FontWeight.w500,
                             color: selected
-                                ? const Color(0xFF8B5CF6)
-                                : const Color(0xFF94A3B8),
+                                ? themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED))
+                                : themed(const Color(0xFF94A3B8), const Color(0xFF6B7280)),
                           );
                         }),
                       ),
@@ -309,8 +310,8 @@ class _PropertyShellScreenState extends ConsumerState<PropertyShellScreen> {
                         selectedIndex: _index,
                         onDestinationSelected: _goToTab,
                         height: 64,
-                        backgroundColor: const Color(0xFF0A0D14),
-                        indicatorColor: const Color(0xFF8B5CF6),
+                        backgroundColor: themed(const Color(0xFF0A0D14), const Color(0xFFFFFFFF)),
+                        indicatorColor: themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED)),
                         indicatorShape: const StadiumBorder(),
                         destinations: [
                           NavigationDestination(

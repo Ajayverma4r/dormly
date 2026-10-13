@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/theme/theme_mode.dart';
 
 import '../../../core/theme/app_theme.dart';
 import 'billing_providers.dart';
@@ -109,12 +110,12 @@ class _InvoicesListScreenState extends ConsumerState<InvoicesListScreen> {
 
     if (isHostelPg) {
       return Scaffold(
-        backgroundColor: const Color(0xFF0D1623),
+        backgroundColor: themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB)),
         appBar: widget.asTab
             ? null
             : AppBar(
                 title: const Text('Payments'),
-                backgroundColor: const Color(0xFF0D1623),
+                backgroundColor: themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB)),
                 foregroundColor: Colors.white,
               ),
         body: SafeArea(

@@ -7,9 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/theme/theme_mode.dart';
 
 import '../../billing/presentation/billing_invoice_helpers.dart'
-    show invoiceRemaining, isDraftInvoice, isOverdueInvoice;
+    show invoiceCalendarDate, invoiceRemaining, isDraftInvoice, isOverdueInvoice;
 import '../../billing/presentation/billing_providers.dart';
 import '../../billing/presentation/invoice_detail_screen.dart';
 import '../../billing/presentation/whatsapp_reminder.dart'
@@ -31,16 +32,26 @@ import '../data/recent_searches.dart';
 import '../domain/global_search.dart';
 
 class _C {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const field = Color(0xFF1A2438);
-  static const border = Color(0xFF243044);
-  static const textPrimary = Colors.white;
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const green = Color(0xFF22C55E);
-  static const red = Color(0xFFF87171);
-  static const orange = Color(0xFFF2835F);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get field =>
+      themed(const Color(0xFF1A2438), const Color(0xFFF3F4F6));
+  static Color get border =>
+      themed(const Color(0xFF243044), const Color(0xFFE5E7EB));
+  static Color get textPrimary =>
+      themed(Colors.white, const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get red =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
 }
 
 final _currency =
@@ -272,22 +283,22 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
           controller: _controller,
           autofocus: true,
           textInputAction: TextInputAction.search,
-          style: const TextStyle(color: _C.textPrimary, fontSize: 16),
+          style: TextStyle(color: _C.textPrimary, fontSize: 16),
           cursorColor: _C.purple,
           decoration: InputDecoration(
             hintText: 'Search tenants, ${_roomsLabel.toLowerCase()}, invoices…',
-            hintStyle: const TextStyle(color: _C.textSecondary, fontSize: 15),
+            hintStyle: TextStyle(color: _C.textSecondary, fontSize: 15),
             filled: true,
             fillColor: _C.field,
             isDense: true,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             prefixIcon:
-                const Icon(Icons.search, color: _C.textSecondary, size: 20),
+                Icon(Icons.search, color: _C.textSecondary, size: 20),
             suffixIcon: _query.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(Icons.close,
+                    icon: Icon(Icons.close,
                         color: _C.textSecondary, size: 20),
                     onPressed: () => _setQuery(''),
                   ),
@@ -301,7 +312,7 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
         ),
         actions: const [SizedBox(width: 12)],
         bottom: loading
-            ? const PreferredSize(
+            ? PreferredSize(
                 preferredSize: Size.fromHeight(2),
                 child: LinearProgressIndicator(
                   minHeight: 2,
@@ -421,7 +432,7 @@ class _RecentList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (recent.isEmpty) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.fromLTRB(24, 32, 24, 0),
         child: Text(
           'Search by name, phone, room or flat number, month ("Nov"), '
@@ -436,7 +447,7 @@ class _RecentList extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 'Recent searches',
                 style: TextStyle(
@@ -457,9 +468,9 @@ class _RecentList extends StatelessWidget {
           (q) => ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.history, color: _C.textSecondary),
-            title: Text(q, style: const TextStyle(color: _C.textPrimary)),
-            trailing: const Icon(Icons.north_west,
+            leading: Icon(Icons.history, color: _C.textSecondary),
+            title: Text(q, style: TextStyle(color: _C.textPrimary)),
+            trailing: Icon(Icons.north_west,
                 color: _C.textSecondary, size: 18),
             onTap: () => onTap(q),
           ),
@@ -486,7 +497,7 @@ class _NoResults extends StatelessWidget {
                 ? 'Nothing matches this filter.'
                 : 'No results for "${query.trim()}".',
         textAlign: TextAlign.center,
-        style: const TextStyle(color: _C.textSecondary, fontSize: 14),
+        style: TextStyle(color: _C.textSecondary, fontSize: 14),
       ),
     );
   }
@@ -547,7 +558,7 @@ class _ResultsList extends StatelessWidget {
                       children: [
                         IconButton(
                           tooltip: 'Call',
-                          icon: const Icon(Icons.call_outlined,
+                          icon: Icon(Icons.call_outlined,
                               color: _C.textSecondary, size: 20),
                           onPressed: () => onCall(phone),
                         ),
@@ -649,16 +660,12 @@ class _ResultsList extends StatelessWidget {
       double.tryParse(i['total_amount']?.toString() ?? '') ?? 0;
 
   static String _date(dynamic raw) {
-    final s = raw?.toString() ?? '';
-    if (s.length < 10) return '—';
-    final d = DateTime.tryParse(s.substring(0, 10));
-    return d == null ? s.substring(0, 10) : DateFormat('d MMM').format(d);
+    final d = invoiceCalendarDate(raw);
+    return d == null ? '—' : DateFormat('d MMM').format(d);
   }
 
   static String _period(Map<String, dynamic> i) {
-    final s = (i['period_start'] ?? i['due_date'])?.toString() ?? '';
-    if (s.length < 10) return 'Invoice';
-    final d = DateTime.tryParse(s.substring(0, 10));
+    final d = invoiceCalendarDate(i['period_start'] ?? i['due_date']);
     return d == null ? 'Invoice' : DateFormat('MMM yyyy').format(d);
   }
 }
@@ -675,7 +682,7 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
       child: Text(
         '$title ($count)',
-        style: const TextStyle(
+        style: TextStyle(
           color: _C.textSecondary,
           fontSize: 12,
           fontWeight: FontWeight.w800,
@@ -725,7 +732,7 @@ class _ResultTile extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: _C.textPrimary,
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
@@ -737,7 +744,7 @@ class _ResultTile extends StatelessWidget {
                           subtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: _C.textSecondary,
                             fontSize: 12,
                           ),

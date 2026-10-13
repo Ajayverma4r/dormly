@@ -249,6 +249,22 @@ describe('tenancy dues flags', () => {
       Dev: [false, null, false],
     });
   });
+
+  it('has_draft / has_sent_invoice tell "paid" apart from "only a draft"', async () => {
+    const { TenancyService } = await import('../tenancies/tenancy.service.js');
+    const list = (await new TenancyService().listByProperty(PROP_A)) as any[];
+    const flags = Object.fromEntries(
+      list.map((t) => [t.full_name, [t.has_draft, t.has_sent_invoice]]),
+    );
+    expect(flags).toEqual({
+      // Only an unsent draft: nothing has been paid.
+      Asha: [true, false],
+      Bala: [false, true],
+      Chitra: [false, true],
+      // Sent and fully paid: the only real "Paid".
+      Dev: [false, true],
+    });
+  });
 });
 
 describe('billing clock', () => {

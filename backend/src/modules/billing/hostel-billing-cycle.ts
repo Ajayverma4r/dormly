@@ -215,8 +215,64 @@ export function checkMoveInEdit(opts: {
   return aligned ? { allowed: true } : blocked('misaligned');
 }
 
+export type InvoiceFormCycle = HostelBillingCycle & {
+  /** bill date + DUE_DAYS_AFTER_BILL, before any late adjustment. */
+  standardDueDate: string;
+  /** standardDueDate already passed: dueDate is today + DUE_DAYS_AFTER_BILL. */
+  isLate: boolean;
+  /** Completed stays with no cycle invoice yet, oldest first (this one included). */
+  unbilled: BilledPeriod[];
+  gap: CyclePlan['gap'];
+};
+
 /**
- * Cycle shown on Add Utilities.
+ * Period suggested on Add Utilities: the oldest completed stay that has no
+ * cycle invoice yet, so no month can be skipped. When every completed stay is
+ * billed, the next stay after the last billed one (normally in progress).
+ * A late bill gets today + DUE_DAYS_AFTER_BILL instead of a past due date.
+ */
+export function invoiceFormCycle(opts: {
+  checkIn: string;
+  today: string;
+  moveOut: string | null;
+  billed: BilledPeriod[];
+}): InvoiceFormCycle {
+  const today = opts.today.slice(0, 10);
+  const plan = planHostelCycles({ ...opts, today });
+  let cycle = plan.cycles[0];
+  if (!cycle) {
+    const lastBilledEnd = opts.billed.reduce<string | null>(
+      (max, p) => (max == null || compareYmd(p.periodEnd, max) > 0 ? p.periodEnd : max),
+      null,
+    );
+    const checkIn = parseYmd(opts.checkIn);
+    for (let n = 0; n < 1200; n += 1) {
+      const candidate = cycleAt(checkIn, n);
+      const afterBilled =
+        lastBilledEnd == null || compareYmd(candidate.periodStart, lastBilledEnd) > 0;
+      if (afterBilled && compareYmd(candidate.billDate, today) > 0) {
+        cycle = candidate;
+        break;
+      }
+    }
+    cycle ??= cycleAt(checkIn, 1199);
+  }
+  const isLate = compareYmd(cycle.dueDate, today) < 0;
+  return {
+    ...cycle,
+    standardDueDate: cycle.dueDate,
+    dueDate: isLate
+      ? formatYmd(addCalendarDays(parseYmd(today), DUE_DAYS_AFTER_BILL))
+      : cycle.dueDate,
+    isLate,
+    unbilled: plan.cycles.map((c) => ({ periodStart: c.periodStart, periodEnd: c.periodEnd })),
+    gap: plan.gap,
+  };
+}
+
+/**
+ * Stay whose bill date is today or still ahead, ignoring what is billed.
+ * Add Utilities uses invoiceFormCycle instead, which never skips unbilled stays.
  * Before the first anniversary, this is the in-progress stay (bill date still ahead).
  * On the anniversary, it is the stay that just completed.
  * After that, it is the stay whose bill date is still ahead.

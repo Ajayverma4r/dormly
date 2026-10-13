@@ -1,9 +1,13 @@
 // features/tenancies/presentation/add_tenant_screen.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/image_compress.dart';
 import '../../billing/presentation/create_invoice_screen.dart';
 import '../../properties/data/properties_repository.dart';
 import '../../properties/domain/property_archetype.dart';
@@ -116,6 +120,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
   final _rentController = TextEditingController();
   final _notesController = TextEditingController();
   DateTime? _moveInDate;
+  File? _aadhaarCard;
   bool _saving = false;
   String? _error;
   String? _selectedNodeId;
@@ -197,6 +202,135 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
       lastDate: DateTime(2030),
     );
     if (picked != null) setState(() => _moveInDate = picked);
+  }
+
+  Future<void> _pickAadhaarCard() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take photo'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) return;
+    final picked = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _aadhaarCard = File(picked.path));
+  }
+
+  /// Runs after the tenant exists; a failure here must not undo the tenant.
+  Future<void> _uploadAadhaarCard(String tenancyId) async {
+    final card = _aadhaarCard;
+    if (card == null) return;
+    String? problem;
+    try {
+      final compressed = await compressImage(card);
+      if (!compressed.success) {
+        problem = compressed.errorMessage;
+      } else {
+        await ref.read(tenancyRepositoryProvider).uploadDocument(
+              widget.propertyId,
+              tenancyId,
+              compressed.file!.path,
+              docType: 'aadhaar',
+            );
+      }
+    } on TenancyUpdateException catch (e) {
+      problem = e.message;
+    } catch (_) {
+      problem = 'Could not upload image.';
+    }
+    if (problem != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Tenant saved, but the Aadhaar card was not uploaded: $problem '
+            'You can upload it from the tenant profile.',
+          ),
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  Widget _aadhaarCardAttachment() {
+    final card = _aadhaarCard;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: card == null
+          ? OutlinedButton.icon(
+              onPressed: _saving ? null : _pickAadhaarCard,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.attach_file_outlined),
+              label: const Text('Attach Aadhaar Card (photo)'),
+            )
+          : Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                border: Border.all(color: AppColors.hairline),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      card,
+                      width: 72,
+                      height: 48,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle,
+                            size: 18, color: AppColors.positive),
+                        SizedBox(width: 6),
+                        Flexible(child: Text('Aadhaar card attached')),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _saving ? null : _pickAadhaarCard,
+                    child: const Text('Change'),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove',
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() => _aadhaarCard = null),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+    );
   }
 
   String _normalizePhone(String raw) {
@@ -303,6 +437,8 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
 
       final tenancyId = created['id']?.toString() ?? '';
       ref.invalidate(assignableUnitsProvider(widget.propertyId));
+      if (tenancyId.isNotEmpty) await _uploadAadhaarCard(tenancyId);
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Tenant added successfully ✅')),
@@ -1089,6 +1225,7 @@ class _AddTenantScreenState extends ConsumerState<AddTenantScreen> {
                             ],
                             validator: (v) =>
                                 validateAadhaarNumber(v, required: false)),
+                        _aadhaarCardAttachment(),
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(_moveInDate == null

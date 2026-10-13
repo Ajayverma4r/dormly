@@ -4,6 +4,36 @@ import 'package:intl/intl.dart';
 final billingCurrency =
     NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 
+/// Calendar day of a date field from the API (no time-of-day).
+///
+/// Accepts 'YYYY-MM-DD' or a timestamp. The API serialises SQL DATE columns
+/// as the server's local midnight, so 1 Sep arrives as
+/// '2026-08-31T18:30:00.000Z' from a server in India: never take the first 10
+/// characters. An exact UTC midnight (server in UTC) keeps its calendar day;
+/// any other timestamp is read in the device zone.
+DateTime? invoiceCalendarDate(Object? raw) {
+  final s = raw?.toString().trim() ?? '';
+  if (s.isEmpty) return null;
+  final dateOnly = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(s);
+  if (dateOnly != null) {
+    return DateTime(
+      int.parse(dateOnly.group(1)!),
+      int.parse(dateOnly.group(2)!),
+      int.parse(dateOnly.group(3)!),
+    );
+  }
+  final parsed = DateTime.tryParse(s);
+  if (parsed == null) return null;
+  final d = parsed.isUtc &&
+          parsed.hour == 0 &&
+          parsed.minute == 0 &&
+          parsed.second == 0 &&
+          parsed.millisecond == 0
+      ? parsed
+      : parsed.toLocal();
+  return DateTime(d.year, d.month, d.day);
+}
+
 DateTime? invoiceMonthDate(Map<String, dynamic> inv) {
   for (final key in [
     'period_start',
@@ -15,19 +45,8 @@ DateTime? invoiceMonthDate(Map<String, dynamic> inv) {
     'created_at',
     'createdAt',
   ]) {
-    final raw = inv[key]?.toString().trim();
-    if (raw == null || raw.isEmpty) continue;
-    final match = RegExp(r'^(\d{4})-(\d{2})').firstMatch(raw);
-    if (match != null) {
-      final year = int.tryParse(match.group(1)!);
-      final month = int.tryParse(match.group(2)!);
-      if (year != null && month != null) return DateTime(year, month, 1);
-    }
-    final d = DateTime.tryParse(raw);
-    if (d != null) {
-      final local = d.toLocal();
-      return DateTime(local.year, local.month, 1);
-    }
+    final d = invoiceCalendarDate(inv[key]);
+    if (d != null) return DateTime(d.year, d.month, 1);
   }
   return null;
 }
@@ -68,29 +87,8 @@ bool isOpenUnpaidInvoice(Map<String, dynamic> inv) =>
     !isDraftInvoice(inv) && invoiceRemaining(inv) > 0.009;
 
 /// Calendar due date of the invoice (date only, no time-of-day).
-DateTime? invoiceDueDate(Map<String, dynamic> inv) {
-  final raw = (inv['due_date'] ?? inv['dueDate'])?.toString().trim();
-  if (raw == null || raw.isEmpty) return null;
-  final dateOnly = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
-  if (dateOnly != null) {
-    return DateTime(
-      int.parse(dateOnly.group(1)!),
-      int.parse(dateOnly.group(2)!),
-      int.parse(dateOnly.group(3)!),
-    );
-  }
-  final parsed = DateTime.tryParse(raw);
-  if (parsed == null) return null;
-  // A UTC-midnight timestamp is a serialized SQL date; keep its calendar day.
-  final d = parsed.isUtc &&
-          parsed.hour == 0 &&
-          parsed.minute == 0 &&
-          parsed.second == 0 &&
-          parsed.millisecond == 0
-      ? parsed
-      : parsed.toLocal();
-  return DateTime(d.year, d.month, d.day);
-}
+DateTime? invoiceDueDate(Map<String, dynamic> inv) =>
+    invoiceCalendarDate(inv['due_date'] ?? inv['dueDate']);
 
 /// Outstanding and past due in the property's calendar, partially paid
 /// included. Uses the backend's derived `is_overdue`; older responses without
@@ -106,6 +104,13 @@ bool isOverdueInvoice(Map<String, dynamic> inv) {
 /// Sum of remaining balances on sent invoices; drafts and paid excluded.
 double outstandingTotal(Iterable<Map<String, dynamic>> invoices) =>
     invoices.where(isOpenUnpaidInvoice).fold<double>(
+          0,
+          (sum, inv) => sum + invoiceRemaining(inv),
+        );
+
+/// Unsent drafts' amounts — billed but not yet owed by the tenant.
+double draftTotal(Iterable<Map<String, dynamic>> invoices) =>
+    invoices.where(isDraftInvoice).fold<double>(
           0,
           (sum, inv) => sum + invoiceRemaining(inv),
         );

@@ -4,7 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/billing_repository.dart';
-import 'billing_invoice_helpers.dart' show isDraftInvoice, outstandingTotal;
+import 'billing_invoice_helpers.dart'
+    show
+        draftTotal,
+        invoiceDueDate,
+        invoiceMonthDate,
+        isDraftInvoice,
+        outstandingTotal;
 import 'create_invoice_screen.dart';
 import 'invoice_send_flow.dart';
 import 'invoices_list_screen.dart' show invoicesProvider;
@@ -14,11 +20,8 @@ import 'whatsapp_reminder.dart';
 const _accent = AppColors.blueprint;
 
 String _formatDue(Map<String, dynamic> inv) {
-  final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
-  if (raw == null || raw.length < 10) return '—';
-  final parsed = DateTime.tryParse(raw.substring(0, 10));
-  if (parsed == null) return raw.substring(0, 10);
-  return DateFormat('d MMM yyyy').format(parsed);
+  final due = invoiceDueDate(inv);
+  return due == null ? '—' : DateFormat('d MMM yyyy').format(due);
 }
 
 Future<void> showTenantLedgerSheet({
@@ -118,27 +121,7 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     return remaining > 0.009;
   }
 
-  DateTime? _invoiceMonth(Map<String, dynamic> inv) {
-    for (final key in [
-      'period_start',
-      'periodStart',
-      'due_date',
-      'dueDate',
-      'created_at',
-    ]) {
-      final raw = inv[key]?.toString().trim();
-      if (raw == null || raw.isEmpty) continue;
-      final match = RegExp(r'^(\d{4})-(\d{2})').firstMatch(raw);
-      if (match != null) {
-        final y = int.tryParse(match.group(1)!);
-        final m = int.tryParse(match.group(2)!);
-        if (y != null && m != null) return DateTime(y, m, 1);
-      }
-      final d = DateTime.tryParse(raw);
-      if (d != null) return DateTime(d.toLocal().year, d.toLocal().month, 1);
-    }
-    return null;
-  }
+  DateTime? _invoiceMonth(Map<String, dynamic> inv) => invoiceMonthDate(inv);
 
   Future<void> _load() async {
     setState(() {
@@ -198,6 +181,8 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
   double get _totalRemaining =>
       outstandingTotal(_groups.expand((g) => g.invoices));
 
+  double get _draftTotal => draftTotal(_groups.expand((g) => g.invoices));
+
   List<Map<String, dynamic>> _lineItems(Map<String, dynamic> inv) {
     final raw = inv['lineItems'] ?? inv['line_items'];
     if (raw is! List) return const [];
@@ -233,11 +218,7 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
     }
   }
 
-  DateTime? _parseDue(Map<String, dynamic> inv) {
-    final raw = (inv['due_date'] ?? inv['dueDate'])?.toString();
-    if (raw == null || raw.length < 10) return null;
-    return DateTime.tryParse(raw.substring(0, 10));
-  }
+  DateTime? _parseDue(Map<String, dynamic> inv) => invoiceDueDate(inv);
 
   Future<void> _editInvoice(Map<String, dynamic> inv) async {
     final id = inv['id']?.toString();
@@ -369,21 +350,34 @@ class _TenantLedgerSheetState extends ConsumerState<TenantLedgerSheet> {
                 border: Border.all(
                     color: AppColors.caution.withValues(alpha: 0.25)),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    'Total Outstanding',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Total Outstanding',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      Text(
+                        _currency.format(_totalRemaining),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                          color: AppColors.caution,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    _currency.format(_totalRemaining),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 18,
-                      color: AppColors.caution,
+                  if (_draftTotal > 0.009) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Drafts not sent yet: ${_currency.format(_draftTotal)} '
+                      '— counted once you send them.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

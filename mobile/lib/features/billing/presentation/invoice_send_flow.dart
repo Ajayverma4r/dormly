@@ -11,10 +11,8 @@ import 'billing_providers.dart';
 import 'whatsapp_reminder.dart';
 
 String _formatYmd(dynamic raw) {
-  final s = raw?.toString() ?? '';
-  if (s.length < 10) return '—';
-  final d = DateTime.tryParse(s.substring(0, 10));
-  return d == null ? s.substring(0, 10) : DateFormat('d MMM yyyy').format(d);
+  final d = invoiceCalendarDate(raw);
+  return d == null ? '—' : DateFormat('d MMM yyyy').format(d);
 }
 
 /// Confirm → mark the draft as sent (tenant sees it + in-app notification)

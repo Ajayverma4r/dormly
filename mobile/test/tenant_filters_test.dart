@@ -89,6 +89,33 @@ void main() {
     expect(tenantPaymentStatus(r), TenantPaymentStatus.paid);
   });
 
+  test('only a draft (nothing sent, nothing paid) is Draft, not Paid', () {
+    final r = {..._t('x'), 'has_draft': true, 'has_sent_invoice': false};
+    expect(tenantPaymentStatus(r), TenantPaymentStatus.draft);
+    final filtered = matchesTenantFilters(r,
+        stay: HostelGuestFilter.active,
+        payment: TenantPaymentFilter.paid,
+        query: '');
+    expect(filtered, isFalse);
+  });
+
+  test('never billed is Not billed, not Paid', () {
+    final r = {..._t('x'), 'has_draft': false, 'has_sent_invoice': false};
+    expect(tenantPaymentStatus(r), TenantPaymentStatus.notBilled);
+  });
+
+  test('sent and fully paid is Paid; an older draft does not hide dues', () {
+    expect(
+      tenantPaymentStatus({..._t('x'), 'has_draft': false, 'has_sent_invoice': true}),
+      TenantPaymentStatus.paid,
+    );
+    expect(
+      tenantPaymentStatus(
+          {..._t('x', hasDue: true), 'has_draft': true, 'has_sent_invoice': true}),
+      TenantPaymentStatus.due,
+    );
+  });
+
   test('search combines with filters', () {
     expect(names(HostelGuestFilter.active, query: 'g05'), ['overdue']);
     expect(names(HostelGuestFilter.checkedOut, query: 'g05'), isEmpty);

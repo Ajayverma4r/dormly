@@ -18,6 +18,7 @@ import {
   planHostelCycles,
   hostelCycleForInvoiceForm,
   hostelCyclesDue,
+  invoiceFormCycle,
   isHostelPropertyType,
   parseYmd,
 } from './hostel-billing-cycle';
@@ -374,6 +375,89 @@ describe('checkMoveInEdit', () => {
         billed: [{ periodStart: '2026-09-01', periodEnd: '2026-09-15' }],
       }),
     ).toMatchObject({ allowed: false, reason: 'misaligned' });
+  });
+});
+
+describe('invoiceFormCycle (Add Utilities period)', () => {
+  const sep = { periodStart: '2026-09-01', periodEnd: '2026-09-30' };
+  const oct = { periodStart: '2026-10-01', periodEnd: '2026-10-31' };
+
+  it('move-in 1 Sep, nothing billed, 13 Oct: suggests Sep, not the running Oct stay', () => {
+    expect(
+      invoiceFormCycle({ checkIn: '2026-09-01', today: '2026-10-13', moveOut: null, billed: [] }),
+    ).toEqual({
+      ...sep,
+      billDate: '2026-10-01',
+      standardDueDate: '2026-10-06',
+      // 6 Oct already passed: due is today + 5 so it is not overdue on arrival.
+      dueDate: '2026-10-18',
+      isLate: true,
+      unbilled: [sep],
+      gap: null,
+    });
+  });
+
+  it('once Sep is billed, suggests the running Oct stay with the normal due date', () => {
+    expect(
+      invoiceFormCycle({ checkIn: '2026-09-01', today: '2026-10-13', moveOut: null, billed: [sep] }),
+    ).toEqual({
+      ...oct,
+      billDate: '2026-11-01',
+      standardDueDate: '2026-11-06',
+      dueDate: '2026-11-06',
+      isLate: false,
+      unbilled: [],
+      gap: null,
+    });
+  });
+
+  it('several unbilled months: oldest first, all listed', () => {
+    const r = invoiceFormCycle({
+      checkIn: '2026-08-01',
+      today: '2026-10-13',
+      moveOut: null,
+      billed: [],
+    });
+    expect([r.periodStart, r.periodEnd]).toEqual(['2026-08-01', '2026-08-31']);
+    expect(r.unbilled).toEqual([{ periodStart: '2026-08-01', periodEnd: '2026-08-31' }, sep]);
+  });
+
+  it('on the bill date and before the due date the normal due date is kept', () => {
+    for (const today of ['2026-10-01', '2026-10-06']) {
+      const r = invoiceFormCycle({ checkIn: '2026-09-01', today, moveOut: null, billed: [] });
+      expect([r.periodStart, r.dueDate, r.isLate]).toEqual(['2026-09-01', '2026-10-06', false]);
+    }
+  });
+
+  it('day after the due date is late', () => {
+    const r = invoiceFormCycle({ checkIn: '2026-09-01', today: '2026-10-07', moveOut: null, billed: [] });
+    expect([r.isLate, r.dueDate]).toEqual([true, '2026-10-12']);
+  });
+
+  it('new tenant before the first anniversary: the running first stay', () => {
+    const r = invoiceFormCycle({ checkIn: '2026-10-10', today: '2026-10-13', moveOut: null, billed: [] });
+    expect([r.periodStart, r.periodEnd, r.dueDate, r.unbilled]).toEqual([
+      '2026-10-10',
+      '2026-11-09',
+      '2026-11-15',
+      [],
+    ]);
+  });
+
+  it('a stay already billed early moves the suggestion to the next one', () => {
+    const r = invoiceFormCycle({
+      checkIn: '2026-09-01',
+      today: '2026-10-13',
+      moveOut: null,
+      billed: [sep, oct],
+    });
+    expect([r.periodStart, r.periodEnd]).toEqual(['2026-11-01', '2026-11-30']);
+  });
+
+  it('month-end move-in keeps clamped anniversaries', () => {
+    const r = invoiceFormCycle({ checkIn: '2026-01-31', today: '2026-03-31', moveOut: null, billed: [] });
+    expect([r.periodStart, r.periodEnd, r.billDate]).toEqual(['2026-01-31', '2026-02-27', '2026-02-28']);
+    expect(r.unbilled.map((u) => u.periodStart)).toEqual(['2026-01-31', '2026-02-28']);
   });
 });
 

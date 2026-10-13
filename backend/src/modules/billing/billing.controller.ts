@@ -156,6 +156,15 @@ export class BillingController {
     }
   };
 
+  invoiceFormCycle = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const data = await service.invoiceFormCycle(req.params.propertyId, req.params.tenancyId);
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   arrearsPreview = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const periodStart =

@@ -11,6 +11,11 @@ tenancyRouter.param('tenancyId', scopeParamToProperty('tenancies'));
 tenancyRouter.get('/', controller.list);
 tenancyRouter.get('/:tenancyId', controller.getById);
 tenancyRouter.get('/:tenancyId/documents', controller.listDocuments);
+tenancyRouter.get(
+  '/:tenancyId/documents/:documentId/file',
+  requireRole('owner', 'admin', 'manager', 'staff'),
+  controller.documentFile,
+);
 tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.create);
 tenancyRouter.patch('/:tenancyId', requireRole('owner', 'admin', 'manager'), controller.update);
 tenancyRouter.post('/:tenancyId/end', requireRole('owner', 'admin', 'manager'), controller.endTenancy);

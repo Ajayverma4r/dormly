@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/theme/theme_mode.dart';
 
 import '../../structure/presentation/property_shell_screen.dart'
     show propertyDetailProvider;
@@ -13,20 +14,34 @@ import 'create_invoice_screen.dart';
 import 'tenant_ledger_sheet.dart';
 
 class _H {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const cardElevated = Color(0xFF1A2438);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const purpleBright = Color(0xFF7C3AED);
-  static const green = Color(0xFF22C55E);
-  static const greenBg = Color(0xFF14352A);
-  static const red = Color(0xFFF87171);
-  static const redBg = Color(0xFF3A1F28);
-  static const orange = Color(0xFFF2835F);
-  static const orangeBg = Color(0xFF3E2A22);
-  static const border = Color(0xFF243044);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get cardElevated =>
+      themed(const Color(0xFF1A2438), const Color(0xFFFFFFFF));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get purpleBright =>
+      themed(const Color(0xFF7C3AED), const Color(0xFF7C3AED));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get greenBg =>
+      themed(const Color(0xFF14352A), const Color(0xFFDCFCE7));
+  static Color get red =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get redBg =>
+      themed(const Color(0xFF3A1F28), const Color(0xFFFEE2E2));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
+  static Color get orangeBg =>
+      themed(const Color(0xFF3E2A22), const Color(0xFFFFEDD5));
+  static Color get border =>
+      themed(const Color(0xFF243044), const Color(0xFFE5E7EB));
 }
 
 enum _PayFilter { all, collected, pending, overdue }
@@ -91,7 +106,7 @@ class _HostelPgPaymentsBodyState extends ConsumerState<HostelPgPaymentsBody> {
           child: ListView(
             shrinkWrap: true,
             children: [
-              const Padding(
+              Padding(
                 padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
                 child: Text(
                   'Select month',
@@ -106,11 +121,11 @@ class _HostelPgPaymentsBodyState extends ConsumerState<HostelPgPaymentsBody> {
                 ListTile(
                   title: Text(
                     DateFormat('MMMM yyyy').format(m),
-                    style: const TextStyle(color: _H.textPrimary),
+                    style: TextStyle(color: _H.textPrimary),
                   ),
                   trailing: m.year == _selectedMonth.year &&
                           m.month == _selectedMonth.month
-                      ? const Icon(Icons.check, color: _H.purple)
+                      ? Icon(Icons.check, color: _H.purple)
                       : null,
                   onTap: () => Navigator.pop(context, m),
                 ),
@@ -183,7 +198,7 @@ class _HostelPgPaymentsBodyState extends ConsumerState<HostelPgPaymentsBody> {
     return ColoredBox(
       color: _H.bg,
       child: invoicesAsync.when(
-        loading: () => const Center(
+        loading: () => Center(
           child: CircularProgressIndicator(color: _H.purple),
         ),
         error: (err, _) => Center(
@@ -195,7 +210,7 @@ class _HostelPgPaymentsBodyState extends ConsumerState<HostelPgPaymentsBody> {
                 Text(
                   'Something went wrong: $err',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: _H.textSecondary),
+                  style: TextStyle(color: _H.textSecondary),
                 ),
                 const SizedBox(height: 12),
                 TextButton(
@@ -344,7 +359,7 @@ class _Header extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Payments',
                 style: TextStyle(
                   fontSize: 28,
@@ -364,14 +379,14 @@ class _Header extends StatelessWidget {
                     children: [
                       Text(
                         monthLabel,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: _H.textSecondary,
                         ),
                       ),
                       const SizedBox(width: 2),
-                      const Icon(
+                      Icon(
                         Icons.keyboard_arrow_down,
                         size: 20,
                         color: _H.textSecondary,
@@ -591,12 +606,12 @@ class _PaymentCard extends StatelessWidget {
                 width: 44,
                 height: 44,
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)],
+                    colors: [Color(0xFF3B82F6), themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED))],
                   ),
                 ),
                 child: Text(
@@ -617,7 +632,7 @@ class _PaymentCard extends StatelessWidget {
                       group.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         color: _H.textPrimary,
@@ -628,7 +643,7 @@ class _PaymentCard extends StatelessWidget {
                       group.roomLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: _H.textSecondary,
@@ -655,7 +670,7 @@ class _PaymentCard extends StatelessWidget {
               ],
               _StatusPill(status: group.displayStatus),
               PopupMenuButton<String>(
-                icon: const Icon(
+                icon: Icon(
                   Icons.more_vert,
                   color: _H.textSecondary,
                   size: 20,
@@ -664,7 +679,7 @@ class _PaymentCard extends StatelessWidget {
                 onSelected: (v) {
                   if (v == 'view') onTap();
                 },
-                itemBuilder: (_) => const [
+                itemBuilder: (_) => [
                   PopupMenuItem(
                     value: 'view',
                     child: Text(
@@ -750,7 +765,7 @@ class _EmptyState extends StatelessWidget {
               color: _H.textSecondary.withValues(alpha: 0.7),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'No payments found',
               style: TextStyle(
                 fontSize: 16,
@@ -759,7 +774,7 @@ class _EmptyState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Try another month or create an invoice.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _H.textSecondary, fontSize: 13),

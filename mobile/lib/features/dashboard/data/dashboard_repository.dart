@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import '../../analytics/data/analytics_repository.dart';
 import '../../complaints/data/complaints_repository.dart';
+import '../domain/dashboard_financials.dart';
 import '../domain/property_dashboard.dart';
 
 final dashboardRepositoryProvider = Provider<DashboardRepository>((ref) {
@@ -43,6 +44,24 @@ class DashboardRepository {
       debugPrint('[dashboard] parse error: $e');
       return _fallbackFromLegacyApis(propertyId);
     }
+  }
+
+  Future<DashboardFinancials> getFinancials(
+    String propertyId,
+    FinancialPeriod period,
+  ) async {
+    final res = await _client.dio.get(
+      '/v1/properties/$propertyId/dashboard/financials',
+      queryParameters: {'period': period.apiValue},
+    );
+    final raw = res.data;
+    if (raw is! Map || raw['data'] is! Map) {
+      throw const FormatException('Unexpected financials response shape');
+    }
+    return DashboardFinancials.fromJson(
+      period,
+      Map<String, dynamic>.from(raw['data'] as Map),
+    );
   }
 
   /// Keeps the dashboard usable when /dashboard is unavailable or returns bad JSON.

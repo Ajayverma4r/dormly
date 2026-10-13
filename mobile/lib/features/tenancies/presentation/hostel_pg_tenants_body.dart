@@ -3,27 +3,44 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../core/theme/theme_mode.dart';
 
 import '../domain/tenant_filters.dart';
 
 /// Palette aligned with Hostel/PG dashboard (Screen 1).
 class _H {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const cardElevated = Color(0xFF1A2438);
-  static const field = Color(0xFF121C2C);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const purpleBright = Color(0xFF7C3AED);
-  static const green = Color(0xFF22C55E);
-  static const greenBg = Color(0xFF1A3A2A);
-  static const orange = Color(0xFFF2835F);
-  static const orangeBg = Color(0xFF3E2A22);
-  static const red = Color(0xFFF87171);
-  static const redBg = Color(0xFF3A1F28);
-  static const slate = Color(0xFF64748B);
-  static const slateBg = Color(0xFF1E293B);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get cardElevated =>
+      themed(const Color(0xFF1A2438), const Color(0xFFFFFFFF));
+  static Color get field =>
+      themed(const Color(0xFF121C2C), const Color(0xFFF3F4F6));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get purpleBright =>
+      themed(const Color(0xFF7C3AED), const Color(0xFF7C3AED));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get greenBg =>
+      themed(const Color(0xFF1A3A2A), const Color(0xFFDCFCE7));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
+  static Color get orangeBg =>
+      themed(const Color(0xFF3E2A22), const Color(0xFFFFEDD5));
+  static Color get red =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get redBg =>
+      themed(const Color(0xFF3A1F28), const Color(0xFFFEE2E2));
+  static Color get slate =>
+      themed(const Color(0xFF64748B), const Color(0xFF64748B));
+  static Color get slateBg =>
+      themed(const Color(0xFF1E293B), const Color(0xFFF1F5F9));
 }
 
 class HostelPgTenantsBody extends StatefulWidget {
@@ -107,14 +124,14 @@ class _HostelPgTenantsBodyState extends State<HostelPgTenantsBody> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         ListTile(
-                          title: const Text(
+                          title: Text(
                             'Sort by name (A–Z)',
                             style: TextStyle(color: _H.textPrimary),
                           ),
                           onTap: () => Navigator.pop(ctx),
                         ),
                         ListTile(
-                          title: const Text(
+                          title: Text(
                             'Sort by room',
                             style: TextStyle(color: _H.textPrimary),
                           ),
@@ -189,7 +206,7 @@ class _Header extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Tenants',
                 style: TextStyle(
                   fontSize: 28,
@@ -201,7 +218,7 @@ class _Header extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 '$count Tenants',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                   color: _H.textSecondary,
@@ -261,7 +278,7 @@ class _SearchRow extends StatelessWidget {
           child: TextField(
             controller: controller,
             onChanged: onChanged,
-            style: const TextStyle(color: _H.textPrimary, fontSize: 14),
+            style: TextStyle(color: _H.textPrimary, fontSize: 14),
             cursorColor: _H.purple,
             decoration: InputDecoration(
               hintText: 'Search by name, room, phone...',
@@ -269,7 +286,7 @@ class _SearchRow extends StatelessWidget {
                 color: _H.textSecondary.withValues(alpha: 0.85),
                 fontSize: 13,
               ),
-              prefixIcon: const Icon(
+              prefixIcon: Icon(
                 Icons.search,
                 color: _H.textSecondary,
                 size: 20,
@@ -287,7 +304,7 @@ class _SearchRow extends StatelessWidget {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: _H.purple, width: 1.2),
+                borderSide: BorderSide(color: _H.purple, width: 1.2),
               ),
             ),
           ),
@@ -299,7 +316,7 @@ class _SearchRow extends StatelessWidget {
           child: InkWell(
             onTap: onFilterTap,
             borderRadius: BorderRadius.circular(14),
-            child: const SizedBox(
+            child: SizedBox(
               width: 48,
               height: 48,
               child: Icon(Icons.tune_rounded, color: _H.textSecondary, size: 20),
@@ -420,7 +437,7 @@ class _Chip extends StatelessWidget {
       color: selected ? _H.purple : _H.card,
       shape: StadiumBorder(
         side: BorderSide(
-          color: selected ? _H.purple : const Color(0xFF243044),
+          color: selected ? _H.purple : themed(const Color(0xFF243044), const Color(0xFFE5E7EB)),
         ),
       ),
       child: InkWell(
@@ -473,12 +490,12 @@ class _TenantCard extends StatelessWidget {
                 width: 44,
                 height: 44,
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)],
+                    colors: [Color(0xFF3B82F6), themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED))],
                   ),
                 ),
                 child: Text(
@@ -499,7 +516,7 @@ class _TenantCard extends StatelessWidget {
                       name.isEmpty ? '—' : name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
                         color: _H.textPrimary,
@@ -510,7 +527,7 @@ class _TenantCard extends StatelessWidget {
                       location,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: _H.textSecondary,
@@ -521,7 +538,7 @@ class _TenantCard extends StatelessWidget {
                       phone,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: _H.textSecondary,
@@ -533,7 +550,7 @@ class _TenantCard extends StatelessWidget {
               const SizedBox(width: 8),
               _StatusPill(status: status),
               PopupMenuButton<String>(
-                icon: const Icon(
+                icon: Icon(
                   Icons.more_vert,
                   color: _H.textSecondary,
                   size: 20,
@@ -542,7 +559,7 @@ class _TenantCard extends StatelessWidget {
                 onSelected: (v) {
                   if (v == 'view') onTap();
                 },
-                itemBuilder: (_) => const [
+                itemBuilder: (_) => [
                   PopupMenuItem(
                     value: 'view',
                     child: Text(
@@ -560,7 +577,7 @@ class _TenantCard extends StatelessWidget {
   }
 }
 
-enum _PillKind { paid, due, overdue, checkedOut, other }
+enum _PillKind { paid, due, overdue, draft, notBilled, checkedOut, other }
 
 class _StatusPill extends StatelessWidget {
   final _PillKind status;
@@ -586,6 +603,14 @@ class _StatusPill extends StatelessWidget {
         bg = _H.redBg;
         fg = _H.red;
         label = 'Overdue';
+      case _PillKind.draft:
+        bg = _H.slateBg;
+        fg = _H.slate;
+        label = 'Draft';
+      case _PillKind.notBilled:
+        bg = _H.slateBg;
+        fg = _H.slate;
+        label = 'Not billed';
       case _PillKind.checkedOut:
         bg = _H.slateBg;
         fg = _H.slate;
@@ -633,7 +658,7 @@ class _EmptyState extends StatelessWidget {
               color: _H.textSecondary.withValues(alpha: 0.7),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'No tenants found',
               style: TextStyle(
                 fontSize: 16,
@@ -642,7 +667,7 @@ class _EmptyState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Try adjusting your search or filters.',
               textAlign: TextAlign.center,
               style: TextStyle(color: _H.textSecondary, fontSize: 13),
@@ -674,6 +699,10 @@ _PillKind _resolvePill(Map<String, dynamic> r) {
       return _PillKind.due;
     case TenantPaymentStatus.overdue:
       return _PillKind.overdue;
+    case TenantPaymentStatus.draft:
+      return _PillKind.draft;
+    case TenantPaymentStatus.notBilled:
+      return _PillKind.notBilled;
   }
 }
 

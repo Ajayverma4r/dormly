@@ -5,6 +5,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _isFirstTimeKey = 'isFirstTime';
+const _darkThemeKey = 'darkTheme';
 
 class AppPrefs {
   AppPrefs._();
@@ -21,5 +22,16 @@ class AppPrefs {
   static Future<void> setFirstTimeCompleted() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_isFirstTimeKey, false);
+  }
+
+  /// `false` (light theme) until the user picks dark.
+  static Future<bool> isDarkTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_darkThemeKey) ?? false;
+  }
+
+  static Future<void> setDarkTheme(bool dark) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_darkThemeKey, dark);
   }
 }

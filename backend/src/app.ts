@@ -2,7 +2,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
+import { uploadsRouter } from '@shared/storage/uploads.routes';
 import { authRouter } from '@modules/auth/auth.routes';
 import { propertiesRouter } from '@modules/properties/properties.routes';
 import { propertyTypesRouter } from '@modules/properties/property-types.routes';
@@ -50,7 +50,7 @@ export function createApp() {
   // Razorpay webhooks — no JWT auth, signature verified inside the handler
   app.use('/v1/webhooks',                                webhookRouter);
 
-  app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+  app.use('/uploads', uploadsRouter);
   app.use(errorHandler);
 
   return app;

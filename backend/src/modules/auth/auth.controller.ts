@@ -1,7 +1,6 @@
 // modules/auth/auth.controller.ts
-import path from 'path';
-import fs from 'fs';
 import multer from 'multer';
+import { safeImageExtension, saveUpload } from '@shared/storage/file-storage';
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
@@ -20,20 +19,8 @@ const updateProfileSchema = z.object({
   avatarUrl: z.string().nullable().optional(),
 });
 
-const avatarDir = path.join(__dirname, '../../../uploads/avatars');
-fs.mkdirSync(avatarDir, { recursive: true });
-
-const avatarStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, avatarDir),
-  filename: (req, file, cb) => {
-    const userId = (req as AuthedRequest).userId ?? 'anon';
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `${userId}-${Date.now()}${ext}`);
-  },
-});
-
 export const uploadAvatarMiddleware = multer({
-  storage: avatarStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
@@ -104,7 +91,11 @@ export class AuthController {
       if (!req.file) {
         return res.status(400).json({ error: 'No avatar file uploaded.' });
       }
-      const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+      const avatarUrl = await saveUpload(
+        'avatars',
+        `${req.userId ?? 'anon'}-${Date.now()}${safeImageExtension(req.file.originalname)}`,
+        req.file,
+      );
       const profile = await service.updateProfile(req.userId!, { avatarUrl });
       res.json({ data: profile });
     } catch (err) {

@@ -187,4 +187,42 @@ void main() {
       expect(totals.nextDue, isNull);
     });
   });
+
+  group('draftTotal', () {
+    test('an unsent draft is not outstanding but is reported as a draft', () {
+      expect(outstandingTotal([_draft]), 0);
+      expect(draftTotal([_draft]), 6000);
+      expect(draftTotal([_draft, _sentUnpaid, _paid]), 6000);
+    });
+  });
+
+  group('invoiceCalendarDate (SQL DATE from the API)', () {
+    // How node-postgres serialises a DATE: the server's local midnight in UTC.
+    // From a server in India, 1 Sep becomes '2026-08-31T18:30:00.000Z'.
+    String serverLocalMidnight(int y, int m, int d) =>
+        DateTime(y, m, d).toUtc().toIso8601String();
+
+    test('server-local midnight keeps the real day (not the UTC prefix)', () {
+      expect(invoiceCalendarDate(serverLocalMidnight(2026, 9, 1)), DateTime(2026, 9, 1));
+      expect(invoiceCalendarDate(serverLocalMidnight(2026, 10, 6)), DateTime(2026, 10, 6));
+    });
+
+    test('UTC-midnight (server in UTC) and plain dates keep their day', () {
+      expect(invoiceCalendarDate('2026-09-01T00:00:00.000Z'), DateTime(2026, 9, 1));
+      expect(invoiceCalendarDate('2026-09-01'), DateTime(2026, 9, 1));
+      expect(invoiceCalendarDate(null), isNull);
+      expect(invoiceCalendarDate('nope'), isNull);
+    });
+
+    test('ledger month and due date of a Sep draft are September and 6 Oct', () {
+      final inv = {
+        'period_start': serverLocalMidnight(2026, 9, 1),
+        'due_date': serverLocalMidnight(2026, 10, 6),
+        'sent_at': null,
+      };
+      expect(invoiceMonthDate(inv), DateTime(2026, 9, 1));
+      expect(invoiceDueDate(inv), DateTime(2026, 10, 6));
+      expect(periodLabel(inv), 'Sep 2026');
+    });
+  });
 }

@@ -7,9 +7,11 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../data/billing_repository.dart';
+import '../domain/invoice_form_cycle.dart';
 import 'billing_invoice_helpers.dart'
     show invoiceRemaining, isOpenUnpaidInvoice;
 import 'billing_providers.dart';
+import 'invoice_detail_screen.dart';
 
 class CreateInvoiceScreen extends ConsumerStatefulWidget {
   final String propertyId;
@@ -82,6 +84,10 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
 
   /// Unpaid ledger balance shown in the helper note (not editable / not billed here).
   double _outstandingBalance = 0;
+
+  /// Period chosen by the backend (oldest unbilled stay); null until loaded,
+  /// on failure, or after the owner picks a period by hand.
+  InvoiceFormCycle? _serverCycle;
 
   static final _currency =
       NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
@@ -536,7 +542,10 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
       saveText: 'Apply',
     );
     if (picked == null) return;
-    setState(() => _applyPeriod(picked));
+    setState(() {
+      _applyPeriod(picked);
+      _serverCycle = null;
+    });
   }
 
   Future<void> _pickDueDate() async {
@@ -610,6 +619,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     setState(() {
       _selectedTenancyId = tenancyId;
       _outstandingBalance = 0;
+      _serverCycle = null;
       _clearVariableAmounts();
       if (tenancyId != null) {
         _applyAnniversaryPeriodForTenant(tenancyId);
@@ -619,7 +629,96 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
     });
 
     if (tenancyId == null) return;
+    await _loadServerCycle(tenancyId);
     await _refreshOutstanding(tenancyId);
+  }
+
+  /// Replaces the device-calculated period with the backend's oldest unbilled
+  /// stay. On failure the local anniversary estimate stays in place.
+  Future<void> _loadServerCycle(String tenancyId) async {
+    try {
+      final data = await ref
+          .read(billingRepositoryProvider)
+          .invoiceFormCycle(widget.propertyId, tenancyId);
+      final cycle = InvoiceFormCycle.fromResponse(data);
+      if (!mounted || _selectedTenancyId != tenancyId || cycle == null) return;
+      setState(() {
+        _serverCycle = cycle;
+        _periodStart = cycle.periodStart;
+        _periodEnd = cycle.periodEnd;
+        _dueDate = cycle.dueDate;
+      });
+    } catch (_) {
+      /* keep the local estimate */
+    }
+  }
+
+  Future<void> _openDraft(String invoiceId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => InvoiceDetailScreen(
+          propertyId: widget.propertyId,
+          invoiceId: invoiceId,
+        ),
+      ),
+    );
+    final tenancyId = _selectedTenancyId;
+    if (!mounted || tenancyId == null) return;
+    await _loadServerCycle(tenancyId);
+  }
+
+  Widget _cycleNote(String text, {IconData icon = Icons.info_outline}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: Colors.grey.shade700),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _cycleNotes() {
+    final cycle = _serverCycle;
+    if (cycle == null || widget.isEditMode) return const [];
+    final draftNote = cycle.draftNote;
+    return [
+      if (draftNote != null)
+        Container(
+          margin: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7ED),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFFED7AA)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.drafts_outlined, size: 18, color: Color(0xFFC2410C)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(draftNote, style: const TextStyle(fontSize: 12)),
+              ),
+              TextButton(
+                onPressed: () => _openDraft(cycle.draftId!),
+                child: const Text('Review draft'),
+              ),
+            ],
+          ),
+        ),
+      if (cycle.unbilledSummary != null)
+        _cycleNote(cycle.unbilledSummary!, icon: Icons.history),
+      if (cycle.lateDueNote != null)
+        _cycleNote(cycle.lateDueNote!, icon: Icons.schedule),
+    ];
   }
 
   Future<void> _save() async {
@@ -918,6 +1017,7 @@ class _CreateInvoiceScreenState extends ConsumerState<CreateInvoiceScreen> {
                       ),
                     ],
                   ),
+                  ..._cycleNotes(),
 
                   const SizedBox(height: 22),
 

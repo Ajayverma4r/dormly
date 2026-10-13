@@ -12,6 +12,7 @@ import '../../../core/utils/image_compress.dart';
 import '../data/tenancy_repository.dart';
 import 'node_detail_screen.dart' show tenanciesForNodeProvider;
 import 'utils/aadhaar_validation.dart';
+import 'widgets/tenant_document_image.dart';
 
 final tenancyDocumentsProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String tenancyId)>(
@@ -110,19 +111,22 @@ class TenantProfileSection extends ConsumerWidget {
           loading: () => _KycDocumentsCard(
             tenant: tenant,
             documents: const [],
-            baseUrl: baseUrl,
+            propertyId: propertyId,
+            tenancyId: tenancyId,
             onEdit: () => _openKycForm(context, tenant),
           ),
           error: (_, __) => _KycDocumentsCard(
             tenant: tenant,
             documents: const [],
-            baseUrl: baseUrl,
+            propertyId: propertyId,
+            tenancyId: tenancyId,
             onEdit: () => _openKycForm(context, tenant),
           ),
           data: (docs) => _KycDocumentsCard(
             tenant: tenant,
             documents: docs,
-            baseUrl: baseUrl,
+            propertyId: propertyId,
+            tenancyId: tenancyId,
             onEdit: () => _openKycForm(context, tenant),
           ),
         ),
@@ -194,13 +198,15 @@ class _PersonalInformationCard extends StatelessWidget {
 class _KycDocumentsCard extends StatelessWidget {
   final Map<String, dynamic> tenant;
   final List<Map<String, dynamic>> documents;
-  final String baseUrl;
+  final String propertyId;
+  final String tenancyId;
   final VoidCallback onEdit;
 
   const _KycDocumentsCard({
     required this.tenant,
     required this.documents,
-    required this.baseUrl,
+    required this.propertyId,
+    required this.tenancyId,
     required this.onEdit,
   });
 
@@ -214,10 +220,7 @@ class _KycDocumentsCard extends StatelessWidget {
       'police_verification_done',
       'policeVerificationDone',
     ]);
-    final doc = primaryIdDocument(documents, idType);
-    final fileUrl = doc != null
-        ? resolveFileUrl(doc['file_url'] ?? doc['fileUrl'], baseUrl)
-        : null;
+    final docId = primaryIdDocument(documents, idType)?['id']?.toString();
 
     return _ProfileCard(
       title: 'KYC & Documents',
@@ -254,14 +257,19 @@ class _KycDocumentsCard extends StatelessWidget {
               ),
             ],
           ),
-          if (fileUrl != null) ...[
+          if (docId != null && docId.isNotEmpty) ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () => launchUrl(
-                  Uri.parse(fileUrl),
-                  mode: LaunchMode.externalApplication,
+                onPressed: () => openTenantDocumentViewer(
+                  context,
+                  (
+                    propertyId: propertyId,
+                    tenancyId: tenancyId,
+                    documentId: docId,
+                  ),
+                  title: formatIdType(idType),
                 ),
                 icon: const Icon(Icons.attach_file_outlined),
                 label: const Text('View Attached Document'),
@@ -1174,6 +1182,7 @@ Future<bool> pickCompressAndUploadDocument({
         );
     ref.invalidate(tenanciesForNodeProvider((propertyId, nodeId)));
     ref.invalidate(tenancyDocumentsProvider((propertyId, tenancyId)));
+    ref.invalidate(tenantDocumentBytesProvider);
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

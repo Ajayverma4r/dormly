@@ -613,3 +613,69 @@ describe('retireLegacyInvoiceIndex (explicit, LEGACY_INVOICE_INDEX_CLEANUP)', ()
     expect(txStmts().some((s) => /SET invoice_kind = 'adhoc'/.test(s.sql))).toBe(true);
   });
 });
+
+describe('invoiceFormCycle (Add Utilities period, property calendar)', () => {
+  const tenancyRow = { move_in_at: '2026-08-31T18:30:00Z', move_out_at: null }; // 1 Sep IST
+
+  it('suggests the oldest unbilled stay with a late due date, scoped to the property', async () => {
+    db.handle = (sql) => {
+      if (/FROM tenancies WHERE id = \$1 AND property_id = \$2/.test(sql)) return [tenancyRow];
+      return [];
+    };
+    const { service } = await loadService();
+    const r = await service.invoiceFormCycle(PROPERTY, TENANCY);
+
+    expect(r.today).toBe('2026-10-12');
+    expect(r.draft).toBeNull();
+    expect(r.cycle).toMatchObject({
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      standardDueDate: '2026-10-06',
+      dueDate: '2026-10-17',
+      isLate: true,
+    });
+    const lookup = db.log.find((s) => /FROM tenancies WHERE id/.test(s.sql))!;
+    expect(lookup.params).toEqual([TENANCY, PROPERTY]);
+    expect(db.log.some((s) => /\b(INSERT|UPDATE|DELETE)\b/.test(s.sql))).toBe(false);
+  });
+
+  it('moves on to the running stay once Sep is billed, and surfaces an unsent draft', async () => {
+    db.handle = (sql) => {
+      if (/FROM tenancies WHERE id = \$1 AND property_id = \$2/.test(sql)) return [tenancyRow];
+      if (/sent_at IS NULL[\s\S]*ORDER BY period_start/.test(sql)) {
+        return [{ id: INVOICE, period_start: '2026-09-01', period_end: '2026-09-30' }];
+      }
+      if (/SELECT period_start::text AS period_start, period_end::text AS period_end/.test(sql)) {
+        return [{ period_start: '2026-09-01', period_end: '2026-09-30' }];
+      }
+      return [];
+    };
+    const { service } = await loadService();
+    const r = await service.invoiceFormCycle(PROPERTY, TENANCY);
+
+    expect(r.cycle).toMatchObject({
+      periodStart: '2026-10-01',
+      periodEnd: '2026-10-31',
+      dueDate: '2026-11-06',
+      isLate: false,
+      unbilled: [],
+    });
+    expect(r.draft).toEqual({ id: INVOICE, periodStart: '2026-09-01', periodEnd: '2026-09-30' });
+    const draftSql = db.log.find((s) => /sent_at IS NULL/.test(s.sql))!.sql;
+    expect(draftSql).toMatch(/invoice_kind = 'cycle'/);
+  });
+
+  it('no move-in date: no cycle', async () => {
+    db.handle = (sql) =>
+      /FROM tenancies WHERE id/.test(sql) ? [{ move_in_at: null, move_out_at: null }] : [];
+    const { service } = await loadService();
+    expect((await service.invoiceFormCycle(PROPERTY, TENANCY)).cycle).toBeNull();
+  });
+
+  it('a tenancy from another property is rejected', async () => {
+    const { service } = await loadService();
+    await expect(service.invoiceFormCycle(PROPERTY, TENANCY)).rejects.toThrow(
+      'Tenant not found for this property.',
+    );
+  });
+});

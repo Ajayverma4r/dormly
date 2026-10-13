@@ -14,6 +14,7 @@ import '../data/tenancy_repository.dart';
 import 'residents_list_screen.dart' show propertyResidentsProvider;
 import 'tenant_profile_section.dart'
     show resolveFileUrl, tenancyDocumentsProvider;
+import 'widgets/tenant_document_image.dart';
 
 const _kycAmber = Color(0xFFD97706);
 const _kycAmberDark = Color(0xFF854D0E);
@@ -303,6 +304,7 @@ class _KycTileState extends ConsumerState<_KycTile> {
       ref.invalidate(
         tenancyDocumentsProvider((widget.propertyId, _tenancyId)),
       );
+      ref.invalidate(tenantDocumentBytesProvider);
       ref.invalidate(propertyResidentsProvider(widget.propertyId));
       ref.invalidate(propertyDashboardProvider(widget.propertyId));
       ScaffoldMessenger.of(context).showSnackBar(
@@ -414,9 +416,19 @@ class _KycTileState extends ConsumerState<_KycTile> {
                 doc.label,
                 docType: doc.key,
               ),
-              onView: doc.viewUrl == null
-                  ? null
-                  : () => _viewDocument(doc.viewUrl),
+              onView: doc.documentId != null
+                  ? () => openTenantDocumentViewer(
+                        context,
+                        (
+                          propertyId: widget.propertyId,
+                          tenancyId: _tenancyId,
+                          documentId: doc.documentId!,
+                        ),
+                        title: doc.label,
+                      )
+                  : doc.viewUrl == null
+                      ? null
+                      : () => _viewDocument(doc.viewUrl),
             ),
         ],
       ),
@@ -429,12 +441,15 @@ class _KycDoc {
   final String label;
   final bool isUploaded;
   final String? viewUrl;
+  /// Stored ID documents are private and open through the secure viewer.
+  final String? documentId;
 
   const _KycDoc({
     required this.key,
     required this.label,
     required this.isUploaded,
     this.viewUrl,
+    this.documentId,
   });
 }
 
@@ -616,7 +631,8 @@ List<_KycDoc> _kycDocs(
         label: _docLabel(key),
         isUploaded: uploadedKeys.contains(key) ||
             _isDocUploaded(tenant, storedDocs, key),
-        viewUrl: _docViewUrl(tenant, storedDocs, key, baseUrl),
+        documentId: storedDocumentId(storedDocs, {key}),
+        viewUrl: _docViewUrl(tenant, key, baseUrl),
       ),
   ];
 }
@@ -655,16 +671,9 @@ bool _hasStoredDoc(List<Map<String, dynamic>> docs, String key) {
 
 String? _docViewUrl(
   Map<String, dynamic> tenant,
-  List<Map<String, dynamic>> storedDocs,
   String key,
   String baseUrl,
 ) {
-  for (final d in storedDocs) {
-    final type = (d['doc_type'] ?? d['docType'])?.toString();
-    if (type != key) continue;
-    final url = resolveFileUrl(d['file_url'] ?? d['fileUrl'], baseUrl);
-    if (url != null) return url;
-  }
   if (key == 'photo') {
     return resolveFileUrl(
       tenant['profile_photo_url'] ?? tenant['profilePhotoUrl'],

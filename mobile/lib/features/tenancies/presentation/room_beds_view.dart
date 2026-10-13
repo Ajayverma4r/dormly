@@ -6,6 +6,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/theme/theme_mode.dart';
 
 import '../../structure/data/structure_repository.dart';
 import '../../structure/domain/hierarchy_level.dart';
@@ -17,20 +18,34 @@ import 'add_tenant_screen.dart' show openAddTenantFlow;
 import 'node_detail_screen.dart';
 
 class _R {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const cardElevated = Color(0xFF1A2438);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const purpleBright = Color(0xFF7C3AED);
-  static const green = Color(0xFF22C55E);
-  static const greenBg = Color(0xFF14352A);
-  static const orange = Color(0xFFF2835F);
-  static const orangeBg = Color(0xFF3E2A22);
-  static const red = Color(0xFFF87171);
-  static const redBg = Color(0xFF3A1F28);
-  static const iconWell = Color(0xFF1E2A40);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get cardElevated =>
+      themed(const Color(0xFF1A2438), const Color(0xFFFFFFFF));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get purpleBright =>
+      themed(const Color(0xFF7C3AED), const Color(0xFF7C3AED));
+  static Color get green =>
+      themed(const Color(0xFF22C55E), const Color(0xFF16A34A));
+  static Color get greenBg =>
+      themed(const Color(0xFF14352A), const Color(0xFFDCFCE7));
+  static Color get orange =>
+      themed(const Color(0xFFF2835F), const Color(0xFFEA580C));
+  static Color get orangeBg =>
+      themed(const Color(0xFF3E2A22), const Color(0xFFFFEDD5));
+  static Color get red =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get redBg =>
+      themed(const Color(0xFF3A1F28), const Color(0xFFFEE2E2));
+  static Color get iconWell =>
+      themed(const Color(0xFF1E2A40), const Color(0xFFF1F0FB));
 }
 
 final _canManageRoomProvider = FutureProvider.autoDispose<bool>((ref) async {
@@ -221,7 +236,7 @@ class RoomBedsScreen extends ConsumerWidget {
                 if (value == 'rename') onRename();
                 if (value == 'delete') onDelete();
               },
-              itemBuilder: (_) => const [
+              itemBuilder: (_) => [
                 PopupMenuItem(
                     value: 'rename',
                     child: Text('Rename',
@@ -235,7 +250,7 @@ class RoomBedsScreen extends ConsumerWidget {
       ),
       body: treeAsync.when(
         loading: () =>
-            const Center(child: CircularProgressIndicator(color: _R.purple)),
+            Center(child: CircularProgressIndicator(color: _R.purple)),
         error: (err, _) => _Message(
           icon: Icons.error_outline,
           title: 'Could not load this ${level.displayName.toLowerCase()}',
@@ -277,7 +292,7 @@ class RoomBedsScreen extends ConsumerWidget {
                       Expanded(
                         child: Text(
                           '${bedNoun}s',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
                             color: _R.textSecondary,
@@ -390,7 +405,7 @@ class _SummaryCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                     color: _R.textPrimary,
@@ -400,7 +415,7 @@ class _SummaryCard extends StatelessWidget {
                 Text(
                   '${summary.occupied}/${summary.total} '
                   '${bedNoun.toLowerCase()}s occupied',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: _R.textSecondary,
@@ -494,7 +509,7 @@ class _BedCard extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
                             color: _R.textPrimary,
@@ -536,7 +551,7 @@ class _BedCard extends StatelessWidget {
                   ),
                   if (onRename != null || onDelete != null)
                     PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert,
+                      icon: Icon(Icons.more_vert,
                           color: _R.textSecondary, size: 20),
                       color: _R.cardElevated,
                       onSelected: (v) {
@@ -549,18 +564,18 @@ class _BedCard extends StatelessWidget {
                             value: 'rename',
                             child: Text('Rename $bedNoun',
                                 style:
-                                    const TextStyle(color: _R.textPrimary)),
+                                    TextStyle(color: _R.textPrimary)),
                           ),
                         if (onDelete != null)
                           PopupMenuItem(
                             value: 'delete',
                             child: Text('Delete $bedNoun',
-                                style: const TextStyle(color: _R.red)),
+                                style: TextStyle(color: _R.red)),
                           ),
                       ],
                     )
                   else
-                    const Icon(Icons.chevron_right,
+                    Icon(Icons.chevron_right,
                         color: _R.textSecondary, size: 20),
                 ],
               ),
@@ -614,7 +629,7 @@ class _Message extends StatelessWidget {
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
               color: _R.textPrimary,
@@ -624,7 +639,7 @@ class _Message extends StatelessWidget {
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: _R.textSecondary, fontSize: 13),
+            style: TextStyle(color: _R.textSecondary, fontSize: 13),
           ),
           if (actionLabel != null && onAction != null) ...[
             const SizedBox(height: 16),

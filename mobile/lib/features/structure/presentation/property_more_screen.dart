@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../core/theme/theme_mode.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/login_flow.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
@@ -25,14 +26,22 @@ final _hasTenantContextProvider = FutureProvider.autoDispose<bool>((ref) async {
 });
 
 class _H {
-  static const bg = Color(0xFF0D1623);
-  static const card = Color(0xFF151F30);
-  static const textPrimary = Color(0xFFFFFFFF);
-  static const textSecondary = Color(0xFF94A3B8);
-  static const purple = Color(0xFF8B5CF6);
-  static const danger = Color(0xFFF87171);
-  static const divider = Color(0xFF243044);
-  static const chevron = Color(0xFF64748B);
+  static Color get bg =>
+      themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
+  static Color get card =>
+      themed(const Color(0xFF151F30), const Color(0xFFFFFFFF));
+  static Color get textPrimary =>
+      themed(const Color(0xFFFFFFFF), const Color(0xFF111827));
+  static Color get textSecondary =>
+      themed(const Color(0xFF94A3B8), const Color(0xFF6B7280));
+  static Color get purple =>
+      themed(const Color(0xFF8B5CF6), const Color(0xFF7C3AED));
+  static Color get danger =>
+      themed(const Color(0xFFF87171), const Color(0xFFDC2626));
+  static Color get divider =>
+      themed(const Color(0xFF243044), const Color(0xFFE5E7EB));
+  static Color get chevron =>
+      themed(const Color(0xFF64748B), const Color(0xFF94A3B8));
 }
 
 class PropertyMoreScreen extends ConsumerWidget {
@@ -152,27 +161,10 @@ class _HostelPgMoreBody extends ConsumerWidget {
       ),
       if (showStructureSettings)
         _MoreRowData(
-          icon: Icons.settings_outlined,
-          label: 'Property Settings',
-          onTap: () => _openStructure(context),
-        ),
-      if (showStructureSettings) ...[
-        _MoreRowData(
           icon: Icons.apartment_outlined,
-          label: 'Manage Blocks',
+          label: 'Manage Structure',
           onTap: () => _openStructure(context),
         ),
-        _MoreRowData(
-          icon: Icons.door_front_door_outlined,
-          label: 'Manage Floors',
-          onTap: () => _openStructure(context),
-        ),
-        _MoreRowData(
-          icon: Icons.bed_outlined,
-          label: 'Manage Rooms',
-          onTap: () => _openStructure(context),
-        ),
-      ],
       if (isOwnerOrAdmin)
         _MoreRowData(
           icon: Icons.badge_outlined,
@@ -263,26 +255,48 @@ class _HostelPgMoreBody extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           children: [
-            const Text(
-              'More',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: _H.textPrimary,
-                height: 1.1,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'More',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      color: _H.textPrimary,
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: DormlyThemeMode.isDark
+                      ? 'Switch to light theme'
+                      : 'Switch to dark theme',
+                  onPressed: DormlyThemeMode.toggle,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 32, height: 32),
+                  icon: Icon(
+                    DormlyThemeMode.isDark
+                        ? Icons.dark_mode_outlined
+                        : Icons.light_mode_outlined,
+                    color: _H.textPrimary,
+                    size: 24,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
               propertyName,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: _H.textSecondary,
               ),
             ),
             const SizedBox(height: 2),
-            const Text(
+            Text(
               'Manage your account & settings',
               style: TextStyle(
                 fontSize: 13,
@@ -349,7 +363,7 @@ class _ProfileCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 alignment: Alignment.center,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: _H.purple,
                   shape: BoxShape.circle,
                 ),
@@ -371,7 +385,7 @@ class _ProfileCard extends StatelessWidget {
                       name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: _H.textPrimary,
@@ -380,7 +394,7 @@ class _ProfileCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       roleLabel,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                         color: _H.textSecondary,
@@ -389,7 +403,7 @@ class _ProfileCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: _H.chevron, size: 22),
+              Icon(Icons.chevron_right, color: _H.chevron, size: 22),
             ],
           ),
         ),
@@ -406,7 +420,7 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w700,
         color: _H.textPrimary,
@@ -446,7 +460,7 @@ class _SectionCard extends StatelessWidget {
           for (var i = 0; i < rows.length; i++) ...[
             _MoreRow(data: rows[i]),
             if (i < rows.length - 1)
-              const Divider(
+              Divider(
                 height: 1,
                 thickness: 1,
                 color: _H.divider,

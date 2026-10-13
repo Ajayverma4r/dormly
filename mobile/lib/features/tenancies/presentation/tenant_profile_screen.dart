@@ -36,6 +36,7 @@ import 'tenant_profile_section.dart'
         TenantProfilePhotoViewerScreen,
         tenancyDocumentsProvider,
         tenantField;
+import 'widgets/tenant_document_image.dart';
 
 final _currency =
     NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
@@ -856,6 +857,8 @@ class _ProfileBodyState extends ConsumerState<_ProfileBody> {
             _KycStatusCard(
               tenancy: tenancy,
               docsAsync: docsAsync,
+              propertyId: _propertyId,
+              tenancyId: _tenancyId,
               onUpload: _isEnded || _nodeId.isEmpty ? null : _openKycEdit,
             ),
             const SizedBox(height: 12),
@@ -1620,11 +1623,15 @@ class _AgreementCard extends StatelessWidget {
 class _KycStatusCard extends StatelessWidget {
   final Map<String, dynamic> tenancy;
   final AsyncValue<List<Map<String, dynamic>>> docsAsync;
+  final String propertyId;
+  final String tenancyId;
   final VoidCallback? onUpload;
 
   const _KycStatusCard({
     required this.tenancy,
     required this.docsAsync,
+    required this.propertyId,
+    required this.tenancyId,
     required this.onUpload,
   });
 
@@ -1683,16 +1690,30 @@ class _KycStatusCard extends StatelessWidget {
         ),
         error: (_, __) => const Text('Could not load documents.'),
         data: (docs) {
-          final idOk = hasAadhaarNum ||
-              _hasType(docs, {'aadhaar', 'pan', 'id', 'other'});
+          final idCardId =
+              storedDocumentId(docs, {'aadhaar', 'pan', 'id', 'other'});
           final addressOk = _hasType(docs, {'address_proof', 'address'});
           final photoOk = hasPhotoField || _hasType(docs, {'photo'});
           return Column(
             children: [
               _DocStatusRow(
-                label: 'Aadhaar / PAN Card',
-                uploaded: idOk,
+                label: 'Aadhaar Number',
+                uploaded: hasAadhaarNum,
+                uploadedText: 'Added',
+                missingText: 'Not added',
               ),
+              _DocStatusRow(
+                label: 'Aadhaar / PAN Card',
+                uploaded: idCardId != null,
+              ),
+              if (idCardId != null)
+                _IdCardPreview(
+                  document: (
+                    propertyId: propertyId,
+                    tenancyId: tenancyId,
+                    documentId: idCardId,
+                  ),
+                ),
               _DocStatusRow(
                 label: 'Address Proof',
                 uploaded: addressOk,
@@ -1732,15 +1753,53 @@ class _KycStatusCard extends StatelessWidget {
   }
 }
 
+class _IdCardPreview extends StatelessWidget {
+  final TenantDocumentRef document;
+
+  const _IdCardPreview({required this.document});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => openTenantDocumentViewer(context, document),
+        child: Row(
+          children: [
+            TenantDocumentThumbnail(document: document),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Tap to view uploaded card',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.slate),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DocStatusRow extends StatelessWidget {
   final String label;
   final bool uploaded;
   final bool cautionIfMissing;
+  final String uploadedText;
+  final String missingText;
 
   const _DocStatusRow({
     required this.label,
     required this.uploaded,
     this.cautionIfMissing = false,
+    this.uploadedText = 'Uploaded',
+    this.missingText = 'Not uploaded',
   });
 
   @override
@@ -1748,7 +1807,7 @@ class _DocStatusRow extends StatelessWidget {
     final color = uploaded
         ? AppColors.positive
         : (cautionIfMissing ? AppColors.caution : AppColors.danger);
-    final text = uploaded ? 'Uploaded' : 'Not uploaded';
+    final text = uploaded ? uploadedText : missingText;
     final icon = uploaded ? Icons.check_circle : Icons.error_outline;
 
     return Padding(

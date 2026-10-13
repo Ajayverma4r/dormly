@@ -1,4 +1,6 @@
 // features/tenancies/data/tenancy_repository.dart
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import 'package:dio/dio.dart';
@@ -351,6 +353,19 @@ class TenancyRepository {
     return (res.data['data'] as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
+  }
+
+  /// ID documents are private: fetched with the session token, never by URL.
+  Future<Uint8List> documentFile(
+    String propertyId,
+    String tenancyId,
+    String documentId,
+  ) async {
+    final res = await _client.dio.get<List<int>>(
+      '${_tenancyPatchPath(propertyId, tenancyId)}/documents/$documentId/file',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return Uint8List.fromList(res.data ?? const []);
   }
 
   Future<Map<String, dynamic>> uploadProfilePhoto(
