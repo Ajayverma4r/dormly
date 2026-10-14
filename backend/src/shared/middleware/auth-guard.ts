@@ -34,14 +34,78 @@ export function authGuard(req: AuthedRequest, res: Response, next: NextFunction)
   }
 }
 
+export type TokenContext = Required<
+  Pick<AuthedRequest, 'userId' | 'ctxType' | 'ctxId' | 'ctxRole'>
+> & { ctxPropertyId: string | null };
+
+/** Whether the token's workspace is still one the server would list for the user. */
+export type ContextMembershipLookup = (ctx: TokenContext) => Promise<boolean>;
+
+// Mirrors ContextService.listContextsForUser: owner/admin membership, accepted
+// manager/staff assignment, or active tenancy — each with the token's role.
+export const contextStillValid: ContextMembershipLookup = async (ctx) => {
+  if (!UUID_RE.test(ctx.userId) || !UUID_RE.test(ctx.ctxId)) return false;
+  if (ctx.ctxType === 'organization' && (ctx.ctxRole === 'owner' || ctx.ctxRole === 'admin')) {
+    const rows = await query(
+      `SELECT 1 FROM memberships
+       WHERE user_id = $1::uuid AND organization_id = $2::uuid AND role::text = $3`,
+      [ctx.userId, ctx.ctxId, ctx.ctxRole],
+    );
+    return rows.length > 0;
+  }
+  if (ctx.ctxType === 'organization' && (ctx.ctxRole === 'manager' || ctx.ctxRole === 'staff')) {
+    if (ctx.ctxPropertyId !== ctx.ctxId) return false;
+    const rows = await query(
+      `SELECT 1 FROM property_staff_assignments
+       WHERE user_id = $1::uuid AND property_id = $2::uuid AND role = $3 AND status = 'active'`,
+      [ctx.userId, ctx.ctxId, ctx.ctxRole],
+    );
+    return rows.length > 0;
+  }
+  if (ctx.ctxType === 'tenancy' && ctx.ctxRole === 'tenant') {
+    if (!ctx.ctxPropertyId || !UUID_RE.test(ctx.ctxPropertyId)) return false;
+    const rows = await query(
+      `SELECT 1 FROM tenancies
+       WHERE id = $1::uuid AND user_id = $2::uuid AND property_id = $3::uuid
+         AND status = 'active'`,
+      [ctx.ctxId, ctx.userId, ctx.ctxPropertyId],
+    );
+    return rows.length > 0;
+  }
+  return false;
+};
+
+const STALE_CONTEXT = {
+  error: 'Your access to this workspace has changed. Please sign in again.',
+};
+
 // Use after authGuard on routes that require an already-selected context
 // (i.e. everything except /v1/auth/contexts and /v1/auth/contexts/select).
-export function requireContext(req: AuthedRequest, res: Response, next: NextFunction) {
-  if (!req.ctxType || !req.ctxId) {
-    return res.status(401).json({ error: 'Select a context before calling this endpoint.' });
-  }
-  next();
+// The token's workspace is rechecked on every request, so a removed admin,
+// staff member or ended tenancy loses access before the token expires.
+export function contextGuard(lookup: ContextMembershipLookup = contextStillValid) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    if (!req.ctxType || !req.ctxId) {
+      return res.status(401).json({ error: 'Select a context before calling this endpoint.' });
+    }
+    if (!req.userId || !req.ctxRole) return res.status(403).json(STALE_CONTEXT);
+    try {
+      const valid = await lookup({
+        userId: req.userId,
+        ctxType: req.ctxType,
+        ctxId: req.ctxId,
+        ctxRole: req.ctxRole,
+        ctxPropertyId: req.ctxPropertyId ?? null,
+      });
+      if (!valid) return res.status(403).json(STALE_CONTEXT);
+    } catch (err) {
+      return next(err);
+    }
+    next();
+  };
 }
+
+export const requireContext = contextGuard();
 
 // Restricts a route to specific roles within the current context.
 export function requireRole(...allowedRoles: string[]) {
@@ -66,12 +130,27 @@ const defaultPropertyOrganization: PropertyOrganizationLookup = async (propertyI
   return rows[0]?.organization_id ?? null;
 };
 
+/** Role of the user's accepted (active) assignment on a property, or null. */
+export type StaffAssignmentLookup = (userId: string, propertyId: string) => Promise<string | null>;
+
+export const activeStaffRole: StaffAssignmentLookup = async (userId, propertyId) => {
+  const rows = await query<{ role: string }>(
+    `SELECT role FROM property_staff_assignments
+     WHERE user_id = $1 AND property_id = $2::uuid AND status = 'active'`,
+    [userId, propertyId],
+  );
+  return rows[0]?.role ?? null;
+};
+
 const NO_PROPERTY_ACCESS = { error: 'You do not have access to this property.' };
 
 // Owner/admin contexts reach every property of their own organization.
-// Manager/staff/tenant contexts reach only the property they are bound to.
+// Manager/staff/tenant contexts reach only the property they are bound to;
+// manager/staff tokens are rechecked against an accepted assignment with the
+// same role, so removal or a pending role change takes effect immediately.
 export function propertyAccessGuard(
   lookup: PropertyOrganizationLookup = defaultPropertyOrganization,
+  staffLookup: StaffAssignmentLookup = activeStaffRole,
 ) {
   return async (req: AuthedRequest, res: Response, next: NextFunction) => {
     const requestedPropertyId = req.params.propertyId;
@@ -91,10 +170,21 @@ export function propertyAccessGuard(
         return next(err);
       }
     }
-    if (req.ctxPropertyId && req.ctxPropertyId === requestedPropertyId) {
-      return next();
+    if (!req.ctxPropertyId || req.ctxPropertyId !== requestedPropertyId) {
+      return res.status(403).json(NO_PROPERTY_ACCESS);
     }
-    return res.status(403).json(NO_PROPERTY_ACCESS);
+    if (req.ctxRole === 'manager' || req.ctxRole === 'staff') {
+      if (!req.userId || !UUID_RE.test(String(requestedPropertyId))) {
+        return res.status(403).json(NO_PROPERTY_ACCESS);
+      }
+      try {
+        const role = await staffLookup(req.userId, requestedPropertyId);
+        if (role !== req.ctxRole) return res.status(403).json(NO_PROPERTY_ACCESS);
+      } catch (err) {
+        return next(err);
+      }
+    }
+    return next();
   };
 }
 

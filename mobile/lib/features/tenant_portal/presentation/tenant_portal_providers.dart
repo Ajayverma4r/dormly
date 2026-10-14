@@ -4,12 +4,12 @@
 // property type does not support that module (bandwidth + 403 safety).
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../auth/data/auth_repository.dart';
 import '../../billing/presentation/billing_invoice_helpers.dart'
     show isDraftInvoice;
 import '../../complaints/data/complaints_repository.dart';
 import '../../properties/domain/property_archetype.dart';
 import '../data/tenant_portal_repository.dart';
+import '../domain/payment_history.dart';
 import '../domain/tenant_session.dart';
 
 // ─── Always-on base queries ──────────────────────────────────────────────────
@@ -33,18 +33,26 @@ final myComplaintsProvider =
   return ref.watch(complaintsRepositoryProvider).myComplaints();
 });
 
-final hasOwnerContextProvider = FutureProvider.autoDispose<bool>((ref) async {
-  final contexts = await ref.watch(authRepositoryProvider).listContexts();
-  return contexts.any((c) {
-    final role = c['role']?.toString();
-    return role == 'owner' || role == 'admin' || role == 'manager';
-  });
-});
-
 final tenantSessionProvider =
     FutureProvider.autoDispose<TenantSession>((ref) async {
   final tenancy = await ref.watch(myTenancyProvider.future);
   return TenantSession.fromTenancy(tenancy);
+});
+
+/// Current and past stays (any property the tenant has lived at).
+final tenantStaysProvider =
+    FutureProvider.autoDispose<List<TenantStay>>((ref) async {
+  final rows = await ref.watch(tenantPortalRepositoryProvider).myStays();
+  return rows.map(TenantStay.fromJson).toList();
+});
+
+/// Actual payments for an applied filter; the server scopes to the caller.
+final paymentHistoryProvider = FutureProvider.autoDispose
+    .family<PaymentHistory, StatementFilter>((ref, filter) async {
+  final json = await ref
+      .watch(tenantPortalRepositoryProvider)
+      .paymentHistory(filter.toQuery());
+  return PaymentHistory.fromJson(json);
 });
 
 // ─── Conditional feature providers (isolated errors) ─────────────────────────

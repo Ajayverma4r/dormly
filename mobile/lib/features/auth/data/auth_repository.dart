@@ -2,6 +2,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/storage/app_prefs.dart';
 import '../../../core/storage/auth_storage.dart';
 import '../domain/user_profile.dart';
 
@@ -93,7 +94,16 @@ class AuthRepository {
           : null,
       scopedPropertyId: context['propertyId'] as String?,
     );
+    await _rememberWorkspace(context);
     return context;
+  }
+
+  Future<void> _rememberWorkspace(Map<String, dynamic> context) async {
+    final userId = await AuthStorage.userId();
+    final type = context['type'] as String?;
+    final id = context['id'] as String?;
+    if (userId == null || type == null || id == null) return;
+    await AppPrefs.setLastWorkspace(userId, type, id);
   }
 
   Future<String?> getOrganizationId() => AuthStorage.organizationId();
@@ -181,6 +191,7 @@ class AuthRepository {
       role: context['role'] as String,
       organizationId: context['id'] as String,
     );
+    await _rememberWorkspace(context);
     return context;
   }
 

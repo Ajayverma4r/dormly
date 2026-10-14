@@ -62,6 +62,49 @@ class ComplaintsRepository {
     );
   }
 
+  /// Activity entries the caller may see; the server drops internal notes for tenants.
+  Future<List<Map<String, dynamic>>> listComments(String propertyId, String complaintId) async {
+    final res = await _client.dio.get(
+      '/v1/properties/$propertyId/complaints/$complaintId/comments',
+    );
+    return (res.data['data'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> addComment(
+    String propertyId,
+    String complaintId,
+    String body, {
+    String? visibility,
+  }) async {
+    final res = await _client.dio.post(
+      '/v1/properties/$propertyId/complaints/$complaintId/comments',
+      data: {'body': body, if (visibility != null) 'visibility': visibility},
+    );
+    return Map<String, dynamic>.from(res.data['data'] as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> listAssignees(String propertyId) async {
+    final res = await _client.dio.get('/v1/properties/$propertyId/complaints/assignees');
+    return (res.data['data'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  /// Assigns the complaint, or unassigns it when [assigneeUserId] is null.
+  Future<Map<String, dynamic>> setAssignment(
+    String propertyId,
+    String complaintId,
+    String? assigneeUserId,
+  ) async {
+    final res = await _client.dio.put(
+      '/v1/properties/$propertyId/complaints/$complaintId/assignment',
+      data: {'assigneeUserId': assigneeUserId},
+    );
+    return Map<String, dynamic>.from(res.data['data'] as Map);
+  }
+
   Future<List<Map<String, dynamic>>> myComplaints() async {
     final res = await _client.dio.get('/v1/tenant-portal/complaints');
     return List<Map<String, dynamic>>.from(res.data['data']);

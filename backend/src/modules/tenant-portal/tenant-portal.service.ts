@@ -35,8 +35,8 @@ export class TenantPortalService {
        FROM tenancies t
        JOIN hierarchy_nodes n ON n.id = t.node_id
        LEFT JOIN hierarchy_levels hl ON hl.id = n.level_id
-       LEFT JOIN hierarchy_nodes parent_n ON parent_n.id = n.parent_id
-       LEFT JOIN hierarchy_nodes grand_n ON grand_n.id = parent_n.parent_id
+       LEFT JOIN hierarchy_nodes parent_n ON parent_n.id = n.parent_node_id
+       LEFT JOIN hierarchy_nodes grand_n ON grand_n.id = parent_n.parent_node_id
        JOIN properties p ON p.id = t.property_id
        JOIN organizations o ON o.id = p.organization_id
        JOIN users owner_u ON owner_u.id = o.owner_user_id

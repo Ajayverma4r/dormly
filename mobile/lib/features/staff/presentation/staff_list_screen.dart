@@ -1,4 +1,5 @@
 // features/staff/presentation/staff_list_screen.dart
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/staff_repository.dart';
@@ -73,9 +74,17 @@ class StaffListScreen extends ConsumerWidget {
                     try {
                      await ref.read(staffRepositoryProvider).assign(propertyId, '+91${phoneController.text.trim()}', role);
                       ref.invalidate(staffListProvider(propertyId));
-                      if (context.mounted) Navigator.pop(context);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Invitation sent. They get access only after they accept it.'),
+                        ));
+                      }
                     } catch (e) {
-                      setSheetState(() => error = 'Could not invite: $e');
+                      final serverMessage = e is DioException && e.response?.data is Map
+                          ? (e.response!.data as Map)['error']?.toString()
+                          : null;
+                      setSheetState(() => error = serverMessage ?? 'Could not send the invitation. Please try again.');
                     }
                   },
                   child: const Text('Send Invite'),
@@ -89,11 +98,16 @@ class StaffListScreen extends ConsumerWidget {
   }
 
   Future<void> _confirmRemove(BuildContext context, WidgetRef ref, Map<String, dynamic> member) async {
+    final pending = member['status'] == 'pending';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Remove ${member['name'] ?? member['phone']}?'),
-        content: const Text('They will lose access to this property immediately.'),
+        title: Text(pending
+            ? 'Withdraw invitation to ${member['name'] ?? member['phone']}?'
+            : 'Remove ${member['name'] ?? member['phone']}?'),
+        content: Text(pending
+            ? 'They will no longer be able to accept it.'
+            : 'They will lose access to this property immediately.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(
@@ -172,6 +186,21 @@ class StaffListScreen extends ConsumerWidget {
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (m['status'] == 'pending') ...[
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFFEDD5),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Text('INVITED',
+                                          style: TextStyle(
+                                              color: Color(0xFFEA580C),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w700)),
+                                    ),
+                                    const SizedBox(width: 6),
+                                  ],
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(

@@ -1,6 +1,7 @@
 // modules/tenant-portal/tenant-portal.routes.ts
 import { Router } from 'express';
 import { TenantPortalController } from './tenant-portal.controller';
+import { TenantStatementController } from './tenant-statement.controller';
 import { BillingController } from '@modules/billing/billing.controller';
 import {
   ComplaintController,
@@ -15,6 +16,7 @@ import { GatePassesController } from '@modules/gate-passes/gate-passes.controlle
 import { authGuard, requireContext, requireRole } from '@shared/middleware/auth-guard';
 
 const controller = new TenantPortalController();
+const statementController = new TenantStatementController();
 const billingController = new BillingController();
 const complaintController = new ComplaintController();
 const messMenuController = new MessMenuController();
@@ -43,3 +45,6 @@ tenantPortalRouter.get('/gate-passes', gatePassesController.myList);
 tenantPortalRouter.post('/gate-passes', gatePassesController.createMine);
 tenantPortalRouter.get('/society-notices', controller.societyNotices);
 tenantPortalRouter.get('/lease-details', controller.leaseDetails);
+tenantPortalRouter.get('/stays', statementController.stays);
+tenantPortalRouter.get('/payment-history', statementController.paymentHistory);
+tenantPortalRouter.get('/payment-statement.pdf', statementController.statementPdf);

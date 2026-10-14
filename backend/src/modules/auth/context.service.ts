@@ -9,6 +9,7 @@ export interface AuthContext {
   role: string;           // owner | admin | manager | staff | tenant
   label: string;          // human-readable, e.g. "Sunshine Hostel" or "Ajay's Organization"
   propertyId?: string;    // present for manager/staff/tenant contexts
+  propertyCount?: number; // owner/admin contexts: properties in the organization
 }
 
 export class ContextService {
@@ -17,7 +18,9 @@ export class ContextService {
 
     // Owner/Admin contexts: whole organization, every property included.
     const memberships = await query<any>(
-      `SELECT m.role, o.id AS organization_id, o.name
+      `SELECT m.role, o.id AS organization_id, o.name,
+              (SELECT COUNT(*) FROM properties p WHERE p.organization_id = o.id)::int
+                AS property_count
        FROM memberships m
        JOIN organizations o ON o.id = m.organization_id
        WHERE m.user_id = $1 AND m.role IN ('owner', 'admin')`,
@@ -29,6 +32,7 @@ export class ContextService {
         id: m.organization_id,
         role: m.role,
         label: m.name,
+        propertyCount: Number(m.property_count ?? 0),
       });
     }
 

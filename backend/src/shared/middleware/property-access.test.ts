@@ -7,6 +7,7 @@ import {
   requireRole,
   type AuthedRequest,
   type PropertyOrganizationLookup,
+  type StaffAssignmentLookup,
 } from './auth-guard';
 
 const ORG_A = 'a0000000-0000-4000-8000-000000000000';
@@ -17,12 +18,32 @@ const PROP_B = 'b1000000-0000-4000-8000-000000000000';
 const propertyOrg: Record<string, string> = { [PROP_A]: ORG_A, [PROP_B]: ORG_B };
 const lookup: PropertyOrganizationLookup = async (id) => propertyOrg[id] ?? null;
 
-type Ctx = Pick<AuthedRequest, 'ctxType' | 'ctxId' | 'ctxRole' | 'ctxPropertyId'>;
+// Accepted assignments, keyed by user and property.
+const activeAssignments: Record<string, string> = {
+  [`manager-1:${PROP_A}`]: 'manager',
+  [`staff-1:${PROP_A}`]: 'staff',
+};
+const staffLookup: StaffAssignmentLookup = async (userId, propertyId) =>
+  activeAssignments[`${userId}:${propertyId}`] ?? null;
+
+type Ctx = Pick<AuthedRequest, 'userId' | 'ctxType' | 'ctxId' | 'ctxRole' | 'ctxPropertyId'>;
 const CONTEXTS: Record<string, Ctx> = {
   ownerA: { ctxType: 'organization', ctxId: ORG_A, ctxRole: 'owner', ctxPropertyId: null },
   adminB: { ctxType: 'organization', ctxId: ORG_B, ctxRole: 'admin', ctxPropertyId: null },
-  managerA: { ctxType: 'organization', ctxId: PROP_A, ctxRole: 'manager', ctxPropertyId: PROP_A },
-  staffA: { ctxType: 'organization', ctxId: PROP_A, ctxRole: 'staff', ctxPropertyId: PROP_A },
+  managerA: {
+    userId: 'manager-1', ctxType: 'organization', ctxId: PROP_A, ctxRole: 'manager', ctxPropertyId: PROP_A,
+  },
+  staffA: {
+    userId: 'staff-1', ctxType: 'organization', ctxId: PROP_A, ctxRole: 'staff', ctxPropertyId: PROP_A,
+  },
+  // Token still says manager, but the assignment was removed or is pending.
+  removedManagerA: {
+    userId: 'removed-1', ctxType: 'organization', ctxId: PROP_A, ctxRole: 'manager', ctxPropertyId: PROP_A,
+  },
+  // Token says manager, but the accepted assignment is only staff.
+  staffClaimingManagerA: {
+    userId: 'staff-1', ctxType: 'organization', ctxId: PROP_A, ctxRole: 'manager', ctxPropertyId: PROP_A,
+  },
   tenantA: { ctxType: 'tenancy', ctxId: 'tenancy-1', ctxRole: 'tenant', ctxPropertyId: PROP_A },
   // A forged owner role on a tenancy context must not get org-wide access.
   tenantClaimingOwner: { ctxType: 'tenancy', ctxId: ORG_A, ctxRole: 'owner', ctxPropertyId: PROP_A },
@@ -47,7 +68,7 @@ beforeAll(async () => {
 
   const app = express();
   app.use(fakeAuth);
-  const guard = propertyAccessGuard(lookup);
+  const guard = propertyAccessGuard(lookup, staffLookup);
   app.use('/v1/properties/:propertyId/dashboard', guard, financial);
   app.use('/v1/properties/:propertyId/mess-menu', guard, open);
   app.get('/v1/organizations/:organizationId/analytics', requireOrganizationAccess, (_req, res) =>
@@ -89,6 +110,17 @@ describe('property access', () => {
     expect(await get('tenantA', `/v1/properties/${PROP_A}/dashboard`)).toBe(403);
     expect(await get('tenantA', `/v1/properties/${PROP_A}/mess-menu`)).toBe(200);
     expect(await get('tenantA', `/v1/properties/${PROP_B}/mess-menu`)).toBe(403);
+  });
+
+  it('a removed or pending manager loses access even with an unexpired token', async () => {
+    expect(await get('staffA', `/v1/properties/${PROP_A}/mess-menu`)).toBe(200);
+    expect(await get('removedManagerA', `/v1/properties/${PROP_A}/mess-menu`)).toBe(403);
+    expect(await get('removedManagerA', `/v1/properties/${PROP_A}/dashboard`)).toBe(403);
+  });
+
+  it('a token role must match the accepted assignment role', async () => {
+    expect(await get('staffClaimingManagerA', `/v1/properties/${PROP_A}/dashboard`)).toBe(403);
+    expect(await get('staffClaimingManagerA', `/v1/properties/${PROP_A}/mess-menu`)).toBe(403);
   });
 
   it('a tenancy context never gets organization-wide access', async () => {

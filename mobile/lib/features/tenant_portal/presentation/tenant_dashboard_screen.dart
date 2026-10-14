@@ -1,39 +1,33 @@
 // features/tenant_portal/presentation/tenant_dashboard_screen.dart
 //
 // Modern SaaS tenant portal: Home + Payments + Services + Community.
-// Property-type UI is driven by TenantSession + QuickActionConfig factory.
+// Property-type UI is driven by TenantSession; Home lives in tenant_home_tab.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../billing/presentation/billing_invoice_helpers.dart'
     show invoiceDueDate, isOpenUnpaidInvoice, outstandingTotal;
-import '../../complaints/presentation/complaint_details_screen.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../notifications/presentation/notifications_providers.dart';
 import '../../properties/domain/property_archetype.dart';
-import '../data/tenant_portal_repository.dart';
-import 'move_out_notice_screen.dart';
+import 'tenant_home_tab.dart';
+import 'tenant_payment_history_screen.dart';
 import 'tenant_payments_sheet.dart';
 import 'tenant_portal_providers.dart';
-import 'tenant_profile_menu_screen.dart';
 import 'widgets/apartment_gate_pass_widget.dart';
 import 'widgets/hostel_mess_menu_widget.dart';
 import 'widgets/rental_meter_upload_widget.dart';
-import 'widgets/tenant_quick_actions_grid.dart';
+import 'widgets/tenant_load_error.dart';
 
 export 'tenant_payments_sheet.dart' show showTenantRentPaymentsSheet;
 export 'tenant_portal_providers.dart';
 
 final _currency =
     NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-final _dFmt = DateFormat('d MMM yyyy');
-final _dtFmt = DateFormat('d MMM yyyy, h:mm a');
 final _monthFmt = DateFormat('MMM yyyy');
 final _dueShort = DateFormat('d MMM yyyy');
 
@@ -105,10 +99,9 @@ class _TenantDashboardScreenState extends ConsumerState<TenantDashboardScreen> {
       body: IndexedStack(
         index: _tab,
         children: [
-          _TenantHomeTab(
-            onSeeAllPayments: () => setState(() => _tab = 1),
+          TenantHomeTab(
+            onOpenPayments: () => setState(() => _tab = 1),
             onOpenServices: () => setState(() => _tab = 2),
-            onOpenPaymentsTab: () => setState(() => _tab = 1),
           ),
           const _TenantPaymentsTab(),
           const _TenantServicesTab(),
@@ -149,758 +142,6 @@ class _TenantDashboardScreenState extends ConsumerState<TenantDashboardScreen> {
   }
 }
 
-// ─── Home (Screen 6) ─────────────────────────────────────────────────────────
-
-class _TenantHomeTab extends ConsumerWidget {
-  final VoidCallback onSeeAllPayments;
-  final VoidCallback onOpenServices;
-  final VoidCallback onOpenPaymentsTab;
-
-  const _TenantHomeTab({
-    required this.onSeeAllPayments,
-    required this.onOpenServices,
-    required this.onOpenPaymentsTab,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final sessionAsync = ref.watch(tenantSessionProvider);
-
-    return sessionAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Something went wrong: $e')),
-      data: (session) {
-        final t = session.tenancy;
-        final fullName = session.fullName;
-        final firstName = fullName.trim().split(RegExp(r'\s+')).first;
-        final initial =
-            firstName.isNotEmpty ? firstName[0].toUpperCase() : '?';
-        final roomLabel = session.headerBadge;
-
-        return RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(myTenancyProvider);
-            ref.invalidate(tenantSessionProvider);
-            ref.invalidate(myInvoicesProvider);
-            ref.invalidate(myComplaintsProvider);
-            ref.invalidate(unreadNotificationsCountProvider);
-          },
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Hi $firstName 👋',
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w800,
-                                  color: _ink,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                roomLabel,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: _muted,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        _NotificationBell(),
-                        const SizedBox(width: 4),
-                        _ProfileAvatar(
-                          initial: initial,
-                          onOpenPayments: onOpenPaymentsTab,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    _CurrentMonthRentCard(tenancy: t),
-                    const SizedBox(height: 22),
-                    TenantQuickActionsGrid(
-                      session: session,
-                      onSeeAll: onOpenServices,
-                    ),
-                    const SizedBox(height: 16),
-                    _MoveOutStatusBanner(tenancy: t),
-                    const SizedBox(height: 20),
-                    _RecentComplaintsSection(tenancy: t),
-                  ]),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _NotificationBell extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final unread = ref.watch(unreadNotificationsCountProvider).valueOrNull ?? 0;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        IconButton(
-          tooltip: 'Notifications',
-          onPressed: () async {
-            await context.push('/notifications');
-            ref.invalidate(unreadNotificationsCountProvider);
-          },
-          icon: const Icon(Icons.notifications_outlined, color: _ink),
-        ),
-        if (unread > 0)
-          Positioned(
-            right: 8,
-            top: 8,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEF4444),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-              child: Text(
-                unread > 9 ? '9+' : '$unread',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _ProfileAvatar extends StatelessWidget {
-  final String initial;
-  final VoidCallback onOpenPayments;
-
-  const _ProfileAvatar({
-    required this.initial,
-    required this.onOpenPayments,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => TenantProfileMenuScreen(
-              onOpenPayments: onOpenPayments,
-            ),
-          ),
-        );
-      },
-      customBorder: const CircleBorder(),
-      child: CircleAvatar(
-        radius: 20,
-        backgroundColor: const Color(0xFFEDE9FE),
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: _brand,
-            fontWeight: FontWeight.w800,
-            fontSize: 16,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CurrentMonthRentCard extends ConsumerWidget {
-  final Map<String, dynamic> tenancy;
-
-  const _CurrentMonthRentCard({required this.tenancy});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final invoicesAsync = ref.watch(myInvoicesProvider);
-    return invoicesAsync.when(
-      loading: () => const SizedBox(
-        height: 160,
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => Text('Could not load rent: $e'),
-      data: (invoices) {
-        final current = _pickCurrentInvoice(invoices);
-        final total = current == null
-            ? 0.0
-            : double.tryParse(current['total_amount']?.toString() ?? '') ?? 0;
-        final paid = current == null
-            ? 0.0
-            : double.tryParse(current['paid_amount']?.toString() ?? '') ?? 0;
-        final remaining = (total - paid).clamp(0.0, 1e12);
-        final isPaid = remaining <= 0.009;
-        final dueRaw = current?['due_date'];
-        final dueLabel = _fmtDue(dueRaw);
-
-        return Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _border, width: 1.2),
-            boxShadow: [
-              BoxShadow(
-                color: _brand.withValues(alpha: 0.06),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3E8FF),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.calendar_month_outlined,
-                        color: _brand, size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Current Month Rent',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            color: _ink,
-                          ),
-                        ),
-                        Text(
-                          dueLabel == null ? 'No due date' : 'Due on $dueLabel',
-                          style: const TextStyle(fontSize: 12, color: _muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _StatusChip(paid: isPaid),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Text(
-                      _currency.format(isPaid ? total : remaining),
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        color: _ink,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ),
-                  if (!isPaid)
-                    FilledButton(
-                      onPressed: () => showTenantRentPaymentsSheet(
-                        context: context,
-                        ref: ref,
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _brand,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.bolt, size: 16),
-                          SizedBox(width: 4),
-                          Text(
-                            'Pay via UPI >',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Divider(height: 1, color: Color(0xFFF1F5F9)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Total Amount: ${_currency.format(total)}',
-                          style: const TextStyle(fontSize: 12, color: _muted),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Paid Amount: ${_currency.format(paid)}',
-                          style: const TextStyle(fontSize: 12, color: _muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => _downloadReceipt(context, ref, current),
-                    icon: const Icon(Icons.description_outlined,
-                        size: 16, color: _brand),
-                    label: const Text(
-                      'Download Receipt',
-                      style: TextStyle(
-                        color: _brand,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Map<String, dynamic>? _pickCurrentInvoice(List<Map<String, dynamic>> list) {
-    if (list.isEmpty) return null;
-    final now = DateTime.now();
-    Map<String, dynamic>? best;
-    DateTime? bestDue;
-    for (final inv in list) {
-      final due = DateTime.tryParse(inv['due_date']?.toString() ?? '');
-      if (due == null) continue;
-      final sameMonth = due.year == now.year && due.month == now.month;
-      if (sameMonth) return inv;
-      if (bestDue == null || due.isAfter(bestDue)) {
-        bestDue = due;
-        best = inv;
-      }
-    }
-    // Prefer any unpaid invoice if no current-month match.
-    for (final inv in list) {
-      final total = double.tryParse(inv['total_amount']?.toString() ?? '') ?? 0;
-      final paid = double.tryParse(inv['paid_amount']?.toString() ?? '') ?? 0;
-      if (total - paid > 0.009) return inv;
-    }
-    return best ?? list.first;
-  }
-
-  String? _fmtDue(dynamic raw) {
-    if (raw == null || raw.toString().trim().isEmpty) return null;
-    final d = DateTime.tryParse(raw.toString());
-    if (d == null) return null;
-    return _dueShort.format(d.toLocal());
-  }
-
-  Future<void> _downloadReceipt(
-    BuildContext context,
-    WidgetRef ref,
-    Map<String, dynamic>? invoice,
-  ) async {
-    final agreement = tenancy['agreement_pdf_url']?.toString();
-    final invUrl = invoice?['pdf_url']?.toString() ??
-        invoice?['receipt_url']?.toString();
-    final path = invUrl ?? agreement;
-    if (path == null || path.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No receipt available yet.')),
-      );
-      return;
-    }
-    final base = ref.read(tenantPortalRepositoryProvider).baseUrl;
-    final full = path.startsWith('http') ? path : '$base$path';
-    final uri = Uri.tryParse(full);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  final bool paid;
-  const _StatusChip({required this.paid});
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = paid ? const Color(0xFFD1FAE5) : const Color(0xFFFEE2E2);
-    final fg = paid ? const Color(0xFF047857) : const Color(0xFFDC2626);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        paid ? 'PAID' : 'PENDING',
-        style: TextStyle(
-          color: fg,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.3,
-        ),
-      ),
-    );
-  }
-}
-
-class _MoveOutStatusBanner extends StatelessWidget {
-  final Map<String, dynamic> tenancy;
-  const _MoveOutStatusBanner({required this.tenancy});
-
-  @override
-  Widget build(BuildContext context) {
-    final status = tenancy['move_out_request_status']?.toString() ?? '';
-    final show = status == 'pending' ||
-        status == 'approved' ||
-        status == 'modified_by_mutual_agreement';
-    if (!show) return const SizedBox.shrink();
-
-    final proposed = DateTime.tryParse(
-      (tenancy['planned_move_out_at'] ?? tenancy['plannedMoveOutAt'])
-              ?.toString() ??
-          '',
-    );
-    final dateLabel =
-        proposed == null ? '—' : _dFmt.format(proposed.toLocal());
-    final days = proposed == null
-        ? null
-        : proposed
-            .toLocal()
-            .difference(DateTime.now())
-            .inDays
-            .clamp(-999, 999);
-    final approved = status == 'approved' ||
-        status == 'modified_by_mutual_agreement';
-
-    final title = approved ? 'Move-Out Approved' : 'Move-Out Pending';
-    final subtitle = days == null
-        ? 'for $dateLabel'
-        : days >= 0
-            ? 'for $dateLabel • $days days remaining'
-            : 'for $dateLabel';
-
-    return Material(
-      color: approved
-          ? const Color(0xFFD1FAE5)
-          : const Color(0xFFFEF3C7),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => MoveOutNoticeScreen(tenancy: tenancy),
-            ),
-          );
-        },
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              Icon(
-                approved ? Icons.check_circle : Icons.schedule,
-                color: approved ? _success : const Color(0xFFD97706),
-                size: 22,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13,
-                        color: approved
-                            ? const Color(0xFF065F46)
-                            : const Color(0xFF92400E),
-                      ),
-                    ),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: approved
-                            ? const Color(0xFF047857)
-                            : const Color(0xFFB45309),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Text(
-                'View Details >',
-                style: TextStyle(
-                  color: _brand,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RecentComplaintsSection extends ConsumerWidget {
-  final Map<String, dynamic> tenancy;
-  const _RecentComplaintsSection({required this.tenancy});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(myComplaintsProvider);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Recent Complaints',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  color: _ink,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () async {
-                await Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => RaiseComplaintScreen(
-                      propertyId: tenancy['property_id']?.toString() ?? '',
-                      nodeId: tenancy['node_id']?.toString() ?? '',
-                    ),
-                  ),
-                );
-                ref.invalidate(myComplaintsProvider);
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: _brand,
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text(
-                'See All >',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        async.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Text('Could not load complaints: $e'),
-          data: (list) {
-            if (list.isEmpty) {
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFF1F5F9)),
-                ),
-                child: const Text(
-                  'No complaints raised yet.',
-                  style: TextStyle(color: _muted, fontSize: 13),
-                ),
-              );
-            }
-            final recent = list.take(3).toList();
-            return Column(
-              children: [
-                for (final c in recent) ...[
-                  InkWell(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              ComplaintDetailsScreen(complaint: c),
-                        ),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(16),
-                    child: _ComplaintTicketCard(complaint: c),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ],
-            );
-          },
-        ),
-      ],
-    );
-  }
-}
-
-class _ComplaintTicketCard extends StatelessWidget {
-  final Map<String, dynamic> complaint;
-  const _ComplaintTicketCard({required this.complaint});
-
-  @override
-  Widget build(BuildContext context) {
-    final title = complaint['category']?.toString() ??
-        complaint['title']?.toString() ??
-        'Complaint';
-    final id = complaint['ticket_number']?.toString() ??
-        complaint['id']?.toString() ??
-        '';
-    final shortId = id.length > 8 ? id.substring(0, 8).toUpperCase() : id;
-    final created = DateTime.tryParse(
-      complaint['created_at']?.toString() ?? '',
-    );
-    final when = created == null ? '—' : _dtFmt.format(created.toLocal());
-    final status = complaint['status']?.toString() ?? 'open';
-    final (label, color) = _statusStyle(status);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3E8FF),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.desktop_windows_outlined,
-                color: _brand, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                    color: _ink,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Ticket #$shortId',
-                  style: const TextStyle(fontSize: 12, color: _muted),
-                ),
-                Text(
-                  'Raised on $when',
-                  style: const TextStyle(fontSize: 11, color: _muted),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  (String, Color) _statusStyle(String status) {
-    switch (status) {
-      case 'resolved':
-        return ('Resolved', _success);
-      case 'closed':
-        return ('Closed', Colors.grey);
-      case 'in_progress':
-        return ('In Progress', const Color(0xFF2563EB));
-      case 'assigned':
-        return ('Technician Assigned', _brand);
-      default:
-        return ('Open', const Color(0xFFDC2626));
-    }
-  }
-}
-
 // ─── Payments (Screen 7) ─────────────────────────────────────────────────────
 
 class _TenantPaymentsTab extends ConsumerWidget {
@@ -912,7 +153,11 @@ class _TenantPaymentsTab extends ConsumerWidget {
     return SafeArea(
       child: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Could not load payments: $e')),
+        error: (e, _) => TenantLoadError(
+          title: "We couldn't load your payments",
+          error: e,
+          onRetry: () => ref.invalidate(myInvoicesProvider),
+        ),
         data: (invoices) {
           final totalDue = outstandingTotal(invoices);
           DateTime? nearestDue;
@@ -997,6 +242,8 @@ class _TenantPaymentsTab extends ConsumerWidget {
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
+              const _PaymentHistoryEntry(),
               const SizedBox(height: 22),
               const Text(
                 'History',
@@ -1181,6 +428,70 @@ class _TenantPaymentsTab extends ConsumerWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _PaymentHistoryEntry extends StatelessWidget {
+  const _PaymentHistoryEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: const Key('payment-history-entry'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const TenantPaymentHistoryScreen(),
+          ),
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _border, width: 1.2),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3E8FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.receipt_long_outlined,
+                    color: _brand, size: 20),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Payment History & Statements',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        color: _ink,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'View past payments and download PDF statements',
+                      style: TextStyle(fontSize: 12, color: _muted),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: _muted),
+            ],
+          ),
+        ),
       ),
     );
   }

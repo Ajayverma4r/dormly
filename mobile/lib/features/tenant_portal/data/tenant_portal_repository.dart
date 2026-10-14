@@ -163,5 +163,28 @@ class TenantPortalRepository {
     return Map<String, dynamic>.from(res.data['data'] as Map);
   }
 
+  /// Current and past stays of the signed-in tenant.
+  Future<List<Map<String, dynamic>>> myStays() async {
+    final res = await _client.dio.get('/v1/tenant-portal/stays');
+    return List<Map<String, dynamic>>.from(res.data['data'] as List);
+  }
+
+  /// Actual recorded payments across the tenant's own stays.
+  Future<Map<String, dynamic>> paymentHistory(
+    Map<String, String> query,
+  ) async {
+    final res = await _client.dio.get(
+      '/v1/tenant-portal/payment-history',
+      queryParameters: query,
+    );
+    return Map<String, dynamic>.from(res.data['data'] as Map);
+  }
+
+  /// Opened in the device's PDF viewer, which cannot send headers; the server
+  /// accepts the access token as a query parameter for downloads.
+  Uri paymentStatementUrl(Map<String, String> query, String token) =>
+      Uri.parse('$baseUrl/v1/tenant-portal/payment-statement.pdf')
+          .replace(queryParameters: {...query, 'token': token});
+
   String get baseUrl => _client.dio.options.baseUrl;
 }

@@ -20,11 +20,6 @@ import '../../tenant_portal/presentation/owner_mess_menu_screen.dart';
 import '../../properties/domain/property_archetype.dart';
 import 'property_shell_screen.dart' show propertyDetailProvider;
 
-final _hasTenantContextProvider = FutureProvider.autoDispose<bool>((ref) async {
-  final contexts = await ref.watch(authRepositoryProvider).listContexts();
-  return contexts.any((c) => c['role']?.toString() == 'tenant');
-});
-
 class _H {
   static Color get bg =>
       themed(const Color(0xFF0D1623), const Color(0xFFF6F7FB));
@@ -60,8 +55,8 @@ class PropertyMoreScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isOwnerOrAdmin = role == 'owner' || role == 'admin';
     final canManage = isOwnerOrAdmin || role == 'manager';
-    final hasTenantContext =
-        ref.watch(_hasTenantContextProvider).valueOrNull ?? false;
+    final hasOtherWorkspace =
+        ref.watch(otherWorkspacesProvider).valueOrNull?.isNotEmpty ?? false;
     final property = ref.watch(propertyDetailProvider(propertyId)).valueOrNull;
     final archetype = propertyArchetypeFromProperty(property);
     final showStructureSettings =
@@ -74,7 +69,7 @@ class PropertyMoreScreen extends ConsumerWidget {
       role: role,
       isOwnerOrAdmin: isOwnerOrAdmin,
       canManage: canManage,
-      hasTenantContext: hasTenantContext,
+      hasOtherWorkspace: hasOtherWorkspace,
       showMessMenu: showMessMenu,
       showStructureSettings: showStructureSettings,
     );
@@ -89,7 +84,7 @@ class _HostelPgMoreBody extends ConsumerWidget {
   final String? role;
   final bool isOwnerOrAdmin;
   final bool canManage;
-  final bool hasTenantContext;
+  final bool hasOtherWorkspace;
   final bool showMessMenu;
   final bool showStructureSettings;
 
@@ -99,7 +94,7 @@ class _HostelPgMoreBody extends ConsumerWidget {
     required this.role,
     required this.isOwnerOrAdmin,
     required this.canManage,
-    required this.hasTenantContext,
+    required this.hasOtherWorkspace,
     required this.showMessMenu,
     required this.showStructureSettings,
   });
@@ -235,11 +230,11 @@ class _HostelPgMoreBody extends ConsumerWidget {
             MaterialPageRoute(builder: (_) => const PaywallScreen()),
           ),
         ),
-      if (hasTenantContext)
+      if (hasOtherWorkspace)
         _MoreRowData(
-          icon: Icons.home_outlined,
-          label: 'Switch to Tenant View',
-          onTap: () => switchWorkspaceRole(context, ref, toTenant: true),
+          icon: Icons.swap_horiz_rounded,
+          label: 'Switch Workspace',
+          onTap: () => switchWorkspace(context, ref),
         ),
       _MoreRowData(
         icon: Icons.logout,

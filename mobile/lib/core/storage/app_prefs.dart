@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const _isFirstTimeKey = 'isFirstTime';
 const _darkThemeKey = 'darkTheme';
+const _lastWorkspacePrefix = 'lastWorkspace:';
 
 class AppPrefs {
   AppPrefs._();
@@ -33,5 +34,21 @@ class AppPrefs {
   static Future<void> setDarkTheme(bool dark) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_darkThemeKey, dark);
+  }
+
+  /// Last workspace this user opened, as `type:id`. Kept across logout so the
+  /// next login can reopen it; only ever a hint, the server list decides.
+  static Future<String?> lastWorkspace(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('$_lastWorkspacePrefix$userId');
+  }
+
+  static Future<void> setLastWorkspace(
+    String userId,
+    String type,
+    String id,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_lastWorkspacePrefix$userId', '$type:$id');
   }
 }

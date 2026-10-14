@@ -25,7 +25,12 @@ export type UserProfile = {
   planSlug: string | null;
   planName: string | null;
   subscriptionStatus: string | null;
+  /** This user's own tenancies by status; lets the app tell a tenant whose
+   *  stay is pending or ended apart from a new owner. */
+  tenancies: TenancySummary;
 };
+
+export type TenancySummary = { active: number; pending: number; ended: number };
 
 export class AuthService {
   async requestOtp(phone: string): Promise<void> {
@@ -82,8 +87,16 @@ export class AuthService {
       ))[0];
     }
 
-    // Always ensure an owner workspace exists (covers DB truncates / orphaned users).
-    organizationId = await this.ensureOwnerOrganization(user.id, phone);
+    // Owner workspaces are created only when the user chooses to set up a
+    // property (POST /auth/ensure-organization), so logging in never turns a
+    // tenant into an owner.
+    organizationId = (await query<{ organization_id: string }>(
+      `SELECT organization_id FROM memberships
+       WHERE user_id = $1 AND role IN ('owner', 'admin')
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [user.id],
+    ))[0]?.organization_id;
 
     const accessToken = jwt.sign({ sub: user.id }, env.jwtAccessSecret, {
       expiresIn: env.jwtAccessTtl,
@@ -245,6 +258,19 @@ export class AuthService {
 
     const name = u.name?.trim() ? u.name.trim() : null;
 
+    const tenancies: TenancySummary = { active: 0, pending: 0, ended: 0 };
+    const tenancyRows = await query<{ status: string; count: string }>(
+      `SELECT status::text AS status, COUNT(*)::text AS count
+       FROM tenancies WHERE user_id = $1
+       GROUP BY status`,
+      [userId],
+    );
+    for (const row of tenancyRows) {
+      if (row.status in tenancies) {
+        tenancies[row.status as keyof TenancySummary] = Number(row.count);
+      }
+    }
+
     return {
       id: u.id,
       phone: u.phone,
@@ -257,6 +283,7 @@ export class AuthService {
       planSlug,
       planName,
       subscriptionStatus,
+      tenancies,
     };
   }
 

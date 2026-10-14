@@ -33,7 +33,8 @@ class ContextPickerScreen extends ConsumerWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         title: const Text('Choose how to continue', style: TextStyle(color: Colors.black87)),
-        automaticallyImplyLeading: false,
+        automaticallyImplyLeading: context.canPop(),
+        iconTheme: const IconThemeData(color: Colors.black87),
       ),
       body: ListView.separated(
         padding: const EdgeInsets.all(20),

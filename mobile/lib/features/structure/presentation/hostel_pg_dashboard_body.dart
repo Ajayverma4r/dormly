@@ -8,11 +8,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/domain/user_profile.dart';
+import '../../complaints/presentation/complaints_list_screen.dart'
+    show complaintsProvider;
 import '../../dashboard/domain/dashboard_financials.dart';
 import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
 import '../domain/hierarchy_level.dart';
+import 'dashboard_recent_complaints.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider, nodeCountProvider;
 import 'rooms/room_list_filter.dart';
@@ -133,7 +136,10 @@ class HostelPgDashboardBody extends ConsumerWidget {
         child: RefreshIndicator(
           color: HostelPgDashboardColors.purple,
           backgroundColor: HostelPgDashboardColors.card,
-          onRefresh: onRefresh,
+          onRefresh: () async {
+            ref.invalidate(complaintsProvider(propertyId));
+            await onRefresh();
+          },
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
@@ -235,6 +241,8 @@ class HostelPgDashboardBody extends ConsumerWidget {
                         unitKind: unitKind,
                         containerKind: containerKind,
                       ),
+                      const SizedBox(height: 14),
+                      DashboardRecentComplaints(propertyId: propertyId),
                     ],
                   );
                 },

@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../data/notifications_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/presentation/invoice_detail_screen.dart';
+import '../../staff/data/staff_repository.dart';
 import '../../subscription/presentation/paywall_screen.dart';
 import '../../tenancies/presentation/tenant_profile_screen.dart';
 import 'notifications_providers.dart';
@@ -135,6 +136,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     if (_isSubscription(n)) return Icons.workspace_premium_outlined;
     if (_isRentReminder(n)) return Icons.payments_outlined;
     final type = (n['type'] ?? '').toString();
+    if (type == 'staff_invitation') return Icons.group_add_outlined;
     if (type == 'invoice_draft_ready') return Icons.rate_review_outlined;
     if (type.startsWith('invoice_')) return Icons.receipt_long_outlined;
     return Icons.notifications_active_outlined;
@@ -152,6 +154,22 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   ) async {
     final type = (n['type'] ?? '').toString();
     final data = _asMap(n['data']);
+
+    if (type == 'staff_invitation') {
+      final pending =
+          await ref.read(staffRepositoryProvider).listMyInvitations();
+      if (!context.mounted) return;
+      if (pending.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This invitation is no longer pending.'),
+          ),
+        );
+        return;
+      }
+      context.go('/invitations', extra: pending);
+      return;
+    }
 
     if (_isRentReminder(n) ||
         type == 'rent_reminder' ||

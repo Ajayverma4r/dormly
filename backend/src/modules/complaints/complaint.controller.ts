@@ -2,7 +2,11 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
-import { ComplaintService } from './complaint.service';
+import {
+  ComplaintService,
+  complaintSchemaCaps,
+  type CommentAudience,
+} from './complaint.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import { safeImageExtension, saveUpload } from '@shared/storage/file-storage';
 
@@ -45,10 +49,55 @@ async function filesToUrls(req: AuthedRequest): Promise<string[]> {
   );
 }
 
+const PROPERTY_TEAM_ROLES = new Set(['owner', 'admin', 'manager', 'staff']);
+const NO_COMPLAINT_ACCESS = { error: 'You do not have access to these complaints.' };
+const OWN_UNIT_ONLY = { error: 'You can only raise complaints for your own unit.' };
+
+/** The caller's active tenancy placement, re-read from the database rather than trusted from the request. */
+async function verifiedTenantPlacement(req: AuthedRequest) {
+  if (req.ctxType !== 'tenancy' || req.ctxRole !== 'tenant' || !req.ctxId || !req.userId) {
+    return null;
+  }
+  const placement = await service.tenantPlacement(req.ctxId, req.userId);
+  if (!placement || placement.propertyId !== req.ctxPropertyId) return null;
+  return placement;
+}
+
+const NOT_AVAILABLE = { error: 'This feature is not available yet.' };
+
+const commentSchema = z.object({
+  body: z.string().trim().min(1, 'Comment cannot be empty').max(2000),
+  visibility: z.enum(['internal', 'tenant_visible']).optional(),
+});
+
+const assignSchema = z.object({
+  assigneeUserId: z.string().uuid().nullable(),
+});
+
+/**
+ * 'team' for the property team; 'tenant' only for the tenant who raised this
+ * complaint, through a verified active tenancy at this property.
+ */
+async function commentAudience(req: AuthedRequest): Promise<CommentAudience | null> {
+  if (PROPERTY_TEAM_ROLES.has(req.ctxRole ?? '')) return 'team';
+  const placement = await verifiedTenantPlacement(req);
+  if (!placement || placement.propertyId !== req.params.propertyId) return null;
+  const raisedBy = await service.raisedBy(req.params.propertyId, req.params.complaintId);
+  return raisedBy && raisedBy === req.userId ? 'tenant' : null;
+}
+
 export class ComplaintController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      res.json({ data: await service.listByProperty(req.params.propertyId) });
+      const propertyId = req.params.propertyId;
+      if (PROPERTY_TEAM_ROLES.has(req.ctxRole ?? '')) {
+        return res.json({ data: await service.listByProperty(propertyId) });
+      }
+      const placement = await verifiedTenantPlacement(req);
+      if (!placement || placement.propertyId !== propertyId) {
+        return res.status(403).json(NO_COMPLAINT_ACCESS);
+      }
+      res.json({ data: await service.listForTenant(propertyId, req.userId!) });
     } catch (err) {
       next(err);
     }
@@ -56,6 +105,7 @@ export class ComplaintController {
 
   create = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
+      const propertyId = req.params.propertyId;
       const body = createSchema.parse({
         ...req.body,
         photoUrls: req.body.photoUrls
@@ -64,9 +114,19 @@ export class ComplaintController {
             : req.body.photoUrls
           : undefined,
       });
+      if (PROPERTY_TEAM_ROLES.has(req.ctxRole ?? '')) {
+        if (!(await service.nodeInProperty(body.nodeId, propertyId))) {
+          return res.status(400).json({ error: 'Unit does not belong to this property.' });
+        }
+      } else {
+        const placement = await verifiedTenantPlacement(req);
+        if (!placement || placement.propertyId !== propertyId || placement.nodeId !== body.nodeId) {
+          return res.status(403).json(OWN_UNIT_ONLY);
+        }
+      }
       const photoUrls = [...(body.photoUrls ?? []), ...(await filesToUrls(req))];
       const complaint = await service.create(
-        req.params.propertyId,
+        propertyId,
         body.nodeId,
         req.userId!,
         body.category,
@@ -84,6 +144,7 @@ export class ComplaintController {
     try {
       const body = updateSchema.parse(req.body);
       const complaint = await service.updateStatus(
+        req.params.propertyId,
         req.params.complaintId,
         body.status,
         body.resolutionNote,
@@ -110,8 +171,9 @@ export class ComplaintController {
           category: z.string().min(1),
           description: z.string().min(1),
           priority: z.enum(['low', 'medium', 'high']).default('medium'),
-          propertyId: z.string().uuid(),
-          nodeId: z.string().uuid(),
+          // Optional echo of the tenancy's placement; the server's own lookup is authoritative.
+          propertyId: z.string().uuid().optional(),
+          nodeId: z.string().uuid().optional(),
           photoUrls: z.array(z.string()).optional(),
         })
         .parse({
@@ -122,10 +184,18 @@ export class ComplaintController {
               : req.body.photoUrls
             : undefined,
         });
+      const placement = await verifiedTenantPlacement(req);
+      if (
+        !placement ||
+        (body.propertyId && body.propertyId !== placement.propertyId) ||
+        (body.nodeId && body.nodeId !== placement.nodeId)
+      ) {
+        return res.status(403).json(OWN_UNIT_ONLY);
+      }
       const photoUrls = [...(body.photoUrls ?? []), ...(await filesToUrls(req))];
       const complaint = await service.create(
-        body.propertyId,
-        body.nodeId,
+        placement.propertyId,
+        placement.nodeId,
         req.userId!,
         body.category,
         body.description,
@@ -133,6 +203,79 @@ export class ComplaintController {
         photoUrls,
       );
       res.status(201).json({ data: complaint });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  listComments = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!(await complaintSchemaCaps()).comments) return res.status(503).json(NOT_AVAILABLE);
+      const audience = await commentAudience(req);
+      if (!audience) return res.status(403).json(NO_COMPLAINT_ACCESS);
+      res.json({
+        data: await service.listComments(req.params.propertyId, req.params.complaintId, audience),
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  addComment = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!(await complaintSchemaCaps()).comments) return res.status(503).json(NOT_AVAILABLE);
+      const audience = await commentAudience(req);
+      if (!audience) return res.status(403).json(NO_COMPLAINT_ACCESS);
+      const body = commentSchema.parse(req.body);
+      const { propertyId, complaintId } = req.params;
+      // Tenant comments are always visible to the tenant; team notes stay internal unless shared.
+      const visibility =
+        audience === 'tenant' ? 'tenant_visible' : (body.visibility ?? 'internal');
+      const id = await service.addComment(
+        propertyId,
+        complaintId,
+        { userId: req.userId!, role: req.ctxRole! },
+        body.body,
+        visibility,
+      );
+      if (!id) return res.status(404).json({ error: 'Complaint not found' });
+      const all = await service.listComments(propertyId, complaintId, audience);
+      res.status(201).json({ data: all.find((c: any) => String(c.id) === id) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  assignees = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      if (!(await complaintSchemaCaps()).assignment) return res.status(503).json(NOT_AVAILABLE);
+      res.json({ data: await service.listAssignees(req.params.propertyId) });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  assign = async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    try {
+      const caps = await complaintSchemaCaps();
+      if (!caps.assignment || !caps.comments) return res.status(503).json(NOT_AVAILABLE);
+      const { assigneeUserId } = assignSchema.parse(req.body);
+      const { propertyId, complaintId } = req.params;
+      const result = await service.assign(propertyId, complaintId, assigneeUserId, {
+        userId: req.userId!,
+        role: req.ctxRole!,
+      });
+      if (result === 'ineligible') {
+        return res
+          .status(422)
+          .json({ error: 'That person is not an eligible team member for this property.' });
+      }
+      const [complaint] = await service.listByProperty(propertyId, complaintId);
+      if (!complaint) return res.status(404).json({ error: 'Complaint not found' });
+      if (result === 'assigned' && String(complaint.assigned_to) !== req.userId) {
+        await service.notifyAssignee(propertyId, complaint);
+      }
+      res.json({ data: complaint });
     } catch (err) {
       next(err);
     }

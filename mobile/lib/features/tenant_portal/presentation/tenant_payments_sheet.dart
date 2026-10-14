@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import 'tenant_portal_providers.dart';
+import 'widgets/tenant_load_error.dart';
 
 const _brand = Color(0xFF5218D1);
 final _currency =
@@ -34,7 +35,12 @@ Future<void> showTenantRentPaymentsSheet({
                   height: 160,
                   child: Center(child: CircularProgressIndicator()),
                 ),
-                error: (e, _) => Text('Could not load dues: $e'),
+                error: (e, _) => TenantLoadError(
+                  title: "Couldn't load your dues",
+                  error: e,
+                  compact: true,
+                  onRetry: () => ref.invalidate(myInvoicesProvider),
+                ),
                 data: (invoices) {
                   final due = invoices.where((inv) {
                     final total =

@@ -2,9 +2,11 @@
 //
 // Unauthenticated startup:
 //   /splash → /onboarding ("Your Stay, Simplified") → /login → OTP
-//   → server decides: existing properties → dashboard | none → Welcome to Dormly
+//   → server decides (login_flow.dart): tenant → /tenant/dashboard,
+//     owner with properties → dashboard, pending/ended tenancy only →
+//     /tenant/unavailable, owner with no property → Welcome to Dormly
 //
-// Authenticated cold start: SplashScreen.restoreSession → dashboard.
+// Authenticated cold start: SplashScreen.restoreSession → same decision.
 //
 // Property onboarding (/onboarding/welcome, create-property) is post-auth only.
 
@@ -22,6 +24,7 @@ import '../../features/properties/presentation/properties_list_screen.dart';
 import '../../features/auth/presentation/context_picker_screen.dart';
 import '../../features/auth/presentation/profile_creation_screen.dart';
 import '../../features/tenant_portal/presentation/tenant_dashboard_screen.dart';
+import '../../features/auth/presentation/tenancy_unavailable_screen.dart';
 import '../../features/staff/presentation/invitations_screen.dart';
 import '../../features/notifications/presentation/notifications_screen.dart';
 import '../../features/home/presentation/profile_screen.dart';
@@ -95,6 +98,12 @@ final appRouter = GoRouter(
       ),
     ),
 
+    GoRoute(
+      path: '/tenant/unavailable',
+      builder: (context, state) => TenancyUnavailableScreen(
+        status: state.extra as String? ?? 'ended',
+      ),
+    ),
     GoRoute(
       path: '/tenant/dashboard',
       builder: (context, state) => TenantDashboardScreen(

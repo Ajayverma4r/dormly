@@ -70,6 +70,7 @@ const USER = {
   c: '31000000-0000-4000-8000-000000000004',
   old: '31000000-0000-4000-8000-000000000005',
   manager: '31000000-0000-4000-8000-000000000006',
+  staff: '31000000-0000-4000-8000-000000000007',
 };
 const TEN = {
   a: '41000000-0000-4000-8000-000000000001',
@@ -99,7 +100,7 @@ const TOKENS = {
   owner1: () => token({ sub: USER.owner, ctxType: 'organization', ctxId: ORG_1, ctxRole: 'owner', ctxPropertyId: null }),
   admin1: () => token({ sub: USER.owner, ctxType: 'organization', ctxId: ORG_1, ctxRole: 'admin', ctxPropertyId: null }),
   manager1: () => token({ sub: USER.manager, ctxType: 'organization', ctxId: P1, ctxRole: 'manager', ctxPropertyId: P1 }),
-  staff1: () => token({ sub: USER.manager, ctxType: 'organization', ctxId: P1, ctxRole: 'staff', ctxPropertyId: P1 }),
+  staff1: () => token({ sub: USER.staff, ctxType: 'organization', ctxId: P1, ctxRole: 'staff', ctxPropertyId: P1 }),
 };
 
 let baseUrl = '';
@@ -107,8 +108,19 @@ let server: ReturnType<express.Express['listen']>;
 
 async function resetData() {
   await pg.db.exec(`
-    TRUNCATE meter_readings, tenancies, hierarchy_nodes, properties, users, invoices;
+    TRUNCATE meter_readings, tenancies, hierarchy_nodes, properties, users, invoices,
+      property_staff_assignments, memberships;
   `);
+  await pg.db.query(
+    `INSERT INTO memberships (user_id, organization_id, role) VALUES
+       ($1, $2, 'owner'), ($1, $2, 'admin')`,
+    [USER.owner, ORG_1],
+  );
+  await pg.db.query(
+    `INSERT INTO property_staff_assignments (user_id, property_id, role, status) VALUES
+       ($1, $3, 'manager', 'active'), ($2, $3, 'staff', 'active')`,
+    [USER.manager, USER.staff, P1],
+  );
   await pg.db.query(
     `INSERT INTO properties VALUES ($1, $2, 'Asia/Kolkata', 'rental_house'),
                                    ($3, $4, 'Asia/Kolkata', 'rental_house')`,
@@ -151,6 +163,9 @@ beforeAll(async () => {
       property_type_key text);
     CREATE TABLE hierarchy_nodes (id uuid PRIMARY KEY, property_id uuid, name text);
     CREATE TABLE users (id uuid PRIMARY KEY, name text);
+    CREATE TABLE property_staff_assignments (user_id uuid, property_id uuid, role text,
+      status text);
+    CREATE TABLE memberships (user_id uuid, organization_id uuid, role text);
     CREATE TABLE tenancies (id uuid PRIMARY KEY, property_id uuid, node_id uuid, user_id uuid,
       status text, created_at timestamptz DEFAULT now());
     CREATE TABLE invoices (id uuid PRIMARY KEY, tenancy_id uuid, property_id uuid,
@@ -251,10 +266,11 @@ describe('tenant listing', () => {
   });
 
   it('an ended tenancy or a tenancy token held by another user grants nothing', async () => {
-    expect((await call('GET', '/v1/tenant-portal/meter-readings', TOKENS.endedTenant())).status).toBe(404);
-    expect((await call('GET', `/v1/properties/${P1}/meter-readings`, TOKENS.endedTenant())).status).toBe(404);
+    // Rejected by the workspace check before reaching the meter routes.
+    expect((await call('GET', '/v1/tenant-portal/meter-readings', TOKENS.endedTenant())).status).toBe(403);
+    expect((await call('GET', `/v1/properties/${P1}/meter-readings`, TOKENS.endedTenant())).status).toBe(403);
     const forged = await call('GET', '/v1/tenant-portal/meter-readings', TOKENS.tenantAWithBsTenancy());
-    expect(forged.status).toBe(404);
+    expect(forged.status).toBe(403);
     expect(JSON.stringify(forged.body)).not.toContain(READING.b);
   });
 });
@@ -314,7 +330,7 @@ describe('tenant submitting', () => {
     const res = await call('POST', '/v1/tenant-portal/meter-readings', TOKENS.endedTenant(), {
       readingValue: 150,
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 });
 

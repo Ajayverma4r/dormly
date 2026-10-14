@@ -21,7 +21,7 @@ export const propertiesRouter = Router();
 
 propertiesRouter.use(authGuard, requireContext);
 propertiesRouter.get('/', controller.list);
-propertiesRouter.get('/:propertyId', controller.getById);
+propertiesRouter.get('/:propertyId', requirePropertyAccess, controller.getById);
 propertiesRouter.post('/', controller.create);
 
 // Nested property APIs: auth + org access, then freeze surplus commercial

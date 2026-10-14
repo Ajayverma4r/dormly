@@ -1,5 +1,24 @@
 // features/auth/domain/user_profile.dart
 
+/// The signed-in user's own tenancies by status, from `/auth/me`.
+class TenancySummary {
+  final int active;
+  final int pending;
+  final int ended;
+
+  const TenancySummary({this.active = 0, this.pending = 0, this.ended = 0});
+
+  factory TenancySummary.fromJson(Object? json) {
+    if (json is! Map) return const TenancySummary();
+    int count(String key) => (json[key] as num?)?.toInt() ?? 0;
+    return TenancySummary(
+      active: count('active'),
+      pending: count('pending'),
+      ended: count('ended'),
+    );
+  }
+}
+
 class UserProfile {
   final String id;
   final String phone;
@@ -12,6 +31,7 @@ class UserProfile {
   final String? planSlug;
   final String? planName;
   final String? subscriptionStatus;
+  final TenancySummary tenancies;
 
   const UserProfile({
     required this.id,
@@ -25,6 +45,7 @@ class UserProfile {
     this.planSlug,
     this.planName,
     this.subscriptionStatus,
+    this.tenancies = const TenancySummary(),
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -41,6 +62,7 @@ class UserProfile {
       planSlug: json['planSlug'] as String?,
       planName: json['planName'] as String?,
       subscriptionStatus: json['subscriptionStatus'] as String?,
+      tenancies: TenancySummary.fromJson(json['tenancies']),
     );
   }
 

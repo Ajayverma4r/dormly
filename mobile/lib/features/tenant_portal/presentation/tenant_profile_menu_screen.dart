@@ -27,8 +27,8 @@ class TenantProfileMenuScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tenancy = ref.watch(myTenancyProvider).valueOrNull ?? {};
-    final hasOwner =
-        ref.watch(hasOwnerContextProvider).valueOrNull ?? false;
+    final hasOtherWorkspace =
+        ref.watch(otherWorkspacesProvider).valueOrNull?.isNotEmpty ?? false;
     final name = tenancy['full_name']?.toString() ?? 'Tenant';
     final initial =
         name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
@@ -169,12 +169,11 @@ class TenantProfileMenuScreen extends ConsumerWidget {
               );
             },
           ),
-          if (hasOwner)
+          if (hasOtherWorkspace)
             _MenuTile(
-              icon: Icons.business_center_outlined,
-              title: 'Switch to Owner View',
-              onTap: () =>
-                  switchWorkspaceRole(context, ref, toTenant: false),
+              icon: Icons.swap_horiz_rounded,
+              title: 'Switch Workspace',
+              onTap: () => switchWorkspace(context, ref),
             ),
           const SizedBox(height: 8),
           _MenuTile(

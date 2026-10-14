@@ -1,28 +1,43 @@
 // modules/properties/properties.controller.ts
 import { Response, NextFunction } from 'express';
 import { PropertiesService } from './properties.service';
-import { AuthedRequest } from '@shared/middleware/auth-guard';
+import { activeStaffRole, AuthedRequest } from '@shared/middleware/auth-guard';
 
 const service = new PropertiesService();
+
+/** Organization of an owner/admin workspace token, or null for any other role. */
+function ownerOrganization(req: AuthedRequest): string | null {
+  return req.ctxType === 'organization' &&
+    (req.ctxRole === 'owner' || req.ctxRole === 'admin') &&
+    req.ctxId
+    ? req.ctxId
+    : null;
+}
 
 export class PropertiesController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      // Prefer org from the scoped JWT (SaaS global context). Query param is fallback
-      // for legacy clients — missing/empty query must not break authenticated owners.
-      const organizationId =
-        req.ctxType === 'organization' && req.ctxId
-          ? req.ctxId
-          : (req.query.organizationId as string | undefined);
-
-      if (!organizationId) {
-        return res.status(400).json({
-          error: 'No organization context. Select a workspace and try again.',
-        });
+      // The organization always comes from the selected workspace, never from
+      // the client, so nobody can list another organization's properties.
+      const organizationId = ownerOrganization(req);
+      if (organizationId) {
+        res.json({ data: await service.listForOrganization(organizationId) });
+        return;
       }
 
-      const properties = await service.listForOrganization(organizationId);
-      res.json({ data: properties });
+      // Managers and staff see only the one property they accepted.
+      if (
+        (req.ctxRole === 'manager' || req.ctxRole === 'staff') &&
+        req.userId &&
+        req.ctxPropertyId &&
+        (await activeStaffRole(req.userId, req.ctxPropertyId)) === req.ctxRole
+      ) {
+        const property = await service.getById(req.ctxPropertyId);
+        res.json({ data: property ? [property] : [] });
+        return;
+      }
+
+      return res.status(403).json({ error: 'Your workspace cannot list properties.' });
     } catch (err) {
       next(err);
     }
@@ -50,14 +65,9 @@ export class PropertiesController {
 
   create = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      // Prefer scoped org context over client-supplied organizationId.
-      const organizationId =
-        req.ctxType === 'organization' && req.ctxId
-          ? req.ctxId
-          : (req.body.organizationId as string | undefined);
-
+      const organizationId = ownerOrganization(req);
       if (!organizationId) {
-        return res.status(400).json({ error: 'organizationId is required.' });
+        return res.status(403).json({ error: 'Only owners and admins can add properties.' });
       }
       if (!req.body.propertyTypeKey) {
         return res.status(400).json({ error: 'propertyTypeKey is required.' });
