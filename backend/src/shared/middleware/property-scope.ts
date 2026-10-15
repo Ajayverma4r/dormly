@@ -11,7 +11,9 @@ export type PropertyScopedTable =
   | 'tenancies'
   | 'charge_types'
   | 'complaints'
-  | 'gate_passes';
+  | 'gate_passes'
+  | 'hierarchy_nodes'
+  | 'hierarchy_levels';
 
 export type RecordPropertyLookup = (
   table: PropertyScopedTable,

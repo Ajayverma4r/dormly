@@ -9,28 +9,45 @@ import 'package:go_router/go_router.dart';
 import '../data/complaints_repository.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/login_flow.dart';
-import '../../structure/presentation/property_shell_screen.dart' show propertyDetailProvider;
+import '../../structure/presentation/property_shell_screen.dart'
+    show propertyDetailProvider;
 import 'complaint_details_screen.dart';
 import 'complaint_ui.dart';
 
-final complaintsProvider = FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
-  (ref, propertyId) => ref.watch(complaintsRepositoryProvider).listForProperty(propertyId),
+final complaintsProvider =
+    FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
+  (ref, propertyId) =>
+      ref.watch(complaintsRepositoryProvider).listForProperty(propertyId),
 );
 
 /// Always-visible filters; `assigned` and `closed` appear once complaints use them.
 const _primaryFilters = ['all', 'open', 'in_progress', 'resolved'];
 
+/// Staff-only filter: complaints assigned to the signed-in user.
+const myTasksFilter = 'mine';
+
 class ComplaintsListScreen extends ConsumerStatefulWidget {
   final String propertyId;
   final bool isRoot;
-  const ComplaintsListScreen({super.key, required this.propertyId, this.isRoot = false});
+
+  /// A tab inside a shell: titled "Complaints", no back button or account actions.
+  final bool asTab;
+  final String initialFilter;
+  const ComplaintsListScreen({
+    super.key,
+    required this.propertyId,
+    this.isRoot = false,
+    this.asTab = false,
+    this.initialFilter = 'all',
+  });
 
   @override
-  ConsumerState<ComplaintsListScreen> createState() => _ComplaintsListScreenState();
+  ConsumerState<ComplaintsListScreen> createState() =>
+      _ComplaintsListScreenState();
 }
 
 class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
-  String _filter = 'all';
+  late String _filter = widget.initialFilter;
 
   Future<void> _open(Map<String, dynamic> complaint) async {
     await Navigator.of(context).push(
@@ -49,6 +66,10 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
       ref.watch(propertyDetailProvider(propertyId)).valueOrNull,
       propertyId,
     )?.name;
+    final isStaff =
+        ref.watch(complaintViewerRoleProvider).valueOrNull == 'staff';
+    final viewerId =
+        isStaff ? ref.watch(complaintViewerUserIdProvider).valueOrNull : null;
 
     return Scaffold(
       backgroundColor: ComplaintColors.bg,
@@ -58,11 +79,12 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        automaticallyImplyLeading: !widget.asTab,
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              widget.isRoot ? 'Complaints' : 'All Complaints',
+              widget.isRoot || widget.asTab ? 'Complaints' : 'All Complaints',
               style: const TextStyle(
                 color: ComplaintColors.ink,
                 fontSize: 17,
@@ -72,13 +94,18 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
             if (propertyName != null && propertyName.isNotEmpty)
               Text(
                 propertyName,
-                style: const TextStyle(color: ComplaintColors.muted, fontSize: 12),
+                style:
+                    const TextStyle(color: ComplaintColors.muted, fontSize: 12),
               ),
           ],
         ),
         actions: widget.isRoot
             ? [
-                if (ref.watch(otherWorkspacesProvider).valueOrNull?.isNotEmpty ?? false)
+                if (ref
+                        .watch(otherWorkspacesProvider)
+                        .valueOrNull
+                        ?.isNotEmpty ??
+                    false)
                   IconButton(
                     icon: const Icon(Icons.swap_horiz_rounded),
                     tooltip: 'Switch Workspace',
@@ -106,21 +133,30 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
           title: complaintErrorMessage(err),
           action: FilledButton(
             onPressed: () => ref.invalidate(complaintsProvider(propertyId)),
-            style: FilledButton.styleFrom(backgroundColor: ComplaintColors.brand),
+            style:
+                FilledButton.styleFrom(backgroundColor: ComplaintColors.brand),
             child: const Text('Retry'),
           ),
         ),
         data: (raw) {
           final all = sortComplaintsNewestFirst(raw);
           final counts = complaintStatusCounts(all);
+          bool isMine(Map<String, dynamic> c) =>
+              viewerId != null && c['assigned_to']?.toString() == viewerId;
+          final showMine =
+              isStaff && all.any((c) => c.containsKey('assigned_to'));
+          if (showMine) counts[myTasksFilter] = all.where(isMine).length;
           final filters = [
             ..._primaryFilters,
+            if (showMine || _filter == myTasksFilter) myTasksFilter,
             for (final s in ['assigned', 'closed'])
               if ((counts[s] ?? 0) > 0 || _filter == s) s,
           ]..sort((a, b) => _filterOrder(a).compareTo(_filterOrder(b)));
-          final visible = _filter == 'all'
-              ? all
-              : all.where((c) => complaintStatusOf(c) == _filter).toList();
+          final visible = switch (_filter) {
+            'all' => all,
+            myTasksFilter => all.where(isMine).toList(),
+            _ => all.where((c) => complaintStatusOf(c) == _filter).toList(),
+          };
 
           return RefreshIndicator(
             color: ComplaintColors.brand,
@@ -128,13 +164,27 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
             child: all.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    children: const [
-                      SizedBox(height: 120),
+                    children: [
+                      const SizedBox(height: 120),
                       _Message(
-                        key: Key('complaints-empty'),
+                        key: const Key('complaints-empty'),
                         icon: Icons.check_circle_outline_rounded,
                         title: 'No complaints yet',
-                        subtitle: 'Complaints raised for this property will appear here.',
+                        subtitle: isStaff
+                            ? 'New complaints from residents, and complaints assigned to you, will appear here.'
+                            : 'Complaints raised for this property will appear here.',
+                        action: OutlinedButton.icon(
+                          key: const Key('complaints-empty-refresh'),
+                          onPressed: () =>
+                              ref.invalidate(complaintsProvider(propertyId)),
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Refresh'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: ComplaintColors.brand,
+                            side:
+                                const BorderSide(color: ComplaintColors.border),
+                          ),
+                        ),
                       ),
                     ],
                   )
@@ -149,10 +199,15 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
                           child: Row(
                             children: [
                               for (final f in filters) ...[
-                                if (f != filters.first) const SizedBox(width: 8),
+                                if (f != filters.first)
+                                  const SizedBox(width: 8),
                                 _FilterChip(
                                   key: Key('complaint-filter-$f'),
-                                  label: f == 'all' ? 'All' : complaintStatusStyle(f).label,
+                                  label: switch (f) {
+                                    'all' => 'All',
+                                    myTasksFilter => 'My Tasks',
+                                    _ => complaintStatusStyle(f).label,
+                                  },
                                   count: counts[f] ?? 0,
                                   selected: _filter == f,
                                   onTap: () => setState(() => _filter = f),
@@ -169,8 +224,9 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
                           child: _Message(
                             key: const Key('complaints-filter-empty'),
                             icon: Icons.filter_alt_off_outlined,
-                            title:
-                                'No ${complaintStatusStyle(_filter).label.toLowerCase()} complaints',
+                            title: _filter == myTasksFilter
+                                ? 'No complaints are assigned to you'
+                                : 'No ${complaintStatusStyle(_filter).label.toLowerCase()} complaints',
                           ),
                         )
                       else
@@ -178,6 +234,8 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
                           ComplaintListTile(
                             complaint: c,
                             onTap: () => _open(c),
+                            assignmentViewerId:
+                                isStaff ? (viewerId ?? '') : null,
                           ),
                           const SizedBox(height: 10),
                         ],
@@ -189,8 +247,11 @@ class _ComplaintsListScreenState extends ConsumerState<ComplaintsListScreen> {
     );
   }
 
-  static int _filterOrder(String f) =>
-      f == 'all' ? -1 : complaintStatuses.indexOf(f);
+  static int _filterOrder(String f) => switch (f) {
+        'all' => -2,
+        myTasksFilter => -1,
+        _ => complaintStatuses.indexOf(f),
+      };
 }
 
 class _FilterChip extends StatelessWidget {
@@ -212,7 +273,8 @@ class _FilterChip extends StatelessWidget {
     return Material(
       color: selected ? ComplaintColors.brand : ComplaintColors.card,
       shape: StadiumBorder(
-        side: BorderSide(color: selected ? ComplaintColors.brand : ComplaintColors.border),
+        side: BorderSide(
+            color: selected ? ComplaintColors.brand : ComplaintColors.border),
       ),
       child: InkWell(
         customBorder: const StadiumBorder(),
@@ -239,7 +301,15 @@ class ComplaintListTile extends StatelessWidget {
   final Map<String, dynamic> complaint;
   final VoidCallback onTap;
 
-  const ComplaintListTile({super.key, required this.complaint, required this.onTap});
+  /// When set (staff view), the row also shows priority and who it is assigned to.
+  final String? assignmentViewerId;
+
+  const ComplaintListTile({
+    super.key,
+    required this.complaint,
+    required this.onTap,
+    this.assignmentViewerId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +320,12 @@ class ComplaintListTile extends StatelessWidget {
       if (room.isNotEmpty) room,
       if (created != null) formatComplaintDay(created),
     ].join(' · ');
+    final assignment = assignmentViewerId == null
+        ? null
+        : complaintAssignmentLabel(c, assignmentViewerId);
+    final priority = assignmentViewerId == null
+        ? null
+        : complaintPriorityStyle(c['priority']?.toString());
 
     return Material(
       color: ComplaintColors.card,
@@ -287,7 +363,35 @@ class ComplaintListTile extends StatelessWidget {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: ComplaintColors.muted, fontSize: 12),
+                        style: const TextStyle(
+                            color: ComplaintColors.muted, fontSize: 12),
+                      ),
+                    ],
+                    if (assignment != null || priority != null) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (priority != null)
+                            _MiniTag(
+                              label: priority.$1,
+                              fg: priority.$2,
+                              bg: priority.$2.withValues(alpha: 0.1),
+                            ),
+                          if (assignment != null)
+                            _MiniTag(
+                              key: const Key('complaint-assignment'),
+                              label: assignment.$1,
+                              fg: assignment.$2
+                                  ? const Color(0xFF16A34A)
+                                  : ComplaintColors.muted,
+                              bg: assignment.$2
+                                  ? const Color(0xFFDCFCE7)
+                                  : const Color(0xFFF1F5F9),
+                              icon: Icons.person_outline_rounded,
+                            ),
+                        ],
                       ),
                     ],
                   ],
@@ -295,10 +399,46 @@ class ComplaintListTile extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               ComplaintStatusBadge(status: complaintStatusOf(c)),
-              const Icon(Icons.chevron_right_rounded, color: ComplaintColors.muted),
+              const Icon(Icons.chevron_right_rounded,
+                  color: ComplaintColors.muted),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  final String label;
+  final Color fg;
+  final Color bg;
+  final IconData? icon;
+
+  const _MiniTag(
+      {super.key,
+      required this.label,
+      required this.fg,
+      required this.bg,
+      this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 11, color: fg),
+            const SizedBox(width: 3),
+          ],
+          Text(label,
+              style: TextStyle(
+                  color: fg, fontSize: 10.5, fontWeight: FontWeight.w700)),
+        ],
       ),
     );
   }
@@ -342,7 +482,8 @@ class _Message extends StatelessWidget {
               Text(
                 subtitle!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: ComplaintColors.muted, fontSize: 13),
+                style:
+                    const TextStyle(color: ComplaintColors.muted, fontSize: 13),
               ),
             ],
             if (action != null) ...[

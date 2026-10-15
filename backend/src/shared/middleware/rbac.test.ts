@@ -99,6 +99,9 @@ const INV_2 = '62000000-0000-4000-8000-000000000002';
 const GP_1 = '71000000-0000-4000-8000-000000000001';
 const GP_2 = '72000000-0000-4000-8000-000000000002';
 const UNIT_1 = '21000000-0000-4000-8000-000000000001';
+const UNIT_2 = '22000000-0000-4000-8000-000000000002';
+const LEVEL_1 = '91000000-0000-4000-8000-000000000001';
+const LEVEL_2 = '92000000-0000-4000-8000-000000000002';
 const CT_1 = '81000000-0000-4000-8000-000000000001';
 
 const sign = (claims: Record<string, unknown>) =>
@@ -123,6 +126,12 @@ const SENSITIVE_TENANCY = {
   property_id: P1,
   full_name: 'Asha Tenant',
   phone: '9876500001',
+  email: 'asha.private@example.com',
+  address: '12 Hidden Lane, Pune',
+  company_name: 'Asha Corp',
+  occupation: 'Engineer',
+  notes: 'Owner-only note',
+  profile_photo_url: '/uploads/tenant-photos/a.jpg',
   emergency_contact_name: 'Ravi',
   emergency_contact_phone: '9876500099',
   node_name: 'Room 101',
@@ -154,7 +163,11 @@ beforeAll(async () => {
     CREATE TABLE charge_types (id uuid PRIMARY KEY, property_id uuid);
     CREATE TABLE complaints (id uuid PRIMARY KEY, property_id uuid);
     CREATE TABLE gate_passes (id uuid PRIMARY KEY, property_id uuid);
+    CREATE TABLE hierarchy_nodes (id uuid PRIMARY KEY, property_id uuid);
+    CREATE TABLE hierarchy_levels (id uuid PRIMARY KEY, property_id uuid);
   `);
+  await pg.db.query(`INSERT INTO hierarchy_nodes VALUES ($1, $2), ($3, $4)`, [UNIT_1, P1, UNIT_2, P2]);
+  await pg.db.query(`INSERT INTO hierarchy_levels VALUES ($1, $2), ($3, $4)`, [LEVEL_1, P1, LEVEL_2, P2]);
   await pg.db.query(`INSERT INTO properties VALUES ($1, $2), ($3, $4), ($5, $2)`, [
     P1, ORG_1, P2, ORG_2, P3,
   ]);
@@ -374,22 +387,114 @@ describe('staff on the assigned property', () => {
     await expectRefused('GET', prop(P1, '/staff'), T.staff1(), 403);
   });
 
-  it('never receives phone, KYC, rent or dues fields of tenancies', async () => {
+  it('receives only name, place and status fields of tenancies', async () => {
     const list = await expectAllowed('GET', prop(P1, '/tenancies'), T.staff1());
     const one = await expectAllowed('GET', prop(P1, `/tenancies/${TEN_A}`), T.staff1());
-    for (const row of [list.body.data[0], one.body.data]) {
-      expect(row).toMatchObject({ id: TEN_A, full_name: 'Asha Tenant', node_name: 'Room 101' });
-      for (const field of [
-        'phone', 'emergency_contact_phone', 'aadhaar_number', 'id_type', 'agreement_pdf_url', 'monthly_rent', 'security_deposit',
-        'has_due', 'earliest_open_due_date', 'has_overdue', 'has_draft', 'has_sent_invoice',
+    for (const res of [list, one]) {
+      const row = res === list ? res.body.data[0] : res.body.data;
+      expect(row).toEqual({
+        id: TEN_A,
+        property_id: P1,
+        full_name: 'Asha Tenant',
+        node_name: 'Room 101',
+        status: 'active',
+      });
+      for (const secret of [
+        '1234-5678-9012', '9000.00', '18000.00', '98765000', 'asha.private@example.com',
+        'Hidden Lane', 'Asha Corp', 'Owner-only note', 'tenant-photos', 'Ravi',
       ]) {
+        expect(res.text).not.toContain(secret);
+      }
+    }
+  });
+
+  it('managers still receive the full tenancy record', async () => {
+    const one = await expectAllowed('GET', prop(P1, `/tenancies/${TEN_A}`), T.manager1());
+    expect(one.body.data).toEqual(SENSITIVE_TENANCY);
+  });
+
+  it('lists only this property\'s nodes, without rent, deposit or pricing metadata', async () => {
+    const node = {
+      id: UNIT_1,
+      propertyId: P1,
+      levelId: LEVEL_1,
+      parentNodeId: null,
+      name: 'Room 101',
+      monthlyRent: 9000,
+      securityDeposit: 18000,
+      metadata: { bed_capacity: 3, space_type: 'room', monthly_rent: 9000, security_deposit: 18000 },
+    };
+    stubs.results['StructureService.listNodes'] = () => [node];
+
+    const staff = await expectAllowed('GET', prop(P1, `/structure/nodes?levelId=${LEVEL_1}`), T.staff1());
+    expect(stubs.calls.find((c) => c.name === 'StructureService.listNodes')?.args).toEqual([
+      P1, LEVEL_1, null,
+    ]);
+    expect(staff.body.data).toEqual([
+      {
+        id: UNIT_1,
+        propertyId: P1,
+        levelId: LEVEL_1,
+        parentNodeId: null,
+        name: 'Room 101',
+        metadata: { bed_capacity: 3, space_type: 'room' },
+      },
+    ]);
+    expect(staff.text).not.toContain('9000');
+    expect(staff.text).not.toContain('18000');
+
+    const manager = await expectAllowed('GET', prop(P1, `/structure/nodes?levelId=${LEVEL_1}`), T.manager1());
+    expect(manager.body.data).toEqual([node]);
+  });
+
+  it('meter readings come without rate, amount or invoice links', async () => {
+    const reading = {
+      id: 'r1',
+      property_id: P1,
+      unit_id: UNIT_1,
+      unit_name: 'Room 101',
+      meter_reading_value: '150.000',
+      previous_reading: '100.000',
+      units_consumed: '50.000',
+      rate_per_unit: '8.7500',
+      amount: '437.50',
+      invoice_id: INV_1,
+      invoice_line_item_id: CT_1,
+      billing_cycle: '2026-10',
+      created_at: '2026-10-14T10:00:00Z',
+    };
+    stubs.results['MeterReadingsService.listByProperty'] = () => [reading];
+    stubs.results['MeterReadingsService.submit'] = () => reading;
+
+    const list = await expectAllowed('GET', prop(P1, '/meter-readings'), T.staff1());
+    const submitted = await expectAllowed('POST', prop(P1, '/meter-readings'), T.staff1(), {
+      unitId: UNIT_1,
+      readingValue: 150,
+    });
+    for (const row of [list.body.data[0], submitted.body.data]) {
+      expect(row).toMatchObject({ id: 'r1', meter_reading_value: '150.000', previous_reading: '100.000' });
+      for (const field of ['rate_per_unit', 'amount', 'invoice_id', 'invoice_line_item_id']) {
         expect(row).not.toHaveProperty(field);
       }
     }
-    expect(list.text).not.toContain('1234-5678-9012');
-    expect(list.text).not.toContain('9000.00');
-    expect(list.text).not.toContain('98765000');
-    expect(one.text).not.toContain('98765000');
+    expect(list.text).not.toContain('437.50');
+
+    const manager = await expectAllowed('GET', prop(P1, '/meter-readings'), T.manager1());
+    expect(manager.body.data[0]).toMatchObject({ rate_per_unit: '8.7500', amount: '437.50' });
+  });
+
+  it('invalid readings are refused with a 400 code before any service call', async () => {
+    for (const readingValue of [0, -5, 'abc', '', null, 'Infinity', 1e12]) {
+      const res = await expectRefused('POST', prop(P1, '/meter-readings'), T.staff1(), 400, {
+        unitId: UNIT_1,
+        readingValue,
+      });
+      expect(res.body).toEqual({ error: 'Reading must be a positive number.', code: 'invalid_reading' });
+    }
+    const missing = await expectRefused('POST', prop(P1, '/meter-readings'), T.staff1(), 400, {
+      unitId: UNIT_1,
+    });
+    expect(missing.body.code).toBe('invalid_reading');
   });
 
   it('cannot open tenant KYC documents', async () => {
@@ -447,6 +552,14 @@ describe('staff on the assigned property', () => {
   it('cannot reach another property', async () => {
     await expectRefused('GET', prop(P3, '/tenancies'), T.staff1(), 403);
     await expectRefused('GET', prop(P2, '/gate-passes'), T.staff1(), 403);
+    for (const path of ['/structure/levels', '/structure/nodes', '/meter-readings', '/tenancies']) {
+      await expectRefused('GET', prop(P2, path), T.staff1(), 403);
+      await expectRefused('GET', prop(P3, path), T.staff1(), 403);
+    }
+    await expectRefused('POST', prop(P2, '/meter-readings'), T.staff1(), 403, {
+      unitId: UNIT_2,
+      readingValue: 10,
+    });
   });
 });
 
@@ -539,6 +652,22 @@ describe('workspace switching and manipulated identifiers', () => {
     }
     await expectRefused('PATCH', prop(P1, `/gate-passes/${GP_2}`), T.staff1(), 404, {
       status: 'approved',
+    });
+  });
+
+  it("another property's rooms and levels answer 404 through an authorized property", async () => {
+    for (const tok of [T.owner1(), T.manager1()]) {
+      await expectRefused('PATCH', prop(P1, `/structure/nodes/${UNIT_2}`), tok, 404, { name: 'X' });
+      await expectRefused('DELETE', prop(P1, `/structure/nodes/${UNIT_2}`), tok, 404);
+      await expectRefused('PATCH', prop(P1, `/structure/levels/${LEVEL_2}`), tok, 404, {
+        displayName: 'X',
+      });
+      await expectRefused('DELETE', prop(P1, `/structure/levels/${LEVEL_2}`), tok, 404);
+      await expectRefused('PATCH', prop(P1, '/structure/nodes/not-a-uuid'), tok, 404, { name: 'X' });
+    }
+    await expectAllowed('PATCH', prop(P1, `/structure/nodes/${UNIT_1}`), T.manager1(), { name: 'Room 1' });
+    await expectAllowed('PATCH', prop(P1, `/structure/levels/${LEVEL_1}`), T.owner1(), {
+      displayName: 'Wing',
     });
   });
 

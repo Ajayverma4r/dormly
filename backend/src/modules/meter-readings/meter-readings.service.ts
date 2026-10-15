@@ -36,7 +36,7 @@ export const READING_CLOSE_WINDOW_DAYS = 1 + DUE_DAYS_AFTER_BILL;
  * cycle draft is generated.
  */
 export function closingDraftSql(hasInvoiceKind: boolean): string {
-  return `SELECT i.id FROM invoices i
+  return `SELECT i.id, i.total_amount::text AS total_amount FROM invoices i
      JOIN tenancies t ON t.id = i.tenancy_id
      WHERE i.tenancy_id = $1
        AND i.property_id = $2
@@ -48,6 +48,63 @@ export function closingDraftSql(hasInvoiceKind: boolean): string {
      ORDER BY i.period_start DESC
      LIMIT 1
      FOR UPDATE OF i`;
+}
+
+/** Largest value NUMERIC(14,3) can store. */
+export const MAX_METER_READING = 99_999_999_999.999;
+
+/** Largest value NUMERIC(12,2) can store: reading amount, line item and invoice total. */
+export const MAX_MONEY_AMOUNT = 9_999_999_999.99;
+
+/** Largest value NUMERIC(12,4) (meter_readings.rate_per_unit) can store. */
+export const MAX_RATE_PER_UNIT = 99_999_999.9999;
+
+export type MeterReadingErrorCode =
+  | 'invalid_reading'
+  | 'reading_below_previous'
+  | 'invalid_rate'
+  | 'amount_out_of_range';
+
+/** A reading the server refuses; mapped to 400 with a stable code. */
+export class MeterReadingValidationError extends Error {
+  constructor(
+    readonly code: MeterReadingErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'MeterReadingValidationError';
+  }
+}
+
+export function assertValidReadingValue(value: number): void {
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_METER_READING) {
+    throw new MeterReadingValidationError(
+      'invalid_reading',
+      'Reading must be a positive number.',
+    );
+  }
+}
+
+function amountOutOfRange(): MeterReadingValidationError {
+  return new MeterReadingValidationError(
+    'amount_out_of_range',
+    'This reading would bill more than the allowed maximum. Check the reading and the rate.',
+  );
+}
+
+/** Reading fields staff need to record and check readings; no rate, amount or invoice links. */
+export const STAFF_METER_READING_FIELDS = [
+  'id', 'property_id', 'unit_id', 'unit_name', 'tenancy_id',
+  'meter_reading_value', 'previous_reading', 'units_consumed',
+  'meter_image_url', 'billing_cycle', 'submitted_by', 'submitted_by_name', 'created_at',
+] as const;
+
+export function meterReadingForStaff(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of STAFF_METER_READING_FIELDS) {
+    if (key in row) out[key] = row[key];
+  }
+  return out;
 }
 
 export class MeterReadingsService {
@@ -88,27 +145,12 @@ export class MeterReadingsService {
     ratePerUnit?: number;
     notifyOwners?: boolean;
   }) {
+    assertValidReadingValue(input.readingValue);
     await ensureLiveOpsSchema();
     await ensureBillingSchema();
     await assertMeterTarget(input.propertyId, input.unitId, input.tenancyId);
 
     const cycle = input.billingCycle?.trim() || defaultBillingCycle();
-    const prevRows = await query<{ meter_reading_value: string }>(
-      `SELECT meter_reading_value FROM meter_readings
-       WHERE unit_id = $1
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [input.unitId],
-    );
-    const previous = prevRows[0]
-      ? Number(prevRows[0].meter_reading_value)
-      : null;
-
-    if (previous != null && input.readingValue < previous) {
-      throw new Error(
-        `Reading (${input.readingValue}) cannot be less than previous (${previous}).`,
-      );
-    }
 
     let rate = input.ratePerUnit;
     if (rate == null) {
@@ -118,10 +160,10 @@ export class MeterReadingsService {
       ) as any;
       rate = electricity ? Number(electricity.default_amount) || 8 : 8;
     }
-
-    const units =
-      previous == null ? 0 : Number((input.readingValue - previous).toFixed(3));
-    const amount = Number((units * rate).toFixed(2));
+    if (!Number.isFinite(rate) || Math.abs(rate) > MAX_RATE_PER_UNIT) {
+      throw new MeterReadingValidationError('invalid_rate', 'Rate per unit is out of range.');
+    }
+    const ratePerUnit = rate;
 
     let tenancyId = input.tenancyId ?? null;
     if (!tenancyId) {
@@ -138,7 +180,6 @@ export class MeterReadingsService {
     const electricity = chargeTypes.find((c: any) =>
       String(c.name).toLowerCase().includes('electric'),
     ) as any;
-    const lineDesc = `Electricity (${cycle}): ${units} units @ ₹${rate}`;
 
     const caps = await billingSchemaCaps();
     const [property] = await query<{ timezone: string | null }>(
@@ -152,20 +193,49 @@ export class MeterReadingsService {
       readingDate = calendarDateInTimeZone(new Date(), DEFAULT_PROPERTY_TIME_ZONE);
     }
 
-    const { row, invoiceId } = await withTransaction(async (q) => {
+    const { row, invoiceId, amount } = await withTransaction(async (q) => {
       let invoiceId: string | null = null;
       let lineItemId: string | null = null;
+
+      // Serialise readings per unit: the previous value is read under the
+      // unit's row lock, so two concurrent submits cannot both pass the check.
+      // NO KEY UPDATE still conflicts with itself and with node deletes, but not
+      // with the KEY SHARE locks taken by inserts that reference this node.
+      await q(`SELECT id FROM hierarchy_nodes WHERE id = $1 FOR NO KEY UPDATE`, [input.unitId]);
+      const prevRows = await q<{ meter_reading_value: string }>(
+        `SELECT meter_reading_value FROM meter_readings
+         WHERE unit_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [input.unitId],
+      );
+      const previous = prevRows[0] ? Number(prevRows[0].meter_reading_value) : null;
+      if (previous != null && input.readingValue < previous) {
+        throw new MeterReadingValidationError(
+          'reading_below_previous',
+          `Reading cannot be less than the previous reading (${previous}).`,
+        );
+      }
+
+      const units =
+        previous == null ? 0 : Number((input.readingValue - previous).toFixed(3));
+      const amount = Number((units * ratePerUnit).toFixed(2));
+      if (!Number.isFinite(amount) || Math.abs(amount) > MAX_MONEY_AMOUNT) {
+        throw amountOutOfRange();
+      }
+      const lineDesc = `Electricity (${cycle}): ${units} units @ ₹${ratePerUnit}`;
 
       if (tenancyId && amount > 0) {
         // Only an unsent draft may absorb the reading; a sent invoice is an
         // issued bill. The row lock re-checks sent_at if a send races this.
-        const [draft] = await q<{ id: string }>(closingDraftSql(caps.invoiceKind), [
-          tenancyId,
-          input.propertyId,
-          input.unitId,
-          readingDate,
-          READING_CLOSE_WINDOW_DAYS,
-        ]);
+        const [draft] = await q<{ id: string; total_amount: string }>(
+          closingDraftSql(caps.invoiceKind),
+          [tenancyId, input.propertyId, input.unitId, readingDate, READING_CLOSE_WINDOW_DAYS],
+        );
+
+        if (draft && Number((Number(draft.total_amount) + amount).toFixed(2)) > MAX_MONEY_AMOUNT) {
+          throw amountOutOfRange();
+        }
 
         if (draft) {
           invoiceId = draft.id;
@@ -201,7 +271,7 @@ export class MeterReadingsService {
           input.readingValue,
           previous,
           units,
-          rate,
+          ratePerUnit,
           amount,
           input.meterImageUrl ?? null,
           cycle,
@@ -210,7 +280,7 @@ export class MeterReadingsService {
           lineItemId,
         ],
       );
-      return { row, invoiceId };
+      return { row, invoiceId, amount };
     });
 
     const unitRows = await query<{ name: string }>(

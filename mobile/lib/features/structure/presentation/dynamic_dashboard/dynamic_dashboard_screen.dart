@@ -10,11 +10,12 @@ import '../../data/structure_repository.dart';
 import '../../../analytics/data/analytics_repository.dart';
 import '../../../auth/data/auth_repository.dart';
 import '../../../auth/presentation/role_gate.dart';
-import '../../../complaints/presentation/complaints_list_screen.dart';
+import '../../../staff_home/presentation/staff_shell_screen.dart';
 import '../property_shell_screen.dart';
 
 final hierarchyLevelsProvider =
-    FutureProvider.family<List<HierarchyLevel>, String>((ref, propertyId) async {
+    FutureProvider.family<List<HierarchyLevel>, String>(
+        (ref, propertyId) async {
   final repo = ref.watch(structureRepositoryProvider);
   final levels = await repo.listLevels(propertyId);
   return levels.where((l) => l.isEnabled).toList()
@@ -38,7 +39,7 @@ final contextRoleProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getContextRole(),
 );
 
-/// Entry for `/property/:id` — staff → complaints; owner/admin/manager → new
+/// Entry for `/property/:id` — staff → staff shell; owner/admin/manager → new
 /// 5-tab shell; tenants and unknown roles → restricted.
 class DynamicDashboardScreen extends ConsumerWidget {
   final String propertyId;
@@ -61,7 +62,11 @@ class DynamicDashboardScreen extends ConsumerWidget {
           Scaffold(body: Center(child: Text('Something went wrong: $err'))),
       data: (role) {
         if (role == 'staff') {
-          return ComplaintsListScreen(propertyId: propertyId, isRoot: true);
+          return StaffShellScreen(
+            key: ValueKey('staff-shell-$propertyId'),
+            propertyId: propertyId,
+            propertyName: propertyName,
+          );
         }
         if (!propertyManagerRoles.contains(role)) {
           return RestrictedAccessScreen(role: role);

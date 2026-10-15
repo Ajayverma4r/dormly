@@ -2,11 +2,28 @@
 //
 // Owner/Warden edits mess_menus for a property — same table tenants read.
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/tenant_portal_repository.dart';
 
 const _brand = Color(0xFF6D28D9);
+
+/// User-facing text for a mess-menu request failure; never raw server text.
+String messMenuErrorMessage(Object error, {required String fallback}) {
+  if (error is DioException) {
+    final status = error.response?.statusCode;
+    if (status == 401) return 'Your session has expired. Please sign in again.';
+    if (status == 403) {
+      return "You don't have access to the mess menu for this property.";
+    }
+    if (status == null) {
+      return 'Could not reach the server. Check your connection and try again.';
+    }
+  }
+  return fallback;
+}
+
 const _ink = Color(0xFF0F172A);
 const _muted = Color(0xFF64748B);
 const _bg = Color(0xFFF8FAFC);
@@ -70,6 +87,7 @@ class _OwnerMessMenuScreenState extends ConsumerState<OwnerMessMenuScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     setState(() => _saving = true);
     try {
       await ref.read(tenantPortalRepositoryProvider).upsertMessMenuDay(
@@ -88,7 +106,10 @@ class _OwnerMessMenuScreenState extends ConsumerState<OwnerMessMenuScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save: $e')),
+          SnackBar(
+            content: Text(messMenuErrorMessage(e,
+                fallback: 'Could not save the menu. Please try again.')),
+          ),
         );
       }
     } finally {
@@ -112,7 +133,29 @@ class _OwnerMessMenuScreenState extends ConsumerState<OwnerMessMenuScreen> {
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('$e')),
+        error: (e, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  messMenuErrorMessage(e,
+                      fallback: "Couldn't load the mess menu."),
+                  key: const Key('mess-menu-error'),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () =>
+                      ref.invalidate(ownerMessMenuProvider(widget.propertyId)),
+                  style: FilledButton.styleFrom(backgroundColor: _brand),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
         data: (rows) {
           if (!_hydrated) {
             WidgetsBinding.instance.addPostFrameCallback((_) {

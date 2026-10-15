@@ -5,11 +5,13 @@ import { StructureValidationError } from '@core/structure-engine/services/struct
 import { SubscriptionRequiredError } from '@shared/property-monetization';
 import { FeatureNotAllowedError } from '@modules/tenant-portal/property-type-access';
 import {
+  InvoiceAmountRangeError,
   InvoiceConflictError,
   InvoiceLockedError,
   MoveInDateLockedError,
 } from '@modules/billing/billing.service';
 import { MeterAccessError } from '@modules/meter-readings/meter-access';
+import { MeterReadingValidationError } from '@modules/meter-readings/meter-readings.service';
 
 const INTERNAL_ERROR = 'Internal server error';
 
@@ -135,8 +137,14 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (err instanceof MoveInDateLockedError) {
     return res.status(409).json({ error: err.message, code: err.code });
   }
+  if (err instanceof InvoiceAmountRangeError) {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
   if (err instanceof MeterAccessError) {
     return res.status(404).json({ error: 'Not found' });
+  }
+  if (err instanceof MeterReadingValidationError) {
+    return res.status(400).json({ error: err.message, code: err.code });
   }
   if (err instanceof StructureValidationError) {
     return res.status(409).json({ error: err.message });

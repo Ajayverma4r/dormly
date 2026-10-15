@@ -27,6 +27,8 @@ const db = {
     charge_type_id: string | null;
     meter_linked: boolean;
   }[],
+  /** Unattached meter readings returned by listPendingUtilityCharges. */
+  pending: [] as { id: string; amount: string; billing_cycle: string; units_consumed: string; rate_per_unit: string }[],
   failNotification: false,
 };
 
@@ -54,6 +56,11 @@ function run(sql: string, params: unknown[] = [], tx = false): unknown[] {
   if (tx && /SELECT id, tenancy_id, property_id FROM invoices WHERE id/.test(sql)) {
     return [{ id: INVOICE, tenancy_id: TENANCY, property_id: PROPERTY }];
   }
+  if (tx && /FROM meter_readings mr/.test(sql)) return db.pending;
+  if (tx && /SELECT total_amount::text AS total_amount FROM invoices WHERE id = \$1/.test(sql)) {
+    return db.invoice ? [{ total_amount: db.invoice.total_amount }] : [];
+  }
+  if (tx && /INSERT INTO invoice_line_items[\s\S]*RETURNING id/.test(sql)) return [{ id: 'li-new' }];
   return [];
 }
 
@@ -154,6 +161,7 @@ beforeEach(() => {
   db.txEvents = [];
   db.invoice = sentUnpaid();
   db.lines = [RENT_LINE];
+  db.pending = [];
   db.failNotification = false;
 });
 
@@ -700,6 +708,120 @@ describe('attachPendingChargesToDraft', () => {
     db.invoice = null;
     const { service } = await loadService();
     expect(await service.attachPendingChargesToDraft(INVOICE, PROPERTY, TENANCY)).toBeNull();
+  });
+});
+
+describe('pending charges and the NUMERIC(12,2) invoice total', () => {
+  const reading = (id: string, amount: string) => ({
+    id,
+    amount,
+    billing_cycle: '2026-09',
+    units_consumed: '1',
+    rate_per_unit: amount,
+  });
+  const draftWithTotal = (total_amount: string) => ({ ...sentUnpaid(), sent_at: null, total_amount });
+  const attachWrites = () =>
+    txStmts().filter((s) =>
+      /INSERT INTO invoice_line_items|UPDATE meter_readings|UPDATE invoices/.test(s.sql),
+    );
+
+  it('attaches a pending charge that brings the total exactly to 9,999,999,999.99', async () => {
+    db.invoice = draftWithTotal('9999999000.00');
+    db.pending = [reading('mr-1', '999.99')];
+    const { service } = await loadService();
+
+    const result = await service.attachPendingChargesToDraft(INVOICE, PROPERTY, TENANCY);
+
+    expect(result).toEqual({ added: 1, amount: 999.99 });
+    expect(db.txEvents).toEqual(['BEGIN', 'COMMIT']);
+    const total = txStmts().find((s) => /UPDATE invoices\s+SET total_amount = total_amount \+ \$1/.test(s.sql))!;
+    expect(total.params).toEqual([999.99, INVOICE]);
+  });
+
+  it('refuses a total one paisa above the limit and writes nothing', async () => {
+    db.invoice = draftWithTotal('9999999000.00');
+    db.pending = [reading('mr-1', '1000.00')];
+    const { service, mod } = await loadService();
+
+    const err = await service
+      .attachPendingChargesToDraft(INVOICE, PROPERTY, TENANCY)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(mod.InvoiceAmountRangeError);
+    expect((err as any).code).toBe('invoice_total_out_of_range');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(attachWrites()).toEqual([]);
+  });
+
+  it('refuses several pending charges that only overflow together, attaching none of them', async () => {
+    db.invoice = draftWithTotal('9999990000.00');
+    // Each fits on its own; together they are 10,000.01 on top of the draft.
+    db.pending = [reading('mr-1', '4000.00'), reading('mr-2', '3000.00'), reading('mr-3', '3000.01')];
+    const { service } = await loadService();
+
+    const err = await service
+      .attachPendingChargesToDraft(INVOICE, PROPERTY, TENANCY)
+      .catch((e: unknown) => e);
+
+    expect((err as any).code).toBe('invoice_total_out_of_range');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(attachWrites()).toEqual([]);
+  });
+
+  it('several pending charges that land exactly on the limit are all attached', async () => {
+    db.invoice = draftWithTotal('9999990000.00');
+    db.pending = [reading('mr-1', '4000.00'), reading('mr-2', '3000.00'), reading('mr-3', '2999.99')];
+    const { service } = await loadService();
+
+    const result = await service.attachPendingChargesToDraft(INVOICE, PROPERTY, TENANCY);
+
+    expect(result).toEqual({ added: 3, amount: 9999.99 });
+    expect(db.txEvents).toEqual(['BEGIN', 'COMMIT']);
+    expect(txStmts().filter((s) => /UPDATE meter_readings/.test(s.sql))).toHaveLength(3);
+  });
+
+  it('called without a transaction, it opens one so a refusal leaves nothing attached', async () => {
+    db.invoice = draftWithTotal('9999999999.99');
+    db.pending = [reading('mr-1', '0.01')];
+    const { service } = await loadService();
+
+    const err = await service.addPendingChargesToInvoice(TENANCY, INVOICE).catch((e: unknown) => e);
+
+    expect((err as any).code).toBe('invoice_total_out_of_range');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(attachWrites()).toEqual([]);
+  });
+
+  it('the API answers the refusal with a 400 and the stable code', async () => {
+    const { mod } = await loadService();
+    const { errorHandler } = await import('../../shared/middleware/error-handler.js');
+    const res: any = { status: vi.fn(() => res), json: vi.fn(() => res) };
+
+    errorHandler(new mod.InvoiceAmountRangeError(), {} as any, res, () => undefined);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: expect.stringContaining('largest amount supported'),
+      code: 'invoice_total_out_of_range',
+    });
+  });
+
+  it('editing a draft past the limit is refused before the transaction', async () => {
+    db.invoice = draftWithTotal('5000.00');
+    const { service } = await loadService();
+
+    const err = await service
+      .updateInvoice(INVOICE, PROPERTY, {
+        ...sameForm,
+        lineItems: [
+          { description: 'Sep 2026 Rent', amount: 9_999_999_999.99 },
+          { description: 'Maintenance', amount: 0.01 },
+        ],
+      })
+      .catch((e: unknown) => e);
+
+    expect((err as any).code).toBe('invoice_total_out_of_range');
+    expect(db.txEvents).toEqual([]);
   });
 });
 

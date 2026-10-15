@@ -1,12 +1,18 @@
 import 'package:dormly/features/auth/data/auth_repository.dart';
-import 'package:dormly/features/auth/presentation/login_flow.dart' show invalidateWorkspaceRole;
+import 'package:dormly/features/auth/presentation/login_flow.dart'
+    show invalidateWorkspaceRole;
 import 'package:dormly/features/auth/presentation/role_gate.dart';
 import 'package:dormly/features/complaints/presentation/complaint_ui.dart';
 import 'package:dormly/features/complaints/presentation/complaints_list_screen.dart';
+import 'package:dormly/features/staff_home/presentation/staff_shell_screen.dart';
 import 'package:dormly/features/structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart';
+import 'package:dormly/features/structure/presentation/property_shell_screen.dart'
+    show PropertyShellScreen;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/staff_test_support.dart';
 
 const _p1 = '11000000-0000-4000-8000-000000000001';
 
@@ -55,7 +61,8 @@ void main() {
     }
 
     for (final role in ['staff', 'tenant', null, 'superadmin']) {
-      testWidgets('${role ?? 'no role'} is shown the restricted screen', (tester) async {
+      testWidgets('${role ?? 'no role'} is shown the restricted screen',
+          (tester) async {
         await _pump(tester, _structure, _FakeAuthRepo(role));
         expect(find.text('Structure editor'), findsNothing);
         expect(find.byType(RestrictedAccessScreen), findsOneWidget);
@@ -64,15 +71,25 @@ void main() {
   });
 
   group('property dashboard deep link', () {
-    Widget dashboard() => const DynamicDashboardScreen(propertyId: _p1, propertyName: 'Sky');
+    Widget dashboard() =>
+        const DynamicDashboardScreen(propertyId: _p1, propertyName: 'Sky');
 
-    testWidgets('staff land on their complaints, not the management shell', (tester) async {
-      await _pump(tester, dashboard(), _FakeAuthRepo('staff'));
-      expect(find.byType(ComplaintsListScreen), findsOneWidget);
+    testWidgets('staff land on the staff shell, not the management shell',
+        (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: staffOverrides(),
+          child: MaterialApp(home: dashboard()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(StaffShellScreen), findsOneWidget);
+      expect(find.byType(PropertyShellScreen), findsNothing);
       expect(find.byType(RestrictedAccessScreen), findsNothing);
     });
 
-    testWidgets('a tenant workspace never renders the management shell', (tester) async {
+    testWidgets('a tenant workspace never renders the management shell',
+        (tester) async {
       await _pump(tester, dashboard(), _FakeAuthRepo('tenant'));
       expect(find.byType(RestrictedAccessScreen), findsOneWidget);
       expect(find.text('Go to my stay'), findsOneWidget);
@@ -89,7 +106,8 @@ void main() {
   });
 
   group('workspace switching', () {
-    testWidgets('screens re-read the role and user after a switch', (tester) async {
+    testWidgets('screens re-read the role and user after a switch',
+        (tester) async {
       final repo = _FakeAuthRepo('manager', userId: 'manager-user');
       String? viewerRole;
       String? viewerId;
@@ -120,7 +138,8 @@ void main() {
         ..role = 'staff'
         ..userId = 'staff-user';
       await tester.pumpAndSettle();
-      expect(find.text('Structure editor'), findsOneWidget, reason: 'still cached');
+      expect(find.text('Structure editor'), findsOneWidget,
+          reason: 'still cached');
 
       await tester.tap(find.text('switched'));
       await tester.pumpAndSettle();
@@ -132,17 +151,21 @@ void main() {
 
   group('complaint action permissions', () {
     const me = 'u-staff';
-    test('staff act only on complaints assigned to them once assignment exists', () {
+    test('staff act only on complaints assigned to them once assignment exists',
+        () {
       expect(canActOnComplaint('staff', me, {'assigned_to': me}), isTrue);
-      expect(canActOnComplaint('staff', me, {'assigned_to': 'someone-else'}), isFalse);
+      expect(canActOnComplaint('staff', me, {'assigned_to': 'someone-else'}),
+          isFalse);
       expect(canActOnComplaint('staff', me, {'assigned_to': null}), isFalse);
       expect(canActOnComplaint('staff', null, {'assigned_to': me}), isFalse);
       // Before migration 027 the server sends no assignment and keeps staff updates.
       expect(canActOnComplaint('staff', me, {'id': 'c'}), isTrue);
     });
 
-    test('managers act on every complaint; tenants and unknown roles on none', () {
-      expect(canActOnComplaint('manager', 'm', {'assigned_to': 'someone-else'}), isTrue);
+    test('managers act on every complaint; tenants and unknown roles on none',
+        () {
+      expect(canActOnComplaint('manager', 'm', {'assigned_to': 'someone-else'}),
+          isTrue);
       expect(canActOnComplaint('owner', 'o', {'assigned_to': null}), isTrue);
       expect(canActOnComplaint('tenant', 't', {'assigned_to': 't'}), isFalse);
       expect(canActOnComplaint(null, 'x', {}), isFalse);

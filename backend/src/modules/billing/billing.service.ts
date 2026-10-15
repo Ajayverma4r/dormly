@@ -672,6 +672,25 @@ export function roundMoney(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/** Largest value NUMERIC(12,2) holds: invoices.total_amount and line item amounts. */
+export const MAX_INVOICE_AMOUNT = 9_999_999_999.99;
+
+/** An invoice whose total or a line amount the database cannot store. */
+export class InvoiceAmountRangeError extends Error {
+  readonly code = 'invoice_total_out_of_range';
+  constructor() {
+    super(
+      'This invoice would be more than ₹9,999,999,999.99, the largest amount supported. Reduce the charges or bill them on separate invoices.',
+    );
+  }
+}
+
+/** Throws InvoiceAmountRangeError unless every rounded amount fits NUMERIC(12,2). */
+export function assertInvoiceAmountsInRange(amounts: number[]): void {
+  const fits = (n: number) => Number.isFinite(n) && Math.abs(roundMoney(n)) <= MAX_INVOICE_AMOUNT;
+  if (!amounts.every(fits)) throw new InvoiceAmountRangeError();
+}
+
 /** Rejects a payment that would exceed the invoice's outstanding balance. */
 export function assertPaymentWithinBalance(
   amount: number,
@@ -989,7 +1008,15 @@ export class BillingService {
     tx?: TxQuery,
   ): Promise<{ added: number; amount: number }> {
     await ensureBillingSchema();
-    const q: TxQuery = tx ?? query;
+    if (!tx) {
+      // Line items, reading links and the total must commit together.
+      const result = await withTransaction((q) =>
+        this.addPendingChargesToInvoice(tenancyId, invoiceId, q),
+      );
+      if (result.amount > 0) await this.recomputeStatus(invoiceId);
+      return result;
+    }
+    const q: TxQuery = tx;
 
     const [invoice] = await q<{
       id: string;
@@ -1004,6 +1031,20 @@ export class BillingService {
 
     const pending = await this.listPendingUtilityCharges(tenancyId, q);
     if (pending.length === 0) return { added: 0, amount: 0 };
+
+    // Validate the final total before writing anything; the caller holds the
+    // invoice (lock or fresh insert) for the rest of the transaction.
+    const [current] = await q<{ total_amount: string }>(
+      `SELECT total_amount::text AS total_amount FROM invoices WHERE id = $1`,
+      [invoiceId],
+    );
+    const pendingAmounts = pending.map((row) => Number(row.amount)).filter((a) => a > 0);
+    const pendingTotal = roundMoney(pendingAmounts.reduce((sum, a) => sum + a, 0));
+    assertInvoiceAmountsInRange([
+      ...pendingAmounts,
+      pendingTotal,
+      Number(current?.total_amount ?? 0) + pendingTotal,
+    ]);
 
     const chargeTypes = await this.listChargeTypes(invoice.property_id);
     const electricity = chargeTypes.find((c: any) =>
@@ -1051,7 +1092,6 @@ export class BillingService {
          WHERE id = $2`,
         [roundMoney(totalAdded), invoiceId],
       );
-      if (!tx) await this.recomputeStatus(invoiceId);
     }
 
     return { added: pending.length, amount: totalAdded };
@@ -1163,6 +1203,7 @@ export class BillingService {
     const totalAmount = roundMoney(
       positiveItems.reduce((sum, li) => sum + li.amount, 0),
     );
+    assertInvoiceAmountsInRange([...positiveItems.map((li) => li.amount), totalAmount]);
 
     const chargeTypes = await this.listChargeTypes(input.propertyId);
     const typeNameById = new Map(
@@ -1413,6 +1454,7 @@ export class BillingService {
     const totalAmount = roundMoney(
       lineItems.reduce((sum, li) => sum + li.amount, 0),
     );
+    assertInvoiceAmountsInRange([...lineItems.map((li) => li.amount), totalAmount]);
     const periodStart = input.periodStart.slice(0, 10);
     const periodEnd = input.periodEnd.slice(0, 10);
     const dueDate = input.dueDate.slice(0, 10);

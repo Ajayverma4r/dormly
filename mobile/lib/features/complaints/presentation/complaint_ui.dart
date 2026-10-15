@@ -22,7 +22,13 @@ class ComplaintColors {
 }
 
 /// Statuses the backend accepts, in workflow order.
-const complaintStatuses = ['open', 'assigned', 'in_progress', 'resolved', 'closed'];
+const complaintStatuses = [
+  'open',
+  'assigned',
+  'in_progress',
+  'resolved',
+  'closed'
+];
 
 /// Roles the backend lets update a complaint (PATCH is owner/admin/manager/staff).
 const _complaintEditorRoles = {'owner', 'admin', 'manager', 'staff'};
@@ -32,7 +38,8 @@ bool canEditComplaints(String? role) => _complaintEditorRoles.contains(role);
 /// Roles the backend lets assign a complaint (PUT …/assignment).
 const _complaintAssignerRoles = {'owner', 'admin', 'manager'};
 
-bool canAssignComplaints(String? role) => _complaintAssignerRoles.contains(role);
+bool canAssignComplaints(String? role) =>
+    _complaintAssignerRoles.contains(role);
 
 final complaintViewerRoleProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getContextRole(),
@@ -44,11 +51,26 @@ final complaintViewerUserIdProvider = FutureProvider.autoDispose<String?>(
 
 /// Whether this team member may update or comment on [complaint]. Staff are
 /// limited to complaints assigned to them once the server reports assignment.
-bool canActOnComplaint(String? role, String? userId, Map<String, dynamic> complaint) {
+bool canActOnComplaint(
+    String? role, String? userId, Map<String, dynamic> complaint) {
   if (!canEditComplaints(role)) return false;
   if (role != 'staff' || !complaint.containsKey('assigned_to')) return true;
   final assignee = complaint['assigned_to']?.toString();
   return assignee != null && assignee.isNotEmpty && assignee == userId;
+}
+
+/// "Assigned to you" / "Unassigned" / "Assigned to {name}" and whether it is
+/// the viewer's. Null when the server does not report assignment yet.
+(String, bool)? complaintAssignmentLabel(
+    Map<String, dynamic> complaint, String? viewerId) {
+  if (!complaint.containsKey('assigned_to')) return null;
+  final assignee = complaint['assigned_to']?.toString() ?? '';
+  if (assignee.isEmpty) return ('Unassigned', false);
+  if (viewerId != null && viewerId.isNotEmpty && assignee == viewerId) {
+    return ('Assigned to you', true);
+  }
+  final name = complaint['assignee_name']?.toString().trim() ?? '';
+  return (name.isEmpty ? 'Assigned' : 'Assigned to $name', false);
 }
 
 /// Comments and activity for (propertyId, complaintId). Null when the server
@@ -56,7 +78,9 @@ bool canActOnComplaint(String? role, String? userId, Map<String, dynamic> compla
 final complaintCommentsProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>?, (String, String)>((ref, key) async {
   try {
-    return await ref.watch(complaintsRepositoryProvider).listComments(key.$1, key.$2);
+    return await ref
+        .watch(complaintsRepositoryProvider)
+        .listComments(key.$1, key.$2);
   } on DioException catch (e) {
     final status = e.response?.statusCode;
     if (status == 503 || status == 403 || status == 404) return null;
@@ -66,7 +90,8 @@ final complaintCommentsProvider = FutureProvider.autoDispose
 
 final complaintAssigneesProvider =
     FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
-  (ref, propertyId) => ref.watch(complaintsRepositoryProvider).listAssignees(propertyId),
+  (ref, propertyId) =>
+      ref.watch(complaintsRepositoryProvider).listAssignees(propertyId),
 );
 
 String complaintRoleLabel(String? role) {
@@ -170,26 +195,26 @@ class ComplaintStatusStyle {
 ComplaintStatusStyle complaintStatusStyle(String status) {
   switch (status) {
     case 'open':
-      return const ComplaintStatusStyle(
-          'Open', Color(0xFFDC2626), Color(0xFFFEE2E2), Icons.error_outline_rounded);
+      return const ComplaintStatusStyle('Open', Color(0xFFDC2626),
+          Color(0xFFFEE2E2), Icons.error_outline_rounded);
     case 'assigned':
-      return const ComplaintStatusStyle(
-          'Assigned', Color(0xFF2563EB), Color(0xFFDBEAFE), Icons.person_outline_rounded);
+      return const ComplaintStatusStyle('Assigned', Color(0xFF2563EB),
+          Color(0xFFDBEAFE), Icons.person_outline_rounded);
     case 'in_progress':
-      return const ComplaintStatusStyle(
-          'In Progress', Color(0xFFD97706), Color(0xFFFEF3C7), Icons.autorenew_rounded);
+      return const ComplaintStatusStyle('In Progress', Color(0xFFD97706),
+          Color(0xFFFEF3C7), Icons.autorenew_rounded);
     case 'resolved':
-      return const ComplaintStatusStyle(
-          'Resolved', Color(0xFF16A34A), Color(0xFFDCFCE7), Icons.check_circle_outline_rounded);
+      return const ComplaintStatusStyle('Resolved', Color(0xFF16A34A),
+          Color(0xFFDCFCE7), Icons.check_circle_outline_rounded);
     case 'closed':
-      return const ComplaintStatusStyle(
-          'Closed', Color(0xFF6B7280), Color(0xFFF1F5F9), Icons.lock_outline_rounded);
+      return const ComplaintStatusStyle('Closed', Color(0xFF6B7280),
+          Color(0xFFF1F5F9), Icons.lock_outline_rounded);
     default:
       final label = status.isEmpty
           ? 'Unknown'
           : '${status[0].toUpperCase()}${status.substring(1).replaceAll('_', ' ')}';
-      return ComplaintStatusStyle(
-          label, const Color(0xFF6B7280), const Color(0xFFF1F5F9), Icons.help_outline_rounded);
+      return ComplaintStatusStyle(label, const Color(0xFF6B7280),
+          const Color(0xFFF1F5F9), Icons.help_outline_rounded);
   }
 }
 
@@ -277,7 +302,8 @@ class ComplaintStatusBadge extends StatelessWidget {
   final String status;
   final bool withIcon;
 
-  const ComplaintStatusBadge({super.key, required this.status, this.withIcon = false});
+  const ComplaintStatusBadge(
+      {super.key, required this.status, this.withIcon = false});
 
   @override
   Widget build(BuildContext context) {
@@ -313,7 +339,8 @@ class ComplaintCategoryIcon extends StatelessWidget {
   final String category;
   final double size;
 
-  const ComplaintCategoryIcon({super.key, required this.category, this.size = 40});
+  const ComplaintCategoryIcon(
+      {super.key, required this.category, this.size = 40});
 
   @override
   Widget build(BuildContext context) {

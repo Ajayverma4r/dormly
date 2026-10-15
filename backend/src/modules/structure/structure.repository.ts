@@ -151,10 +151,24 @@ export class PgHierarchyLevelRepository implements HierarchyLevelRepository {
 }
 
 export class PgHierarchyNodeRepository implements HierarchyNodeRepository {
-  async findByLevel(levelId: string, parentNodeId?: string | null): Promise<HierarchyNode[]> {
-    const rows = parentNodeId
-      ? await query(`SELECT * FROM hierarchy_nodes WHERE level_id = $1 AND parent_node_id = $2`, [levelId, parentNodeId])
-      : await query(`SELECT * FROM hierarchy_nodes WHERE level_id = $1 AND parent_node_id IS NULL`, [levelId]);
+  async findByLevel(
+    levelId: string,
+    parentNodeId?: string | null,
+    propertyId?: string,
+  ): Promise<HierarchyNode[]> {
+    const params: unknown[] = [levelId];
+    let sql = `SELECT * FROM hierarchy_nodes WHERE level_id = $1`;
+    if (parentNodeId) {
+      params.push(parentNodeId);
+      sql += ` AND parent_node_id = $${params.length}`;
+    } else {
+      sql += ` AND parent_node_id IS NULL`;
+    }
+    if (propertyId) {
+      params.push(propertyId);
+      sql += ` AND property_id = $${params.length}`;
+    }
+    const rows = await query(sql, params);
     return rows.map(mapNode);
   }
 

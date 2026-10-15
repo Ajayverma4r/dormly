@@ -1,7 +1,23 @@
 // modules/structure/structure.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import { StructureService } from '@core/structure-engine/services/structure.service';
+import type { HierarchyNode } from '@core/structure-engine/entities/hierarchy-node.entity';
+import type { AuthedRequest } from '@shared/middleware/auth-guard';
 import { assertApartmentNodeQuota } from './apartment-quota';
+
+/** Node metadata staff may see: layout only, never pricing. */
+export const STAFF_NODE_METADATA_KEYS = ['bed_capacity', 'bedCapacity', 'space_type'] as const;
+
+/** A node without rent, deposit or other pricing kept in metadata. */
+export function nodeForStaff(node: HierarchyNode): Record<string, unknown> {
+  const { monthlyRent: _rent, securityDeposit: _deposit, metadata, ...rest } = node;
+  const meta = (metadata ?? {}) as Record<string, unknown>;
+  const safeMeta: Record<string, unknown> = {};
+  for (const key of STAFF_NODE_METADATA_KEYS) {
+    if (key in meta) safeMeta[key] = meta[key];
+  }
+  return { ...rest, metadata: safeMeta };
+}
 
 export class StructureController {
   constructor(private readonly service: StructureService) {}
@@ -54,13 +70,16 @@ export class StructureController {
     } catch (err) { next(err); }
   };
 
-  listNodes = async (req: Request, res: Response, next: NextFunction) => {
+  listNodes = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const nodes = await this.service.listNodes(
+        req.params.propertyId,
         req.query.levelId as string,
         (req.query.parentNodeId as string) ?? null,
       );
-      res.json({ data: nodes });
+      res.json({
+        data: req.ctxRole === 'staff' ? nodes.map(nodeForStaff) : nodes,
+      });
     } catch (err) { next(err); }
   };
 

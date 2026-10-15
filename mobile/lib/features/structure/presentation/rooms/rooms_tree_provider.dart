@@ -14,8 +14,10 @@ class RoomsTreeNode {
   final List<RoomsTreeNode> children;
   final bool occupied;
   final bool isAssignable;
+
   /// Active tenant on this assignable leaf (room/flat/bed), when applicable.
   final String? tenantDisplayName;
+
   /// Bed capacity stats for hostel rooms (survives tree pruning).
   final int totalBeds;
   final int occupiedBeds;
@@ -36,8 +38,7 @@ class RoomsTreeNode {
 
   bool get isLeaf => children.isEmpty;
 
-  bool get hasBedChildren =>
-      totalBeds > 0 || _bedChildren(children).isNotEmpty;
+  bool get hasBedChildren => totalBeds > 0 || _bedChildren(children).isNotEmpty;
 }
 
 class RoomsTree {
@@ -114,7 +115,8 @@ String? _tenancyTenantName(Map<String, dynamic> tenancy) {
   return null;
 }
 
-bool _isBedLevel(HierarchyLevel level) {
+/// Whether [level] holds beds (hostel dorms), as opposed to rooms or flats.
+bool isBedLevel(HierarchyLevel level) {
   final key = level.internalKey.toLowerCase();
   if (key == 'bed' || key.startsWith('bed_')) return true;
   return level.supportsOccupancy &&
@@ -123,7 +125,7 @@ bool _isBedLevel(HierarchyLevel level) {
 
 /// Bed leaf nodes under a room (hostel dorms).
 List<RoomsTreeNode> _bedChildren(List<RoomsTreeNode> children) {
-  return children.where((c) => _isBedLevel(c.level)).toList();
+  return children.where((c) => isBedLevel(c.level)).toList();
 }
 
 int _metadataBedCapacity(Map<String, dynamic> node) {
@@ -231,8 +233,8 @@ RoomsTreeNode _buildTreeNode({
   );
 }
 
-final roomsTreeProvider =
-    FutureProvider.autoDispose.family<RoomsTree, String>((ref, propertyId) async {
+final roomsTreeProvider = FutureProvider.autoDispose
+    .family<RoomsTree, String>((ref, propertyId) async {
   final structureRepo = ref.watch(structureRepositoryProvider);
   final tenancyRepo = ref.watch(tenancyRepositoryProvider);
 

@@ -12,6 +12,7 @@ type InvoiceRow = {
   invoice_kind: 'cycle' | 'adhoc';
   period_start: string;
   period_end: string;
+  total_amount?: string;
 };
 
 const db = {
@@ -68,7 +69,7 @@ function run(sql: string, params: unknown[] = [], tx = false): unknown[] {
       )
       .sort((a, b) => b.period_start.localeCompare(a.period_start))
       .slice(0, 1)
-      .map((i) => ({ id: i.id }));
+      .map((i) => ({ id: i.id, total_amount: i.total_amount ?? '0.00' }));
   }
   if (tx && /INSERT INTO invoice_line_items/.test(sql)) return [{ id: 'li-1' }];
   if (tx && /INSERT INTO meter_readings/.test(sql)) {
@@ -275,6 +276,91 @@ describe('meter reading submit', () => {
     expect(check.params).toEqual([UNIT, PROPERTY, TENANCY]);
     expect(db.txEvents).toEqual([]);
     expect(db.log.some((s) => /INSERT INTO|UPDATE /.test(s.sql))).toBe(false);
+  });
+
+  it('reads the previous value inside the transaction, after locking the unit', async () => {
+    const service = await load();
+    await service.submit(input);
+
+    const lockAt = db.log.findIndex((s) =>
+      /FROM hierarchy_nodes WHERE id = \$1 FOR NO KEY UPDATE/.test(s.sql),
+    );
+    const prevAt = db.log.findIndex((s) => /SELECT meter_reading_value FROM meter_readings/.test(s.sql));
+    expect(lockAt).toBeGreaterThan(-1);
+    // A plain FOR UPDATE would also block inserts that reference the unit.
+    expect(db.log.some((s) => /hierarchy_nodes[\s\S]*FOR UPDATE/.test(s.sql))).toBe(false);
+    expect(db.log[lockAt].tx).toBe(true);
+    expect(db.log[lockAt].params).toEqual([UNIT]);
+    expect(db.log[prevAt].tx).toBe(true);
+    expect(prevAt).toBeGreaterThan(lockAt);
+  });
+
+  it('refuses a reading below the previous one with a coded error and writes nothing', async () => {
+    db.invoices = [anniversaryDraft()];
+    const service = await load();
+    const { MeterReadingValidationError } = await import('./meter-readings.service.js');
+
+    const err = await service.submit({ ...input, readingValue: 99 }).catch((e) => e);
+    expect(err).toBeInstanceOf(MeterReadingValidationError);
+    expect(err.code).toBe('reading_below_previous');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(db.log.some((s) => /INSERT INTO|UPDATE invoices/.test(s.sql))).toBe(false);
+  });
+
+  it('refuses non-finite or non-positive values before touching the database', async () => {
+    const service = await load();
+    for (const readingValue of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const err = await service.submit({ ...input, readingValue }).catch((e) => e);
+      expect(err.code).toBe('invalid_reading');
+    }
+    expect(db.txEvents).toEqual([]);
+  });
+
+  it('bills a delta that exactly fills NUMERIC(12,2)', async () => {
+    const service = await load();
+    // Previous reading is 100.
+    await service.submit({ ...input, ratePerUnit: 1, readingValue: 10_000_000_099.99 });
+    expect(readingInsert().params[7]).toBe(9_999_999_999.99);
+    expect(db.txEvents).toEqual(['BEGIN', 'COMMIT']);
+  });
+
+  it('refuses a delta whose amount would overflow the money columns, writing nothing', async () => {
+    db.invoices = [anniversaryDraft()];
+    const service = await load();
+
+    const err = await service
+      .submit({ ...input, ratePerUnit: 1, readingValue: 10_000_000_100 })
+      .catch((e) => e);
+    expect(err.code).toBe('amount_out_of_range');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(db.log.some((s) => /INSERT INTO|UPDATE invoices/.test(s.sql))).toBe(false);
+  });
+
+  it('refuses an amount that would push the draft total past NUMERIC(12,2)', async () => {
+    db.invoices = [anniversaryDraft({ total_amount: '9999999800.00' })];
+    const service = await load();
+
+    // 50 units x 8 = 400 on top of the draft.
+    const err = await service.submit(input).catch((e) => e);
+    expect(err.code).toBe('amount_out_of_range');
+    expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+    expect(db.log.some((s) => /INSERT INTO|UPDATE invoices/.test(s.sql))).toBe(false);
+  });
+
+  it('still attaches when the draft total stays within range', async () => {
+    db.invoices = [anniversaryDraft({ total_amount: '9999999599.99' })];
+    const service = await load();
+    await service.submit(input);
+    expect(attachedTo()).toEqual([INVOICE, 'li-1']);
+  });
+
+  it('refuses a rate that NUMERIC(12,4) cannot hold before opening a transaction', async () => {
+    const service = await load();
+    for (const ratePerUnit of [100_000_000, Number.POSITIVE_INFINITY]) {
+      const err = await service.submit({ ...input, ratePerUnit }).catch((e) => e);
+      expect(err.code).toBe('invalid_rate');
+    }
+    expect(db.txEvents).toEqual([]);
   });
 
   it('never deletes readings, line items or invoices', async () => {

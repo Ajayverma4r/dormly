@@ -523,6 +523,96 @@ describe('createInvoice (manual / ad hoc)', () => {
     const dup = db.log.find((s) => /SELECT id, sent_at FROM invoices/.test(s.sql))!;
     expect(dup.sql).toMatch(/invoice_kind = 'cycle'/);
   });
+
+  describe('NUMERIC(12,2) total with rent and pending meter charges', () => {
+    const rentInput = (rent: number, extra: { description: string; amount: number }[] = []) => ({
+      ...adhocInput,
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      invoiceKind: 'cycle' as const,
+      lineItems: [{ description: 'Sep 2026 Rent', amount: rent }, ...extra],
+      includePendingCharges: true,
+    });
+
+    /** Inserted invoice total is the rent; pending readings come from meter_readings. */
+    function pendingDb(pendingAmounts: string[]) {
+      let insertedTotal = '0';
+      db.handle = (sql, params, tx) => {
+        if (!tx && /SELECT id FROM tenancies WHERE id = \$1 AND property_id = \$2/.test(sql)) {
+          return [{ id: TENANCY }];
+        }
+        if (tx && /INSERT INTO invoices/.test(sql)) {
+          insertedTotal = String(params[5]);
+          return [{ id: INVOICE }];
+        }
+        if (tx && /SELECT id, tenancy_id, property_id FROM invoices/.test(sql)) {
+          return [{ id: INVOICE, tenancy_id: TENANCY, property_id: PROPERTY }];
+        }
+        if (tx && /FROM meter_readings mr/.test(sql)) {
+          return pendingAmounts.map((amount, i) => ({
+            id: `mr-${i}`,
+            amount,
+            billing_cycle: '2026-09',
+            units_consumed: '1',
+            rate_per_unit: amount,
+          }));
+        }
+        if (tx && /SELECT total_amount::text AS total_amount FROM invoices/.test(sql)) {
+          return [{ total_amount: insertedTotal }];
+        }
+        if (tx && /INSERT INTO invoice_line_items[\s\S]*RETURNING id/.test(sql)) return [{ id: 'li-m' }];
+        if (tx && /SELECT i\.total_amount::text/.test(sql)) {
+          return [{
+            total_amount: '1',
+            line_count: '2',
+            user_id: TENANT_USER,
+            period_start: '2026-09-01',
+            period_end: '2026-09-30',
+            due_date: '2026-10-06',
+          }];
+        }
+        return [];
+      };
+    }
+    const meterWrites = () =>
+      txStmts().filter((s) => /UPDATE meter_readings|UPDATE invoices|INSERT INTO notifications/.test(s.sql));
+
+    it('rent plus pending charges exactly at the limit is created', async () => {
+      pendingDb(['0.99', '1.00']);
+      const { service } = await loadService();
+
+      await service.createInvoice(rentInput(9_999_999_998.00));
+
+      expect(db.txEvents).toEqual(['BEGIN', 'COMMIT']);
+      const total = txStmts().find((s) => /UPDATE invoices\s+SET total_amount = total_amount \+ \$1/.test(s.sql))!;
+      expect(total.params).toEqual([1.99, INVOICE]);
+    });
+
+    it('rent plus pending charges one paisa above the limit leaves no invoice, line or link', async () => {
+      pendingDb(['1.00', '1.00']);
+      const { service, mod } = await loadService();
+
+      const err = await service.createInvoice(rentInput(9_999_999_998.00)).catch((e) => e);
+
+      expect(err).toBeInstanceOf(mod.InvoiceAmountRangeError);
+      expect(err.code).toBe('invoice_total_out_of_range');
+      expect(db.txEvents).toEqual(['BEGIN', 'ROLLBACK']);
+      expect(meterWrites()).toEqual([]);
+    });
+
+    it('line items over the limit are refused before the transaction', async () => {
+      pendingDb([]);
+      const { service } = await loadService();
+
+      const err = await service
+        .createInvoice(rentInput(9_999_999_999.99, [{ description: 'Maintenance', amount: 0.01 }]))
+        .catch((e) => e);
+
+      expect(err.code).toBe('invoice_total_out_of_range');
+      expect(db.txEvents).toEqual([]);
+      expect(db.log.some((s) => /INSERT INTO/.test(s.sql))).toBe(false);
+    });
+  });
 });
 
 describe('ensureBillingSchema', () => {

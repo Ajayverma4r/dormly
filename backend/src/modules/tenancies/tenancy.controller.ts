@@ -138,19 +138,25 @@ const updateSchema = z
     kycStatus: data.kycStatus ?? data.kyc_status,
   }));
 
-/** Contact, KYC and rent/dues fields staff do not need for day-to-day operations. */
-export const STAFF_HIDDEN_TENANCY_FIELDS = [
-  'phone', 'emergency_contact_phone',
-  'aadhaar_number', 'id_type', 'agreement_pdf_url',
-  'monthly_rent', 'security_deposit',
-  'has_due', 'earliest_open_due_date', 'has_overdue', 'has_draft', 'has_sent_invoice',
+/**
+ * The only tenancy fields staff receive: who lives where and since when. An
+ * allowlist, so contact details (phone, email, address, emergency contact),
+ * KYC, rent, dues and any column added later stay with owners and managers.
+ */
+export const STAFF_TENANCY_FIELDS = [
+  'id', 'property_id', 'node_id', 'user_id',
+  'full_name', 'user_name', 'node_name', 'level_name', 'floor_name',
+  'status', 'move_in_at', 'planned_move_out_at', 'move_out_at',
+  'created_at', 'updated_at',
 ] as const;
 
-function forViewer<T extends Record<string, unknown>>(req: AuthedRequest, row: T): T {
+function forViewer(req: AuthedRequest, row: Record<string, unknown>): Record<string, unknown> {
   if (req.ctxRole !== 'staff') return row;
-  const copy: Record<string, unknown> = { ...row };
-  for (const key of STAFF_HIDDEN_TENANCY_FIELDS) delete copy[key];
-  return copy as T;
+  const out: Record<string, unknown> = {};
+  for (const key of STAFF_TENANCY_FIELDS) {
+    if (key in row) out[key] = row[key];
+  }
+  return out;
 }
 
 export class TenancyController {

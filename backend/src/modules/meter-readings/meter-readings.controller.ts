@@ -2,7 +2,11 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
-import { MeterReadingsService } from './meter-readings.service';
+import {
+  MeterReadingsService,
+  assertValidReadingValue,
+  meterReadingForStaff,
+} from './meter-readings.service';
 import { AuthedRequest } from '@shared/middleware/auth-guard';
 import { discardUpload, safeImageExtension, saveUpload } from '@shared/storage/file-storage';
 import { assertFeatureAllowed } from '@modules/tenant-portal/property-type-access';
@@ -28,7 +32,13 @@ export const uploadMeterImageMiddleware = multer({
 
 const submitSchema = z.object({
   unitId: z.string().uuid().optional(),
-  readingValue: z.coerce.number().positive(),
+  // Multipart sends strings; anything unparseable becomes NaN and is refused by
+  // assertValidReadingValue with a stable code.
+  readingValue: z
+    .unknown()
+    .transform((v) =>
+      typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN,
+    ),
   billingCycle: z.string().optional(),
   ratePerUnit: z.coerce.number().positive().optional(),
   tenancyId: z.string().uuid().optional(),
@@ -87,6 +97,17 @@ async function submitAsTenant(
   );
 }
 
+function parseSubmit(req: AuthedRequest) {
+  const body = submitSchema.parse(req.body);
+  assertValidReadingValue(body.readingValue);
+  return body;
+}
+
+/** Staff never see the rate, the billed amount or invoice links. */
+function forViewer(req: AuthedRequest, row: Record<string, unknown>) {
+  return req.ctxRole === 'staff' ? meterReadingForStaff(row) : row;
+}
+
 /** Tenant scope for a property route; MeterAccessError if it is not theirs. */
 async function tenantScopeFor(req: AuthedRequest, propertyId: string) {
   const scope = await resolveTenantMeterScope(req);
@@ -102,7 +123,8 @@ export class MeterReadingsController {
         assertFeatureAllowed(scope, 'meter_reading');
         return res.json({ data: await service.listForTenancy(scope) });
       }
-      res.json({ data: await service.listByProperty(req.params.propertyId) });
+      const rows = await service.listByProperty(req.params.propertyId);
+      res.json({ data: rows.map((row: any) => forViewer(req, row)) });
     } catch (err) {
       next(err);
     }
@@ -110,7 +132,7 @@ export class MeterReadingsController {
 
   submit = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
-      const body = submitSchema.parse(req.body);
+      const body = parseSubmit(req);
       if (isTenantContext(req)) {
         const scope = await tenantScopeFor(req, req.params.propertyId);
         return res.status(201).json({ data: await submitAsTenant(req, scope, body) });
@@ -139,7 +161,7 @@ export class MeterReadingsController {
           notifyOwners: false,
         }),
       );
-      res.status(201).json({ data: row });
+      res.status(201).json({ data: forViewer(req, row) });
     } catch (err) {
       next(err);
     }
@@ -162,13 +184,9 @@ export class MeterReadingsController {
       if (!scope) {
         return res.status(404).json({ error: 'No active tenancy' });
       }
-      const body = submitSchema.parse(req.body);
+      const body = parseSubmit(req);
       res.status(201).json({ data: await submitAsTenant(req, scope, body) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not submit reading';
-      if (message.includes('cannot be less')) {
-        return res.status(400).json({ error: message });
-      }
       next(err);
     }
   };

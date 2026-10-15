@@ -8,6 +8,7 @@ import {
   PgHierarchyNodeRepository,
 } from './structure.repository';
 import { requirePropertyTeam, requireRole } from '@shared/middleware/auth-guard';
+import { scopeParamToProperty } from '@shared/middleware/property-scope';
 
 const service = new StructureService(
   new PgHierarchyLevelRepository(),
@@ -17,6 +18,8 @@ const service = new StructureService(
 const controller = new StructureController(service);
 
 export const structureRouter = Router({ mergeParams: true });
+structureRouter.param('levelId', scopeParamToProperty('hierarchy_levels'));
+structureRouter.param('nodeId', scopeParamToProperty('hierarchy_nodes'));
 
 // ==================== LEVELS ====================
 

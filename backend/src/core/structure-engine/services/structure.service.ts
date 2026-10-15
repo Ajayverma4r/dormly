@@ -112,15 +112,26 @@ export class StructureService {
 
   // ---- Nodes ----
 
-  async listNodes(levelId: string, parentNodeId?: string | null): Promise<HierarchyNode[]> {
-    const rows = await this.nodes.findByLevel(levelId, parentNodeId ?? null);
+  /** Nodes of [propertyId] only; a level or parent from another property yields none. */
+  async listNodes(
+    propertyId: string,
+    levelId: string,
+    parentNodeId?: string | null,
+  ): Promise<HierarchyNode[]> {
+    const rows = await this.nodes.findByLevel(levelId, parentNodeId ?? null, propertyId);
     return rows.sort((a, b) => a.orderIndex - b.orderIndex);
   }
 
   async createNode(input: CreateHierarchyNodeInput): Promise<HierarchyNode> {
     const level = await this.levels.findById(input.levelId);
-    if (!level) {
+    if (!level || level.propertyId !== input.propertyId) {
       throw new StructureValidationError('Level not found.');
+    }
+    if (input.parentNodeId) {
+      const parent = await this.nodes.findById(input.parentNodeId);
+      if (!parent || parent.propertyId !== input.propertyId) {
+        throw new StructureValidationError('Parent node not found.');
+      }
     }
     if (!level.isEnabled) {
       throw new StructureValidationError('Cannot add a node to a disabled level.');

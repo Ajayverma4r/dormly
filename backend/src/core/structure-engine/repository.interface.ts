@@ -26,7 +26,12 @@ export interface HierarchyLevelRepository {
 }
 
 export interface HierarchyNodeRepository {
-  findByLevel(levelId: string, parentNodeId?: string | null): Promise<HierarchyNode[]>;
+  /** With [propertyId], only nodes of that property. */
+  findByLevel(
+    levelId: string,
+    parentNodeId?: string | null,
+    propertyId?: string,
+  ): Promise<HierarchyNode[]>;
   findById(id: string): Promise<HierarchyNode | null>;
   create(input: CreateHierarchyNodeInput & { orderIndex: number }): Promise<HierarchyNode>;
   update(id: string, input: UpdateHierarchyNodeInput): Promise<HierarchyNode>;

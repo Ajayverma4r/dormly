@@ -50,6 +50,7 @@ vi.mock('@modules/billing/billing.service', () => {
     },
     billingSchemaCaps: async () => ({ invoiceKind: true, approvedBy: true }),
     ensureBillingSchema: async () => undefined,
+    InvoiceAmountRangeError: Stub,
     InvoiceConflictError: Stub,
     InvoiceLockedError: Stub,
     MoveInDateLockedError: Stub,
@@ -383,9 +384,156 @@ describe('owner / admin / manager permissions', () => {
     expect((await call('GET', `/v1/properties/${P2}/meter-readings`, TOKENS.manager1())).status).toBe(403);
   });
 
-  it('staff access to the property meter routes is unchanged', async () => {
+  it('staff list the property readings without rate, amount or invoice links', async () => {
     const list = await call('GET', `/v1/properties/${P1}/meter-readings`, TOKENS.staff1());
     expect(list.status).toBe(200);
     expect(list.body.data).toHaveLength(3);
+    for (const row of list.body.data) {
+      expect(row).toHaveProperty('meter_reading_value');
+      expect(row).toHaveProperty('unit_name');
+      for (const field of ['rate_per_unit', 'amount', 'invoice_id', 'invoice_line_item_id']) {
+        expect(row).not.toHaveProperty(field);
+      }
+    }
+    expect((await call('GET', `/v1/properties/${P2}/meter-readings`, TOKENS.staff1())).status).toBe(403);
+  });
+
+  it('staff record a reading at the property rate and get it back without billing fields', async () => {
+    const res = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.staff1(), {
+      unitId: U2,
+      readingValue: 320,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({ unit_id: U2, tenancy_id: TEN.b });
+    expect(Number(res.body.data.previous_reading)).toBe(300);
+    expect(res.body.data).not.toHaveProperty('rate_per_unit');
+    expect(res.body.data).not.toHaveProperty('amount');
+    const [stored] = (
+      await pg.db.query(`SELECT rate_per_unit, amount FROM meter_readings WHERE id = $1`, [res.body.data.id])
+    ).rows;
+    expect(Number(stored.rate_per_unit)).toBe(8);
+    expect(Number(stored.amount)).toBe(160);
+  });
+
+  it('staff cannot record on another property', async () => {
+    const before = await readingCount();
+    const foreignUnit = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.staff1(), {
+      unitId: U3,
+      readingValue: 950,
+    });
+    expect(foreignUnit.status).toBe(404);
+    const foreignProperty = await call('POST', `/v1/properties/${P2}/meter-readings`, TOKENS.staff1(), {
+      unitId: U3,
+      readingValue: 950,
+    });
+    expect(foreignProperty.status).toBe(403);
+    expect(await readingCount()).toBe(before);
+  });
+});
+
+describe('reading validation', () => {
+  const BELOW = {
+    error: 'Reading cannot be less than the previous reading (300).',
+    code: 'reading_below_previous',
+  };
+
+  it('a reading below the previous one is a 400 for every role, and nothing is stored', async () => {
+    for (const tok of [TOKENS.owner1(), TOKENS.manager1(), TOKENS.staff1()]) {
+      const before = await readingCount();
+      const res = await call('POST', `/v1/properties/${P1}/meter-readings`, tok, {
+        unitId: U2,
+        readingValue: 299.5,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual(BELOW);
+      expect(await readingCount()).toBe(before);
+    }
+    const tenant = await call('POST', '/v1/tenant-portal/meter-readings', TOKENS.tenantB(), {
+      readingValue: 10,
+    });
+    expect(tenant.status).toBe(400);
+    expect(tenant.body).toEqual(BELOW);
+  });
+
+  it('a reading equal to the previous one is accepted with zero consumption', async () => {
+    const res = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.staff1(), {
+      unitId: U2,
+      readingValue: 300,
+    });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.data.units_consumed)).toBe(0);
+  });
+
+  it('non-positive, non-numeric and out-of-range values are a 400 on both routes', async () => {
+    const before = await readingCount();
+    for (const readingValue of [0, -1, 'abc', null, 'Infinity', 1e12]) {
+      const team = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.owner1(), {
+        unitId: U1,
+        readingValue,
+      });
+      expect(team.status).toBe(400);
+      expect(team.body.code).toBe('invalid_reading');
+      const tenant = await call('POST', '/v1/tenant-portal/meter-readings', TOKENS.tenantA(), {
+        readingValue,
+      });
+      expect(tenant.status).toBe(400);
+      expect(tenant.body.code).toBe('invalid_reading');
+    }
+    expect(await readingCount()).toBe(before);
+  });
+
+  it('the amount column really overflows past 9,999,999,999.99', async () => {
+    await expect(
+      pg.db.query(
+        `INSERT INTO meter_readings (property_id, unit_id, meter_reading_value, amount,
+                                     billing_cycle, submitted_by)
+         VALUES ($1, $2, 1, 10000000000, '2026-10', $3)`,
+        [P1, U1, USER.owner],
+      ),
+    ).rejects.toThrow(/numeric field overflow/);
+  });
+
+  it('a delta billing exactly the column maximum is stored', async () => {
+    // Previous reading on U1 is 100.
+    const res = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.owner1(), {
+      unitId: U1,
+      readingValue: 10_000_000_099.99,
+      ratePerUnit: 1,
+    });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.data.amount)).toBe(9_999_999_999.99);
+  });
+
+  it('a delta whose amount would overflow is a 400 for staff and the tenant, and nothing is stored', async () => {
+    const before = await readingCount();
+    const OUT_OF_RANGE = {
+      error: 'This reading would bill more than the allowed maximum. Check the reading and the rate.',
+      code: 'amount_out_of_range',
+    };
+    // Previous reading on U2 is 300; 1,250,000,000 units x 8 = 10,000,000,000.
+    const staff = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.staff1(), {
+      unitId: U2,
+      readingValue: 1_250_000_300,
+    });
+    expect(staff.status).toBe(400);
+    expect(staff.body).toEqual(OUT_OF_RANGE);
+    const tenant = await call('POST', '/v1/tenant-portal/meter-readings', TOKENS.tenantB(), {
+      readingValue: 1_250_000_300,
+    });
+    expect(tenant.status).toBe(400);
+    expect(tenant.body).toEqual(OUT_OF_RANGE);
+    expect(await readingCount()).toBe(before);
+  });
+
+  it('a rate the rate column cannot hold is a 400 with invalid_rate', async () => {
+    const before = await readingCount();
+    const res = await call('POST', `/v1/properties/${P1}/meter-readings`, TOKENS.owner1(), {
+      unitId: U1,
+      readingValue: 150,
+      ratePerUnit: 100_000_000,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Rate per unit is out of range.', code: 'invalid_rate' });
+    expect(await readingCount()).toBe(before);
   });
 });
