@@ -159,6 +159,25 @@ export class ComplaintService {
     return rows[0] ? String(rows[0].raised_by) : null;
   }
 
+  /** Assignee of this property's complaint, or null. Requires migration 027. */
+  async assigneeOf(propertyId: string, complaintId: string) {
+    const rows = await query<{ assigned_to: string | null }>(
+      `SELECT assigned_to FROM complaints WHERE id = $1::uuid AND property_id = $2::uuid`,
+      [complaintId, propertyId],
+    );
+    return rows[0]?.assigned_to ? String(rows[0].assigned_to) : null;
+  }
+
+  /** Whether this property's complaint is assigned to the user. Requires migration 027. */
+  async isAssignedTo(propertyId: string, complaintId: string, userId: string) {
+    const rows = await query(
+      `SELECT 1 FROM complaints
+       WHERE id = $1::uuid AND property_id = $2::uuid AND assigned_to = $3::uuid`,
+      [complaintId, propertyId, userId],
+    );
+    return rows.length > 0;
+  }
+
   async listByUser(userId: string) {
     await ensureLiveOpsSchema();
     const caps = await complaintSchemaCaps();

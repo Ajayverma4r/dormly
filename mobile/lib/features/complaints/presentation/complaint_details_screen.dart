@@ -161,13 +161,15 @@ class _ComplaintDetailsScreenState extends ConsumerState<ComplaintDetailsScreen>
     final note = c['resolution_note']?.toString().trim() ?? '';
     final isTeam = canEditComplaints(role);
     final isTenant = role == 'tenant';
+    final userId = ref.watch(complaintViewerUserIdProvider).valueOrNull;
+    final mayAct = canActOnComplaint(role, userId, c);
     final commentsKey = _commentsKey;
-    final canEdit = isTeam && commentsKey != null;
+    final canEdit = mayAct && commentsKey != null;
     final commentsAsync = (isTeam || isTenant) && commentsKey != null
         ? ref.watch(complaintCommentsProvider(commentsKey))
         : null;
     final comments = commentsAsync?.valueOrNull;
-    final canComment = comments != null;
+    final canComment = comments != null && (isTenant || mayAct);
     // The list endpoints only include these keys once assignment is available.
     final showAssignee =
         isTeam ? c.containsKey('assigned_to') : isTenant && c.containsKey('is_assigned');

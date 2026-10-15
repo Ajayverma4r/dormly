@@ -110,6 +110,7 @@ class AuthRepository {
   Future<String?> getAccessToken() => AuthStorage.accessToken();
   Future<String?> getRefreshToken() => AuthStorage.refreshToken();
   Future<String?> getContextRole() => AuthStorage.contextRole();
+  Future<String?> getUserId() => AuthStorage.userId();
   Future<String?> getScopedPropertyId() => AuthStorage.scopedPropertyId();
   Future<String?> getContextType() => AuthStorage.contextType();
   Future<String?> getContextId() async {

@@ -11,4 +11,5 @@ expenseRouter.use(requireRole('owner', 'admin', 'manager'));
 expenseRouter.get('/', controller.list);
 expenseRouter.get('/summary/this-month', controller.totalThisMonth);
 expenseRouter.post('/', controller.create);
-expenseRouter.delete('/:expenseId', controller.remove);
+// A hard delete of a financial record with no audit trail: owners and admins only.
+expenseRouter.delete('/:expenseId', requireRole('owner', 'admin'), controller.remove);

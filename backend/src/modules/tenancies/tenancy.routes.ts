@@ -2,18 +2,20 @@
 import { Router } from 'express';
 import { TenancyController } from './tenancy.controller';
 import { uploadAgreementMiddleware, uploadProfilePhotoMiddleware, uploadTenantDocumentMiddleware } from './tenancy.controller';
-import { requireRole } from '@shared/middleware/auth-guard';
+import { requirePropertyManager, requirePropertyTeam, requireRole } from '@shared/middleware/auth-guard';
 import { scopeParamToProperty } from '@shared/middleware/property-scope';
 const controller = new TenancyController();
 export const tenancyRouter = Router({ mergeParams: true });
 tenancyRouter.param('tenancyId', scopeParamToProperty('tenancies'));
 
-tenancyRouter.get('/', controller.list);
-tenancyRouter.get('/:tenancyId', controller.getById);
-tenancyRouter.get('/:tenancyId/documents', controller.listDocuments);
+// Tenants use /tenant-portal; staff get records without KYC or rent details.
+tenancyRouter.get('/', requirePropertyTeam, controller.list);
+tenancyRouter.get('/:tenancyId', requirePropertyTeam, controller.getById);
+// KYC documents (Aadhaar, PAN, agreements) are for owners, admins and managers only.
+tenancyRouter.get('/:tenancyId/documents', requirePropertyManager, controller.listDocuments);
 tenancyRouter.get(
   '/:tenancyId/documents/:documentId/file',
-  requireRole('owner', 'admin', 'manager', 'staff'),
+  requirePropertyManager,
   controller.documentFile,
 );
 tenancyRouter.post('/', requireRole('owner', 'admin', 'manager'), controller.create);

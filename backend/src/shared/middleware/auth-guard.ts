@@ -117,6 +117,16 @@ export function requireRole(...allowedRoles: string[]) {
   };
 }
 
+// Tenants also pass requirePropertyAccess for their own property, so
+// property routes that are not tenant-aware must use one of these.
+export const PROPERTY_TEAM_ROLES = ['owner', 'admin', 'manager', 'staff'] as const;
+export const PROPERTY_MANAGER_ROLES = ['owner', 'admin', 'manager'] as const;
+
+/** Owner, admin, manager or staff of the property. */
+export const requirePropertyTeam = requireRole(...PROPERTY_TEAM_ROLES);
+/** Owner, admin or manager of the property. */
+export const requirePropertyManager = requireRole(...PROPERTY_MANAGER_ROLES);
+
 /** Organization that owns a property, or null when it does not exist. */
 export type PropertyOrganizationLookup = (propertyId: string) => Promise<string | null>;
 

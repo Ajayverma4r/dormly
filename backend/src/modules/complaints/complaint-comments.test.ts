@@ -413,6 +413,12 @@ describe('assigning complaints', () => {
 
 describe('comments', () => {
   it('team comments default to internal and can be shared with the tenant', async () => {
+    const before = await commentCount();
+    const unassigned = await comment(P1, C.tenantA, TOKENS.staff1(), { body: 'Not mine yet' });
+    expect(unassigned.status).toBe(403);
+    expect(await commentCount()).toBe(before);
+    expect((await assign(P1, C.tenantA, TOKENS.owner1(), USER.staff1)).status).toBe(200);
+
     const internal = await comment(P1, C.tenantA, TOKENS.staff1(), { body: 'Checked wiring - internal' });
     expect(internal.status).toBe(201);
     expect(internal.body.data).toMatchObject({
@@ -454,7 +460,7 @@ describe('comments', () => {
     const res = await comments(P1, C.tenantA, TOKENS.owner1());
     expect(res.status).toBe(200);
     const kinds = res.body.data.map((c: any) => c.kind);
-    expect(kinds.filter((k: string) => k === 'assigned')).toHaveLength(4);
+    expect(kinds.filter((k: string) => k === 'assigned')).toHaveLength(5);
     expect(kinds).toContain('unassigned');
     expect(res.body.data.filter((c: any) => c.kind === 'comment').map((c: any) => c.body)).toEqual([
       'Checked wiring - internal',
@@ -564,13 +570,104 @@ describe('property staff list privacy', () => {
     expect(res.text).not.toContain(NAME.staff1);
   });
 
-  it('owners, admins, managers and staff still can', async () => {
-    for (const tok of [TOKENS.owner1(), TOKENS.admin1(), TOKENS.manager1(), TOKENS.staff1()]) {
+  it('staff cannot list the team or their phone numbers either', async () => {
+    const res = await staffList(P1, TOKENS.staff1());
+    expect(res.status).toBe(403);
+    expect(res.text).not.toContain(PHONE_PREFIX);
+    expect(res.text).not.toContain(NAME.manager1);
+  });
+
+  it('owners, admins and managers still can', async () => {
+    for (const tok of [TOKENS.owner1(), TOKENS.admin1(), TOKENS.manager1()]) {
       const res = await staffList(P1, tok);
       expect(res.status).toBe(200);
       expect(res.body.data.some((r: any) => r.user_id === USER.staff1)).toBe(true);
     }
     expect((await staffList(P1, TOKENS.owner2())).status).toBe(403);
+  });
+});
+
+describe('staff complaint updates', () => {
+  const patch = (complaintId: string, tok: string, body: Record<string, unknown>) =>
+    call('PATCH', `${base(P1)}/${complaintId}`, tok, body);
+  const statusOf = async (id: string) =>
+    (await pg.db.query(`SELECT status FROM complaints WHERE id = $1`, [id])).rows[0].status;
+  const UNASSIGNED = '51000000-0000-4000-8000-0000000000ff';
+
+  beforeAll(async () => {
+    await pg.db.query(
+      `INSERT INTO complaints (id, property_id, node_id, raised_by, category, description)
+       VALUES ($1, $2, $3, $4, 'Plumbing', 'Nobody assigned yet')`,
+      [UNASSIGNED, P1, N1, USER.tenantA],
+    );
+  });
+
+  it('staff update the status of complaints assigned to them', async () => {
+    expect(await assignedTo(C.tenantB)).toBe(USER.staff1);
+    const res = await patch(C.tenantB, TOKENS.staff1(), { status: 'in_progress' });
+    expect(res.status).toBe(200);
+    expect(await statusOf(C.tenantB)).toBe('in_progress');
+  });
+
+  it('staff cannot update or comment on complaints assigned to nobody or someone else', async () => {
+    const before = await commentCount();
+    expect((await patch(UNASSIGNED, TOKENS.staff1(), { status: 'resolved' })).status).toBe(403);
+    expect(
+      (await comment(P1, UNASSIGNED, TOKENS.staff1(), { body: 'Done' })).status,
+    ).toBe(403);
+    expect((await assign(P1, UNASSIGNED, TOKENS.manager1(), USER.removedStaff)).status).toBe(422);
+    expect((await assign(P1, UNASSIGNED, TOKENS.manager1(), USER.manager1)).status).toBe(200);
+    expect((await patch(UNASSIGNED, TOKENS.staff1(), { status: 'resolved' })).status).toBe(403);
+    expect(await statusOf(UNASSIGNED)).toBe('open');
+    expect(await commentCount()).toBe(before);
+  });
+
+  it('staff cannot reassign a complaint to themselves through the update body', async () => {
+    const res = await patch(UNASSIGNED, TOKENS.staff1(), {
+      status: 'in_progress',
+      assigned_to: USER.staff1,
+      assigneeUserId: USER.staff1,
+    });
+    expect(res.status).toBe(403);
+    expect(await assignedTo(UNASSIGNED)).toBe(USER.manager1);
+  });
+
+  it('staff list only complaints assigned to them or to nobody', async () => {
+    const OPEN = '51000000-0000-4000-8000-0000000000fe';
+    await pg.db.query(
+      `INSERT INTO complaints (id, property_id, node_id, raised_by, category, description)
+       VALUES ($1, $2, $3, $4, 'Cleaning', 'Waiting for someone')`,
+      [OPEN, P1, N1, USER.tenantB],
+    );
+    const res = await call('GET', base(P1), TOKENS.staff1());
+    expect(res.status).toBe(200);
+    const byId = new Map(res.body.data.map((c: any) => [c.id, c]));
+    expect(byId.has(UNASSIGNED)).toBe(false); // assigned to the manager
+    expect(byId.get(C.tenantB)).toMatchObject({
+      assigned_to: USER.staff1,
+      raised_by_phone: expect.stringMatching(new RegExp(`^${PHONE_PREFIX}`)),
+    });
+    expect(byId.get(OPEN)).toMatchObject({ assigned_to: null, raised_by_name: NAME.tenantB });
+    expect(byId.get(OPEN)).not.toHaveProperty('raised_by_phone');
+
+    const manager = await call('GET', base(P1), TOKENS.manager1());
+    expect(manager.body.data.map((c: any) => c.id)).toEqual(
+      expect.arrayContaining([UNASSIGNED, C.tenantB, OPEN]),
+    );
+    expect(manager.body.data.every((c: any) => typeof c.raised_by_phone === 'string')).toBe(true);
+  });
+
+  it("staff cannot read the activity of someone else's complaint", async () => {
+    const res = await comments(P1, UNASSIGNED, TOKENS.staff1());
+    expect(res.status).toBe(403);
+    expect((await comments(P1, C.tenantB, TOKENS.staff1())).status).toBe(200);
+    expect((await comments(P1, UNASSIGNED, TOKENS.manager1())).status).toBe(200);
+  });
+
+  it('managers update any complaint of their property, and staff of another property none', async () => {
+    expect((await patch(UNASSIGNED, TOKENS.manager1(), { status: 'in_progress' })).status).toBe(200);
+    expect((await patch(C.tenantB, TOKENS.staffP2(), { status: 'closed' })).status).toBe(403);
+    expect(await statusOf(C.tenantB)).toBe('in_progress');
   });
 });
 

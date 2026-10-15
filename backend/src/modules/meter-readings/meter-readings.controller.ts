@@ -115,6 +115,12 @@ export class MeterReadingsController {
         const scope = await tenantScopeFor(req, req.params.propertyId);
         return res.status(201).json({ data: await submitAsTenant(req, scope, body) });
       }
+      // The rate is billing data: staff record readings at the property's own rate.
+      if (req.ctxRole === 'staff' && body.ratePerUnit != null) {
+        return res
+          .status(403)
+          .json({ error: 'Only owners, admins and managers can set the rate per unit.' });
+      }
       if (!body.unitId) {
         return res.status(400).json({ error: 'unitId is required' });
       }

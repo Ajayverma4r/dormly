@@ -1,14 +1,32 @@
 // features/expenses/presentation/expense_history_screen.dart
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
+import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
+    show contextRoleProvider;
 import '../data/expense_repository.dart';
 import '../domain/expense.dart';
 
 const _accent = AppColors.primary;
+
+/// Roles the backend lets delete an expense (DELETE …/expenses/:id).
+const _expenseDeleterRoles = {'owner', 'admin'};
+
+bool canDeleteExpenses(String? role) => _expenseDeleterRoles.contains(role);
+
+/// User-facing text for a failed delete; never shows server or Dio details.
+String expenseDeleteErrorMessage(Object error) {
+  final status = error is DioException ? error.response?.statusCode : null;
+  if (status == 403) {
+    return 'Only the property owner or an admin can delete expenses.';
+  }
+  if (status == 404) return 'This expense no longer exists.';
+  return 'Could not delete the expense. Please try again.';
+}
 
 final _monthFormat = DateFormat('MMMM yyyy');
 final _dayFormat = DateFormat('d MMM yyyy');
@@ -357,7 +375,7 @@ class _ExpenseDetailSheetState extends ConsumerState<_ExpenseDetailSheet> {
       if (!mounted) return;
       setState(() => _deleting = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not delete expense: $e')),
+        SnackBar(content: Text(expenseDeleteErrorMessage(e))),
       );
     }
   }
@@ -458,18 +476,21 @@ class _ExpenseDetailSheetState extends ConsumerState<_ExpenseDetailSheet> {
             ),
             const SizedBox(height: 8),
             _ReceiptPanel(expense: expense),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: _deleting ? null : _confirmDelete,
-              style: TextButton.styleFrom(foregroundColor: AppColors.danger),
-              child: _deleting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Delete Expense'),
-            ),
+            if (canDeleteExpenses(ref.watch(contextRoleProvider).valueOrNull)) ...[
+              const SizedBox(height: 16),
+              TextButton(
+                key: const Key('expense-delete'),
+                onPressed: _deleting ? null : _confirmDelete,
+                style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                child: _deleting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Delete Expense'),
+              ),
+            ],
           ],
         ),
       ),

@@ -138,13 +138,28 @@ const updateSchema = z
     kycStatus: data.kycStatus ?? data.kyc_status,
   }));
 
+/** Contact, KYC and rent/dues fields staff do not need for day-to-day operations. */
+export const STAFF_HIDDEN_TENANCY_FIELDS = [
+  'phone', 'emergency_contact_phone',
+  'aadhaar_number', 'id_type', 'agreement_pdf_url',
+  'monthly_rent', 'security_deposit',
+  'has_due', 'earliest_open_due_date', 'has_overdue', 'has_draft', 'has_sent_invoice',
+] as const;
+
+function forViewer<T extends Record<string, unknown>>(req: AuthedRequest, row: T): T {
+  if (req.ctxRole !== 'staff') return row;
+  const copy: Record<string, unknown> = { ...row };
+  for (const key of STAFF_HIDDEN_TENANCY_FIELDS) delete copy[key];
+  return copy as T;
+}
+
 export class TenancyController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const data = req.query.nodeId
         ? await service.listByNode(req.params.propertyId, req.query.nodeId as string)
         : await service.listByProperty(req.params.propertyId);
-      res.json({ data });
+      res.json({ data: data.map((row: any) => forViewer(req, row)) });
     } catch (err) { next(err); }
   };
 
@@ -160,7 +175,7 @@ export class TenancyController {
     try {
       const tenancy = await service.getById(req.params.tenancyId);
       if (!tenancy) return res.status(404).json({ error: 'Tenancy not found' });
-      res.json({ data: tenancy });
+      res.json({ data: forViewer(req, tenancy) });
     } catch (err) { next(err); }
   };
 

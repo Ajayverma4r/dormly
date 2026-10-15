@@ -9,6 +9,7 @@ import '../../domain/hierarchy_level.dart';
 import '../../data/structure_repository.dart';
 import '../../../analytics/data/analytics_repository.dart';
 import '../../../auth/data/auth_repository.dart';
+import '../../../auth/presentation/role_gate.dart';
 import '../../../complaints/presentation/complaints_list_screen.dart';
 import '../property_shell_screen.dart';
 
@@ -37,7 +38,8 @@ final contextRoleProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getContextRole(),
 );
 
-/// Entry for `/property/:id` — staff → complaints; everyone else → new 5-tab shell.
+/// Entry for `/property/:id` — staff → complaints; owner/admin/manager → new
+/// 5-tab shell; tenants and unknown roles → restricted.
 class DynamicDashboardScreen extends ConsumerWidget {
   final String propertyId;
   final String propertyName;
@@ -60,6 +62,9 @@ class DynamicDashboardScreen extends ConsumerWidget {
       data: (role) {
         if (role == 'staff') {
           return ComplaintsListScreen(propertyId: propertyId, isRoot: true);
+        }
+        if (!propertyManagerRoles.contains(role)) {
+          return RestrictedAccessScreen(role: role);
         }
         // Force a fresh shell instance so hot-reload cannot keep old tab state.
         return PropertyShellScreen(

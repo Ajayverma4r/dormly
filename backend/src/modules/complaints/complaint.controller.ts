@@ -86,12 +86,37 @@ async function commentAudience(req: AuthedRequest): Promise<CommentAudience | nu
   return raisedBy && raisedBy === req.userId ? 'tenant' : null;
 }
 
+/**
+ * Once assignment exists, staff see complaints assigned to them or to nobody,
+ * and the reporter's phone number only on their own. Before 027 nothing is
+ * assigned, so staff keep the property-wide list.
+ */
+async function forStaffViewer(req: AuthedRequest, rows: any[]) {
+  if (req.ctxRole !== 'staff' || !(await complaintSchemaCaps()).assignment) return rows;
+  return rows
+    .filter((r) => r.assigned_to == null || String(r.assigned_to) === req.userId)
+    .map((r) => {
+      if (String(r.assigned_to) === req.userId) return r;
+      const { raised_by_phone: _phone, ...rest } = r;
+      return rest;
+    });
+}
+
+/** Staff may not open a complaint assigned to someone else (after 027). */
+async function staffHiddenComplaint(req: AuthedRequest) {
+  if (req.ctxRole !== 'staff' || !(await complaintSchemaCaps()).assignment) return false;
+  const assignee = await service.assigneeOf(req.params.propertyId, req.params.complaintId);
+  return assignee != null && assignee !== req.userId;
+}
+
 export class ComplaintController {
   list = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const propertyId = req.params.propertyId;
       if (PROPERTY_TEAM_ROLES.has(req.ctxRole ?? '')) {
-        return res.json({ data: await service.listByProperty(propertyId) });
+        return res.json({
+          data: await forStaffViewer(req, await service.listByProperty(propertyId)),
+        });
       }
       const placement = await verifiedTenantPlacement(req);
       if (!placement || placement.propertyId !== propertyId) {
@@ -143,6 +168,16 @@ export class ComplaintController {
   updateStatus = async (req: AuthedRequest, res: Response, next: NextFunction) => {
     try {
       const body = updateSchema.parse(req.body);
+      // Before migration 027 there is no assignment, so staff keep property-wide updates.
+      if (
+        req.ctxRole === 'staff' &&
+        (await complaintSchemaCaps()).assignment &&
+        !(await service.isAssignedTo(req.params.propertyId, req.params.complaintId, req.userId!))
+      ) {
+        return res
+          .status(403)
+          .json({ error: 'Staff can only update complaints assigned to them.' });
+      }
       const complaint = await service.updateStatus(
         req.params.propertyId,
         req.params.complaintId,
@@ -212,7 +247,9 @@ export class ComplaintController {
     try {
       if (!(await complaintSchemaCaps()).comments) return res.status(503).json(NOT_AVAILABLE);
       const audience = await commentAudience(req);
-      if (!audience) return res.status(403).json(NO_COMPLAINT_ACCESS);
+      if (!audience || (await staffHiddenComplaint(req))) {
+        return res.status(403).json(NO_COMPLAINT_ACCESS);
+      }
       res.json({
         data: await service.listComments(req.params.propertyId, req.params.complaintId, audience),
       });
@@ -228,6 +265,14 @@ export class ComplaintController {
       if (!audience) return res.status(403).json(NO_COMPLAINT_ACCESS);
       const body = commentSchema.parse(req.body);
       const { propertyId, complaintId } = req.params;
+      if (
+        req.ctxRole === 'staff' &&
+        !(await service.isAssignedTo(propertyId, complaintId, req.userId!))
+      ) {
+        return res
+          .status(403)
+          .json({ error: 'Staff can only comment on complaints assigned to them.' });
+      }
       // Tenant comments are always visible to the tenant; team notes stay internal unless shared.
       const visibility =
         audience === 'tenant' ? 'tenant_visible' : (body.visibility ?? 'internal');

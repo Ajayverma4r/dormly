@@ -17,6 +17,10 @@ import '../domain/user_profile.dart';
 import '../domain/workspace_resolver.dart';
 import '../../staff/data/staff_repository.dart';
 import '../../properties/data/properties_repository.dart';
+import '../../complaints/presentation/complaint_ui.dart'
+    show complaintViewerRoleProvider, complaintViewerUserIdProvider;
+import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
+    show contextRoleProvider;
 
 /// Signed-in routing for a fresh login and for a cold start. Workspaces and
 /// tenancies always come from the server; a failure here surfaces to the
@@ -196,6 +200,14 @@ Future<void> continueAfterProfileComplete(
   if (context.mounted) context.go('/onboarding/welcome');
 }
 
+/// Drops cached role and user lookups so screens re-read the newly selected
+/// workspace instead of showing actions for the previous one.
+void invalidateWorkspaceRole(WidgetRef ref) {
+  ref.invalidate(contextRoleProvider);
+  ref.invalidate(complaintViewerRoleProvider);
+  ref.invalidate(complaintViewerUserIdProvider);
+}
+
 Future<void> routeAfterContextSelection(
   BuildContext context,
   WidgetRef ref,
@@ -203,6 +215,7 @@ Future<void> routeAfterContextSelection(
   UserProfile? otpProfile,
 }) async {
   final role = selectedContext['role'];
+  invalidateWorkspaceRole(ref);
 
   if (role == 'tenant') {
     if (context.mounted) context.go('/tenant/dashboard');

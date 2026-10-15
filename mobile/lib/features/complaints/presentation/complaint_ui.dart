@@ -38,6 +38,19 @@ final complaintViewerRoleProvider = FutureProvider.autoDispose<String?>(
   (ref) => ref.watch(authRepositoryProvider).getContextRole(),
 );
 
+final complaintViewerUserIdProvider = FutureProvider.autoDispose<String?>(
+  (ref) => ref.watch(authRepositoryProvider).getUserId(),
+);
+
+/// Whether this team member may update or comment on [complaint]. Staff are
+/// limited to complaints assigned to them once the server reports assignment.
+bool canActOnComplaint(String? role, String? userId, Map<String, dynamic> complaint) {
+  if (!canEditComplaints(role)) return false;
+  if (role != 'staff' || !complaint.containsKey('assigned_to')) return true;
+  final assignee = complaint['assigned_to']?.toString();
+  return assignee != null && assignee.isNotEmpty && assignee == userId;
+}
+
 /// Comments and activity for (propertyId, complaintId). Null when the server
 /// does not offer comments yet (503) or this viewer may not read them.
 final complaintCommentsProvider = FutureProvider.autoDispose

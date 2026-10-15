@@ -22,6 +22,7 @@ import '../../features/properties/presentation/welcome_screen.dart';
 import '../../features/structure/presentation/structure_editor/structure_editor_screen.dart';
 import '../../features/properties/presentation/properties_list_screen.dart';
 import '../../features/auth/presentation/context_picker_screen.dart';
+import '../../features/auth/presentation/role_gate.dart';
 import '../../features/auth/presentation/profile_creation_screen.dart';
 import '../../features/tenant_portal/presentation/tenant_dashboard_screen.dart';
 import '../../features/auth/presentation/tenancy_unavailable_screen.dart';
@@ -73,8 +74,11 @@ final appRouter = GoRouter(
 
     GoRoute(
       path: '/dashboard/:propertyId/structure',
-      builder: (context, state) => StructureEditorScreen(
-        propertyId: state.pathParameters['propertyId']!,
+      builder: (context, state) => RoleGate(
+        allowed: propertyManagerRoles,
+        child: StructureEditorScreen(
+          propertyId: state.pathParameters['propertyId']!,
+        ),
       ),
     ),
 

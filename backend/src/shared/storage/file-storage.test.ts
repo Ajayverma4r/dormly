@@ -253,8 +253,8 @@ describe('document file endpoint', () => {
   const fileUrl = (property: string, tenancy: string, doc: string) =>
     `${baseUrl}/v1/properties/${property}/tenancies/${tenancy}/documents/${doc}/file`;
 
-  it('streams the card to owner, admin, manager and staff without caching', async () => {
-    for (const role of ['owner', 'admin', 'manager', 'staff']) {
+  it('streams the card to owner, admin and manager without caching', async () => {
+    for (const role of ['owner', 'admin', 'manager']) {
       const res = await fetch(fileUrl(PROPERTY_A, TENANCY_A, DOC_A), { headers: { 'x-role': role } });
       expect(res.status).toBe(200);
       expect(res.headers.get('cache-control')).toBe('private, no-store');
@@ -262,9 +262,12 @@ describe('document file endpoint', () => {
     }
   });
 
-  it('refuses tenant contexts', async () => {
-    const res = await fetch(fileUrl(PROPERTY_A, TENANCY_A, DOC_A), { headers: { 'x-role': 'tenant' } });
-    expect(res.status).toBe(403);
+  it('refuses staff and tenant contexts', async () => {
+    for (const role of ['staff', 'tenant']) {
+      const res = await fetch(fileUrl(PROPERTY_A, TENANCY_A, DOC_A), { headers: { 'x-role': role } });
+      expect(res.status).toBe(403);
+      expect(await res.text()).not.toContain('aadhaar-a');
+    }
   });
 
   it("does not reach another tenancy's or property's document", async () => {

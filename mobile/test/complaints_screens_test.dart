@@ -125,6 +125,7 @@ Future<ProviderContainer> _pump(
   List<String>? tenancyRequests,
   FutureOr<List<Map<String, dynamic>>?> Function()? comments,
   List<Map<String, dynamic>> assignees = const [],
+  String? userId = '31000000-0000-4000-8000-0000000000aa',
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 2.6;
@@ -133,6 +134,7 @@ Future<ProviderContainer> _pump(
     overrides: [
       complaintsProvider.overrideWith((ref, id) async => (load ?? () => _complaints)()),
       complaintViewerRoleProvider.overrideWith((ref) async => role),
+      complaintViewerUserIdProvider.overrideWith((ref) async => userId),
       propertyDetailProvider.overrideWith((ref, id) async {
         propertyRequests?.add(id);
         return (property ?? (id) => _properties[id] ?? {'id': id})(id);
@@ -652,6 +654,36 @@ void main() {
       await tester.pumpAndSettle();
       expect(assigneeText(tester), 'Sam Staff · Staff');
       expect(find.byKey(const Key('complaint-assign-change')), findsNothing);
+    });
+
+    testWidgets('staff edit and comment only on complaints assigned to them', (tester) async {
+      await _pump(tester, _details(assigned()), role: 'staff', userId: staffId,
+          comments: () => const []);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('complaint-edit')), findsOneWidget);
+      expect(find.text('Add Comment'), findsOneWidget);
+    });
+
+    for (final (label, complaint) in [
+      ('someone else', {..._c('c', 'AC not working', '12'), 'assigned_to': managerId}),
+      ('nobody', {..._c('c', 'AC not working', '12'), 'assigned_to': null}),
+    ]) {
+      testWidgets('staff cannot edit or comment on a complaint assigned to $label',
+          (tester) async {
+        await _pump(tester, _details(complaint), role: 'staff', userId: staffId,
+            comments: () => const []);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('complaint-edit')), findsNothing);
+        expect(find.text('Add Comment'), findsNothing);
+      });
+    }
+
+    testWidgets('managers still edit complaints assigned to someone else', (tester) async {
+      await _pump(tester, _details(assigned()), role: 'manager', userId: managerId,
+          comments: () => const []);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('complaint-edit')), findsOneWidget);
+      expect(find.text('Add Comment'), findsOneWidget);
     });
 
     testWidgets('unassigned complaints offer Assign', (tester) async {

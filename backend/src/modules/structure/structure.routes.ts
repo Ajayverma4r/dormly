@@ -7,7 +7,7 @@ import {
   PgHierarchyLevelRepository,
   PgHierarchyNodeRepository,
 } from './structure.repository';
-import { requireRole } from '@shared/middleware/auth-guard';
+import { requirePropertyTeam, requireRole } from '@shared/middleware/auth-guard';
 
 const service = new StructureService(
   new PgHierarchyLevelRepository(),
@@ -20,7 +20,8 @@ export const structureRouter = Router({ mergeParams: true });
 
 // ==================== LEVELS ====================
 
-structureRouter.get('/levels', controller.listLevels);
+// Tenants never read the property layout through these routes.
+structureRouter.get('/levels', requirePropertyTeam, controller.listLevels);
 
 structureRouter.post(
   '/levels',
@@ -48,7 +49,7 @@ structureRouter.delete(
 
 // ==================== NODES ====================
 
-structureRouter.get('/nodes', controller.listNodes);
+structureRouter.get('/nodes', requirePropertyTeam, controller.listNodes);
 
 structureRouter.post(
   '/nodes',
