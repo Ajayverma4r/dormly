@@ -13,6 +13,7 @@ import { notificationsRouter } from '@modules/notifications/notifications.routes
 import { invitationsRouter } from '@modules/staff/invitations.routes';
 import { subscriptionRouter, webhookRouter, plansRouter } from '@modules/subscriptions/subscription.routes';
 import { hostelBillingCronHandler } from '@shared/jobs/hostel-billing.job';
+import { searchRouter } from '@modules/search/search.routes';
 
 /**
  * Builds the Express app only. Schema checks and background jobs are started
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/v1/organizations/:organizationId/analytics', orgAnalyticsRouter);
   app.use('/v1/subscriptions',                           subscriptionRouter);
   app.use('/v1/plans',                                   plansRouter);
+  app.use('/v1/search',                                  searchRouter);
   // Razorpay webhooks — no JWT auth, signature verified inside the handler
   app.use('/v1/webhooks',                                webhookRouter);
 

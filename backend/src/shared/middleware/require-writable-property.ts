@@ -26,8 +26,13 @@ export async function requireWritableProperty(
   }
 
   try {
-    let organizationId =
-      req.ctxType === 'organization' && req.ctxId ? req.ctxId : null;
+    // Only owner/admin contexts carry the organization id; manager/staff
+    // contexts carry the property id in ctxId.
+    const orgContext =
+      req.ctxType === 'organization' &&
+      !req.ctxPropertyId &&
+      (req.ctxRole === 'owner' || req.ctxRole === 'admin');
+    let organizationId = orgContext && req.ctxId ? req.ctxId : null;
 
     if (!organizationId) {
       const rows = await query<{ organization_id: string }>(

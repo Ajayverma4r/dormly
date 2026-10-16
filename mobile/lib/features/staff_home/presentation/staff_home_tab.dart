@@ -14,6 +14,8 @@ import '../../complaints/presentation/complaints_list_screen.dart';
 import '../../home/presentation/profile_screen.dart' show myProfileProvider;
 import '../../notifications/presentation/notifications_providers.dart';
 import '../../properties/domain/property_archetype.dart';
+import '../../search/presentation/global_search_screen.dart'
+    show openGlobalSearch;
 import '../../structure/presentation/property_shell_screen.dart'
     show propertyDetailProvider;
 import '../../structure/presentation/rooms/rooms_tree_provider.dart';
@@ -300,6 +302,16 @@ class _Header extends ConsumerWidget {
               ),
             ),
             const Spacer(),
+            IconButton(
+              key: const Key('staff-search'),
+              tooltip: 'Search',
+              onPressed: () => openGlobalSearch(
+                context,
+                propertyId: propertyId,
+                canManage: false,
+              ),
+              icon: const Icon(Icons.search_rounded, color: StaffColors.ink),
+            ),
             IconButton(
               key: const Key('staff-notifications'),
               tooltip: 'Notifications',

@@ -20,6 +20,8 @@ import '../../complaints/presentation/complaint_details_screen.dart';
 import '../../complaints/presentation/raise_complaint_screen.dart';
 import '../../notifications/presentation/notifications_providers.dart';
 import '../../properties/domain/property_archetype.dart';
+import '../../search/presentation/global_search_screen.dart'
+    show openGlobalSearch;
 import '../data/tenant_portal_repository.dart';
 import '../domain/tenant_home_summary.dart';
 import '../domain/tenant_session.dart';
@@ -229,6 +231,18 @@ class _TopBar extends StatelessWidget {
           ),
         ),
         const Spacer(),
+        IconButton(
+          key: const Key('tenant-search'),
+          tooltip: 'Search',
+          onPressed: session.propertyId.isEmpty
+              ? null
+              : () => openGlobalSearch(
+                    context,
+                    propertyId: session.propertyId,
+                    canManage: false,
+                  ),
+          icon: const Icon(Icons.search_rounded, color: _ink),
+        ),
         const _NotificationBell(),
         const SizedBox(width: 4),
         InkWell(
