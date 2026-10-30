@@ -7,6 +7,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../structure/domain/node_names.dart';
 import 'property_archetype.dart';
 
 enum OrgStructurePreset {
@@ -87,6 +88,54 @@ extension RentalSpaceTypeX on RentalSpaceType {
         return 'shop';
     }
   }
+}
+
+/// Names that would repeat under one parent once the wizard seeds [spaces]
+/// (spaces with a floor label go under that floor; floors and unparented
+/// spaces share the top level). The server refuses such duplicates.
+List<String> duplicateRentalSpaceNames(List<SetupRentalSpace> spaces) {
+  final groups = <String, List<String>>{};
+  final floors = <String, String>{};
+  for (final s in spaces) {
+    final floor = normalizeNodeName(s.floorLabel ?? '');
+    final String group;
+    if (floor.isNotEmpty) {
+      group = 'floor:${nodeNameKey(floor)}';
+      floors.putIfAbsent(nodeNameKey(floor), () => floor);
+    } else if (s.parentId != null) {
+      group = 'parent:${s.parentId}';
+    } else {
+      group = 'root';
+    }
+    groups.putIfAbsent(group, () => []).add(s.name);
+  }
+  groups.putIfAbsent('root', () => []).addAll(floors.values);
+  return [
+    for (final names in groups.values) ...findNodeNameClashes(const [], names),
+  ];
+}
+
+/// Building and room names that would repeat under one parent when the
+/// wizard seeds this buildings → floors → rooms layout.
+List<String> duplicateStructureNames(PropertySetupState setup) {
+  final clashes = <String>[];
+  if ((setup.structurePreset ?? OrgStructurePreset.multipleBuildings) ==
+      OrgStructurePreset.multipleBuildings) {
+    clashes.addAll(
+      findNodeNameClashes(const [], setup.buildings.map((b) => b.name)),
+    );
+  }
+  for (final b in setup.buildings) {
+    for (var f = 0; f < b.floorCount; f++) {
+      final plan = setup.floorPlans['${b.id}:$f'];
+      if (plan == null || plan.roomCount < 1) continue;
+      clashes.addAll(findNodeNameClashes(const [], [
+        for (var r = 0; r < plan.roomCount; r++)
+          plan.roomNameAt(r, setup.roomNaming),
+      ]));
+    }
+  }
+  return clashes;
 }
 
 /// A rentable (or structural) space planned during rental onboarding.

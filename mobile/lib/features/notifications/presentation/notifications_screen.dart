@@ -401,20 +401,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                         Text('Something went wrong: $_error'),
-                        const SizedBox(height: 12),
+                    const SizedBox(height: 12),
                         FilledButton(
                           onPressed: _loadFresh,
                           child: const Text('Retry'),
                         ),
-                      ],
-                    ),
-                  ),
+                  ],
+                ),
+              ),
                 )
               : RefreshIndicator(
                   onRefresh: _loadFresh,
@@ -436,11 +436,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         )
                       : ListView.separated(
                           physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(20),
                           itemCount: _items!.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 10),
-                          itemBuilder: (context, i) {
+            itemBuilder: (context, i) {
                             final n = _items![i];
                             final unread = !NotificationsRepository.isRead(n);
                             final routable = _isRoutable(n);
@@ -457,14 +457,14 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                 onTap: () => _onTap(context, n),
                                 borderRadius: BorderRadius.circular(14),
                                 child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Row(
+                padding: const EdgeInsets.all(14),
+                child: Row(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
                                       Stack(
                                         clipBehavior: Clip.none,
-                                        children: [
+                  children: [
                                           Icon(icon,
                                               color: _iconColorFor(n)),
                                           if (unread)
@@ -482,12 +482,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                             ),
                                         ],
                                       ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
-                                          children: [
+                        children: [
                                             Text(
                                               n['title']?.toString() ?? '',
                                               style: theme
@@ -529,16 +529,16 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                           child: Icon(
                                             Icons.chevron_right_rounded,
                                             color: AppColors.slate,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
+                      ),
+                    ),
+                  ],
+                ),
                                 ),
                               ),
-                            );
-                          },
+          );
+        },
                         ),
-                ),
+      ),
     );
   }
 }

@@ -12,6 +12,7 @@ import '../../structure/data/structure_repository.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
     show contextRoleProvider;
+import '../../structure/presentation/rename_node_dialog.dart';
 import '../../structure/presentation/rooms/room_grid.dart';
 import '../../structure/presentation/rooms/rooms_tree_provider.dart';
 import 'add_tenant_screen.dart' show openAddTenantFlow;
@@ -108,34 +109,15 @@ class RoomBedsScreen extends ConsumerWidget {
 
   Future<void> _renameBed(
       BuildContext context, WidgetRef ref, RoomsTreeNode bed) async {
-    final controller = TextEditingController(text: bed.name);
-    final name = await showDialog<String>(
+    final name = await renameNodeWithDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename'),
-        content: TextField(controller: controller, autofocus: true),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-              child: const Text('Save')),
-        ],
-      ),
+      ref: ref,
+      propertyId: propertyId,
+      nodeId: bed.id,
+      currentName: bed.name,
+      kind: bed.level.displayName,
     );
-    if (name == null || name.isEmpty || name == bed.name) return;
-    try {
-      await ref
-          .read(structureRepositoryProvider)
-          .renameNode(propertyId, bed.id, name);
-      ref.invalidate(roomsTreeProvider(propertyId));
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not rename: $e')));
-      }
-    }
+    if (name != null) ref.invalidate(roomsTreeProvider(propertyId));
   }
 
   Future<void> _deleteBed(

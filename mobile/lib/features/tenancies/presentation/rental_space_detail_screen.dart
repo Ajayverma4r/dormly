@@ -6,12 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/network/network_error.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../billing/data/billing_repository.dart';
 import '../../structure/data/structure_repository.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
+import '../../structure/presentation/rename_node_dialog.dart'
+    show maxNodeNameLength, normalizeNodeName;
 import '../data/tenancy_repository.dart';
 import '../domain/assignable_unit.dart';
 import 'add_tenant_screen.dart';
@@ -386,6 +389,7 @@ class _SpaceDetailBody extends ConsumerWidget {
               const SizedBox(height: 16),
               TextField(
                 controller: nameCtrl,
+                maxLength: maxNodeNameLength,
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
                   labelText: 'Space name',
@@ -439,13 +443,20 @@ class _SpaceDetailBody extends ConsumerWidget {
     );
 
     if (saved != true) return;
-    final name = nameCtrl.text.trim();
-    if (name.isEmpty) return;
+    final name = normalizeNodeName(nameCtrl.text);
+    if (name.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Name cannot be empty.')),
+        );
+      }
+      return;
+    }
     try {
       await ref.read(structureRepositoryProvider).updateNode(
             propertyId,
             data.space.nodeId,
-            name: name,
+            name: name == data.space.nodeName ? null : name,
             monthlyRent: double.tryParse(rentCtrl.text.trim()),
             securityDeposit: double.tryParse(depositCtrl.text.trim()),
           );
@@ -461,7 +472,7 @@ class _SpaceDetailBody extends ConsumerWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not update: $e')),
+          SnackBar(content: Text('Could not update: ${networkErrorMessage(e)}')),
         );
       }
     }

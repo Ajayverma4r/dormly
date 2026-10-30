@@ -37,4 +37,14 @@ export interface HierarchyNodeRepository {
   update(id: string, input: UpdateHierarchyNodeInput): Promise<HierarchyNode>;
   delete(id: string): Promise<void>;
   countChildren(nodeId: string): Promise<number>;
+  /**
+   * An active node of [propertyId] directly under [parentNodeId] (top level
+   * when null) whose display label equals [labelKey] (see nodeLabelKey).
+   */
+  findSiblingByLabel(
+    propertyId: string,
+    parentNodeId: string | null,
+    labelKey: string,
+    excludeNodeId?: string,
+  ): Promise<{ id: string; name: string; levelName: string | null } | null>;
 }

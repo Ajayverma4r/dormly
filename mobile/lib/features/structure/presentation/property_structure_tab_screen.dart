@@ -17,6 +17,7 @@ import 'rooms/room_grid.dart';
 import 'rooms/rooms_structure_config.dart';
 import 'rooms/rooms_tree_provider.dart';
 import 'hostel_pg_rooms_body.dart';
+import 'rename_node_dialog.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
 
@@ -192,45 +193,16 @@ class _PropertyStructureTabScreenState
   }
 
   Future<void> _renameContainer(RoomsTreeNode node) async {
-    final controller = TextEditingController(text: node.name);
-    final newName = await showDialog<String>(
+    final newName = await renameNodeWithDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Rename ${node.level.displayName}'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: '${node.level.displayName} name',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      ref: ref,
+      propertyId: widget.propertyId,
+      nodeId: node.id,
+      currentName: node.name,
+      kind: node.level.displayName,
     );
-    if (newName == null || newName.isEmpty || newName == node.name) return;
-
-    try {
-      await ref.read(structureRepositoryProvider).renameNode(
-            widget.propertyId,
-            node.id,
-            newName,
-          );
+    if (newName != null && mounted) {
       ref.invalidate(roomsTreeProvider(widget.propertyId));
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not rename: $e')),
-        );
-      }
     }
   }
 
@@ -353,8 +325,8 @@ class _PropertyStructureTabScreenState
       backgroundColor: Colors.white,
       body: SafeArea(
         child: treeAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (err, _) => Center(child: Text('Something went wrong: $err')),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (err, _) => Center(child: Text('Something went wrong: $err')),
           data: (tree) {
             final hasUnits = tree.assignableUnitCount > 0;
 

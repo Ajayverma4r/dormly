@@ -10,6 +10,7 @@ import '../../../subscription/presentation/subscription_provider.dart';
 import '../../../subscription/presentation/paywall_screen.dart';
 import '../../data/structure_repository.dart';
 import '../../domain/hierarchy_level.dart';
+import '../../domain/node_names.dart';
 import '../dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
 import '../property_shell_screen.dart' show propertyDetailProvider;
@@ -221,6 +222,27 @@ class _BulkAddRoomsSheetState extends ConsumerState<BulkAddRoomsSheet> {
     final parentNodeId = _selectedParentId!;
 
     try {
+      final existing = await repo.listNodes(
+        widget.propertyId,
+        config.roomLevel.id,
+        parentNodeId: parentNodeId,
+      );
+      final clashes = findNodeNameClashes(
+        existing.map((n) => n['name']?.toString() ?? ''),
+        [for (var i = 0; i < roomCount; i++) '${startNumber + i}'],
+        levelName: config.roomLevel.displayName,
+      );
+      if (clashes.isNotEmpty) {
+        final shown = clashes.take(5).join(', ');
+        final more = clashes.length > 5 ? ' and ${clashes.length - 5} more' : '';
+        _showSnack(
+          '${config.roomLevel.displayName} $shown$more already '
+          '${clashes.length == 1 ? 'exists' : 'exist'} here. '
+          'Change the starting number or room count.',
+        );
+        return;
+      }
+
       for (var i = 0; i < roomCount; i++) {
         final roomName = '${startNumber + i}';
         final roomNode = await repo.createNode(

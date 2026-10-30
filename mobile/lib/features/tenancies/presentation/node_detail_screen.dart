@@ -10,6 +10,7 @@ import '../../structure/data/structure_repository.dart';
 import '../../structure/domain/hierarchy_level.dart';
 import '../../structure/presentation/dynamic_dashboard/dynamic_dashboard_screen.dart'
     show hierarchyLevelsProvider;
+import '../../structure/presentation/rename_node_dialog.dart';
 import '../data/tenancy_repository.dart';
 import '../domain/assignable_unit.dart';
 import 'add_tenant_screen.dart';
@@ -82,36 +83,15 @@ class NodeDetailScreen extends ConsumerWidget {
   }
 
   Future<void> _renameNode(BuildContext context, WidgetRef ref) async {
-    final controller = TextEditingController(text: nodeName);
-    final newName = await showDialog<String>(
+    final newName = await renameNodeWithDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename'),
-        content: TextField(controller: controller, autofocus: true),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, controller.text.trim()),
-              child: const Text('Save')),
-        ],
-      ),
+      ref: ref,
+      propertyId: propertyId,
+      nodeId: nodeId,
+      currentName: nodeName,
+      kind: levelName,
     );
-    if (newName != null && newName.isNotEmpty && context.mounted) {
-      try {
-        await ref
-            .read(structureRepositoryProvider)
-            .renameNode(propertyId, nodeId, newName);
-        if (context.mounted) Navigator.of(context).pop(true);
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not rename: $e')));
-        }
-      }
-    }
+    if (newName != null && context.mounted) Navigator.of(context).pop(true);
   }
 
   Future<void> _deleteNode(BuildContext context, WidgetRef ref) async {

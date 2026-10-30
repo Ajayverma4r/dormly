@@ -24,6 +24,7 @@ import '../../../subscription/presentation/paywall_screen.dart';
 import '../../../subscription/presentation/widgets/quota_warning_banner.dart';
 import '../../../properties/domain/property_monetization.dart';
 import '../property_shell_screen.dart' show propertyDetailProvider;
+import '../rename_node_dialog.dart';
 final nodeListProvider = FutureProvider.autoDispose
     .family<List<Map<String, dynamic>>, (String propertyId, String levelId, String? parentNodeId)>(
   (ref, args) async {
@@ -125,27 +126,16 @@ class NodeListScreen extends ConsumerWidget {
 
     if (action == 'rename') {
       if (!context.mounted) return;
-      final controller = TextEditingController(text: node['name']);
-      final newName = await showDialog<String>(
+      final newName = await renameNodeWithDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Rename'),
-          content: TextField(controller: controller, autofocus: true),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
-          ],
-        ),
+        ref: ref,
+        propertyId: propertyId,
+        nodeId: node['id'].toString(),
+        currentName: node['name']?.toString() ?? '',
+        kind: level.displayName,
       );
-      if (newName != null && newName.isNotEmpty) {
-        try {
-          await ref.read(structureRepositoryProvider).renameNode(propertyId, node['id'], newName);
-          ref.invalidate(nodeListProvider((propertyId, level.id, parentNodeId)));
-        } catch (e) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not rename: $e')));
-          }
-        }
+      if (newName != null) {
+        ref.invalidate(nodeListProvider((propertyId, level.id, parentNodeId)));
       }
     } else if (action == 'delete') {
       if (!context.mounted) return;

@@ -10,6 +10,7 @@ import '../../tenancies/presentation/assignable_units_provider.dart';
 import '../../tenancies/presentation/create_space_screen.dart';
 import '../../tenancies/presentation/rental_space_detail_screen.dart';
 import '../../../core/theme/theme_mode.dart';
+import 'rooms/room_list_filter.dart';
 
 class _H {
   static Color get bg =>
@@ -38,8 +39,6 @@ class _H {
       themed(const Color(0xFF1E2A40), const Color(0xFFF1F0FB));
 }
 
-enum _SpaceFilter { all, occupied, vacant }
-
 class RentalSpacesTabScreen extends ConsumerStatefulWidget {
   final String propertyId;
   final bool canManage;
@@ -58,7 +57,10 @@ class RentalSpacesTabScreen extends ConsumerStatefulWidget {
 class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
   final _searchController = TextEditingController();
   String _query = '';
-  _SpaceFilter _filter = _SpaceFilter.all;
+
+  void _setFilter(RoomListFilter filter) =>
+      ref.read(roomListFilterProvider(widget.propertyId).notifier).state =
+          filter;
 
   @override
   void dispose() {
@@ -100,15 +102,16 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
 
   List<AssignableUnit> _apply(
     List<AssignableUnit> all,
+    RoomListFilter filter,
   ) {
     final q = _query.trim().toLowerCase();
     return all.where((u) {
-      switch (_filter) {
-        case _SpaceFilter.all:
+      switch (filter) {
+        case RoomListFilter.all:
           break;
-        case _SpaceFilter.occupied:
+        case RoomListFilter.occupied:
           if (!u.occupied) return false;
-        case _SpaceFilter.vacant:
+        case RoomListFilter.vacant:
           if (u.occupied) return false;
       }
       if (q.isEmpty) return true;
@@ -121,6 +124,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
   @override
   Widget build(BuildContext context) {
     final spacesAsync = ref.watch(assignableUnitsProvider(widget.propertyId));
+    final filter = ref.watch(roomListFilterProvider(widget.propertyId));
     final currency = NumberFormat.currency(
       locale: 'en_IN',
       symbol: '₹',
@@ -143,7 +147,7 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
           data: (all) {
             final occupiedCount = all.where((s) => s.occupied).length;
             final vacantCount = all.length - occupiedCount;
-            final spaces = _apply(all);
+            final spaces = _apply(all, filter);
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -255,24 +259,24 @@ class _RentalSpacesTabScreenState extends ConsumerState<RentalSpacesTabScreen> {
                   child: Row(
                     children: [
                       _Chip(
+                        key: const Key('spaces-filter-all'),
                         label: 'All (${all.length})',
-                        selected: _filter == _SpaceFilter.all,
-                        onTap: () =>
-                            setState(() => _filter = _SpaceFilter.all),
+                        selected: filter == RoomListFilter.all,
+                        onTap: () => _setFilter(RoomListFilter.all),
                       ),
                       const SizedBox(width: 8),
                       _Chip(
+                        key: const Key('spaces-filter-occupied'),
                         label: 'Occupied ($occupiedCount)',
-                        selected: _filter == _SpaceFilter.occupied,
-                        onTap: () =>
-                            setState(() => _filter = _SpaceFilter.occupied),
+                        selected: filter == RoomListFilter.occupied,
+                        onTap: () => _setFilter(RoomListFilter.occupied),
                       ),
                       const SizedBox(width: 8),
                       _Chip(
+                        key: const Key('spaces-filter-vacant'),
                         label: 'Vacant ($vacantCount)',
-                        selected: _filter == _SpaceFilter.vacant,
-                        onTap: () =>
-                            setState(() => _filter = _SpaceFilter.vacant),
+                        selected: filter == RoomListFilter.vacant,
+                        onTap: () => _setFilter(RoomListFilter.vacant),
                       ),
                     ],
                   ),
@@ -347,6 +351,7 @@ class _Chip extends StatelessWidget {
   final VoidCallback onTap;
 
   const _Chip({
+    super.key,
     required this.label,
     required this.selected,
     required this.onTap,

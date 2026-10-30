@@ -10,6 +10,7 @@ import '../../tenancies/presentation/add_tenant_screen.dart'
     show openAddTenantFlow;
 import '../../tenancies/presentation/node_detail_screen.dart';
 import 'property_shell_screen.dart' show propertyDetailProvider;
+import 'rename_node_dialog.dart';
 import 'rooms/add_room_bottom_sheet.dart';
 import 'rooms/room_grid.dart';
 import 'rooms/room_list_filter.dart';
@@ -106,6 +107,22 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
       nodeId: unit.id,
     );
     if (mounted) ref.invalidate(roomsTreeProvider(widget.propertyId));
+  }
+
+  Future<void> _renameRoom(RoomsTreeNode room, String noun) async {
+    final name = await renameNodeWithDialog(
+      context: context,
+      ref: ref,
+      propertyId: widget.propertyId,
+      nodeId: room.id,
+      currentName: room.name,
+      kind: noun,
+    );
+    if (name == null || !mounted) return;
+    ref.invalidate(roomsTreeProvider(widget.propertyId));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$noun renamed to "$name".')),
+    );
   }
 
   @override
@@ -260,6 +277,12 @@ class _HostelPgRoomsBodyState extends ConsumerState<HostelPgRoomsBody> {
                                                 !blockRooms[i].isOccupied
                                             ? () =>
                                                 _addTenant(blockRooms[i].room)
+                                            : null,
+                                        onRename: widget.canManage
+                                            ? () => _renameRoom(
+                                                  blockRooms[i].room,
+                                                  noun,
+                                                )
                                             : null,
                                       ),
                                     ],
@@ -454,12 +477,14 @@ class _RoomCard extends StatelessWidget {
   final bool isFlat;
   final VoidCallback onTap;
   final VoidCallback? onAddTenant;
+  final VoidCallback? onRename;
 
   const _RoomCard({
     required this.entry,
     required this.isFlat,
     required this.onTap,
     this.onAddTenant,
+    this.onRename,
   });
 
   @override
@@ -573,6 +598,7 @@ class _RoomCard extends StatelessWidget {
                 color: _H.cardElevated,
                 onSelected: (v) {
                   if (v == 'view') onTap();
+                  if (v == 'rename') onRename?.call();
                 },
                 itemBuilder: (_) => [
                   PopupMenuItem(
@@ -582,6 +608,14 @@ class _RoomCard extends StatelessWidget {
                       style: TextStyle(color: _H.textPrimary),
                     ),
                   ),
+                  if (onRename != null)
+                    PopupMenuItem(
+                      value: 'rename',
+                      child: Text(
+                        'Rename ${noun.toLowerCase()}',
+                        style: TextStyle(color: _H.textPrimary),
+                      ),
+                    ),
                 ],
               ),
             ],

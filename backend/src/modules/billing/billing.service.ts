@@ -1958,7 +1958,7 @@ export class BillingService {
       today = calendarDateInTimeZone(new Date(), DEFAULT_PROPERTY_TIME_ZONE);
     }
 
-    await query(
+      await query(
       `UPDATE invoices i
        SET status = v.new_status::invoice_status,
            updated_at = now()
@@ -2425,7 +2425,7 @@ export class BillingService {
     });
 
     try {
-      await query(
+    await query(
         `INSERT INTO notifications (user_id, property_id, type, title, body, data)
          VALUES ($1,$2,'rent_reminder',$3,$4,$5::jsonb)`,
         [tenancy.user_id, (invoice as any).property_id, title, body, payload],

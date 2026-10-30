@@ -14,6 +14,7 @@ import '../../dashboard/domain/dashboard_financials.dart';
 import '../../dashboard/domain/property_dashboard.dart';
 import '../../dashboard/presentation/property_dashboard_provider.dart';
 import '../../properties/presentation/property_switcher_sheet.dart';
+import '../../tenancies/presentation/assignable_units_provider.dart';
 import '../domain/hierarchy_level.dart';
 import 'dashboard_recent_complaints.dart';
 import 'dynamic_dashboard/dynamic_dashboard_screen.dart'
@@ -82,6 +83,9 @@ class HostelPgDashboardBody extends ConsumerWidget {
   /// When the unit and container are the same level (apartment flats),
   /// count from the Rooms list so Dashboard and Rooms always agree.
   final bool countFromRoomList;
+  /// Rental houses: count from the Spaces tab list so Dashboard and Spaces
+  /// always agree.
+  final bool countFromSpaces;
 
   const HostelPgDashboardBody({
     super.key,
@@ -109,6 +113,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
     this.unitKind = 'Bed',
     this.containerKind = 'Room',
     this.countFromRoomList = false,
+    this.countFromSpaces = false,
   });
 
   @override
@@ -116,15 +121,23 @@ class HostelPgDashboardBody extends ConsumerWidget {
     final dashboardAsync = ref.watch(propertyDashboardProvider(propertyId));
     final levelsAsync = ref.watch(hierarchyLevelsProvider(propertyId));
     final roomLevelId = _roomLevelId(levelsAsync.valueOrNull);
-    final roomCountAsync = countFromRoomList || roomLevelId == null
+    final countFromList = countFromRoomList || countFromSpaces;
+    final roomCountAsync = countFromList || roomLevelId == null
         ? const AsyncValue<int>.data(0)
         : ref.watch(nodeCountProvider((propertyId, roomLevelId)));
-    final RoomListCounts? listCounts = countFromRoomList
-        ? ref.watch(roomsTreeProvider(propertyId)).whenOrNull(
-              data: (tree) =>
-                  countRoomListEntries(collectRoomListEntries(tree)),
+    final RoomListCounts? listCounts = countFromSpaces
+        ? ref.watch(assignableUnitsProvider(propertyId)).whenOrNull(
+              data: (spaces) => RoomListCounts(
+                total: spaces.length,
+                occupied: spaces.where((s) => s.occupied).length,
+              ),
             )
-        : null;
+        : countFromRoomList
+            ? ref.watch(roomsTreeProvider(propertyId)).whenOrNull(
+                  data: (tree) =>
+                      countRoomListEntries(collectRoomListEntries(tree)),
+                )
+            : null;
 
     // Minimal clearance so Room Occupancy can sit above fixed nav without huge empty space.
     final bottomClearance = 48.0 + MediaQuery.paddingOf(context).bottom;
@@ -180,7 +193,7 @@ class HostelPgDashboardBody extends ConsumerWidget {
                       : ((occupiedBeds / totalBeds) * 100)
                           .round()
                           .clamp(0, 100);
-                  final totalRooms = countFromRoomList
+                  final totalRooms = countFromList
                       ? totalBeds
                       : (roomCountAsync.valueOrNull ?? 0);
 

@@ -28,6 +28,7 @@ import '../../search/presentation/global_search_screen.dart';
 import '../../subscription/presentation/widgets/ad_banner_gate.dart';
 import '../../subscription/presentation/widgets/expiry_warning_banner.dart';
 import '../../tenancies/presentation/add_tenant_screen.dart';
+import '../../tenancies/presentation/assignable_units_provider.dart';
 import '../../tenancies/presentation/pending_kyc_sheet.dart';
 import '../../billing/presentation/whatsapp_reminder.dart';
 import '../../tenancies/data/tenancy_repository.dart';
@@ -304,6 +305,7 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
     ref.invalidate(unreadNotificationsCountProvider);
     ref.invalidate(hierarchyLevelsProvider(propertyId));
     ref.invalidate(roomsTreeProvider(propertyId));
+    ref.invalidate(assignableUnitsProvider(propertyId));
 
     await Future.wait<Object>([
       ref.read(propertyDashboardProvider(propertyId).future).catchError((_) =>
@@ -382,13 +384,10 @@ class PropertyDashboardTabScreen extends ConsumerWidget {
         if (overview == null) return;
         _openNetProfitInsights(context, ref, overview);
       },
-      onViewAllRooms: isRentalHouse
-          ? onGoToRoomsTab
-          : () => _openRoomsWithFilter(ref, RoomListFilter.all),
-      onOccupancyStatTap: isRentalHouse
-          ? null
-          : (filter) => _openRoomsWithFilter(ref, filter),
+      onViewAllRooms: () => _openRoomsWithFilter(ref, RoomListFilter.all),
+      onOccupancyStatTap: (filter) => _openRoomsWithFilter(ref, filter),
       countFromRoomList: archetype == PropertyArchetype.gatedCommunity,
+      countFromSpaces: isRentalHouse,
       unitKind: switch (archetype) {
         PropertyArchetype.sharedLiving => 'Bed',
         PropertyArchetype.gatedCommunity => 'Flat',
@@ -443,7 +442,7 @@ class _DashboardHeader extends StatelessWidget {
             ),
             Stack(
               clipBehavior: Clip.none,
-              children: [
+        children: [
                 IconButton(
                   tooltip: 'Notifications',
                   visualDensity: VisualDensity.compact,
@@ -928,12 +927,12 @@ class _OverviewSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
+              return GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
       childAspectRatio: 1.35,
       children: List.generate(
         6,
@@ -955,7 +954,7 @@ class _InsightsSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+                children: [
         Container(
           height: 18,
           width: 140,
@@ -1404,7 +1403,7 @@ class _RentDefaultersSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (defaulters.isEmpty) {
-      return Container(
+                return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -1427,7 +1426,7 @@ class _RentDefaultersSection extends StatelessWidget {
 
     final top = defaulters.take(3).toList();
 
-    return Container(
+              return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -1439,7 +1438,7 @@ class _RentDefaultersSection extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
+                child: Column(
         children: [
           for (var i = 0; i < top.length; i++) ...[
             if (i > 0) const Divider(height: 1, indent: 16, endIndent: 16),
@@ -1461,16 +1460,16 @@ class _RentDefaultersSection extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                  ),
-                  title: Text(
+                      ),
+                      title: Text(
                     top[i].name,
                     style: const TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 15,
                       color: AppColors.ink,
                     ),
-                  ),
-                  subtitle: Text(
+                      ),
+                      subtitle: Text(
                     '${top[i].unitDetails.isNotEmpty ? top[i].unitDetails : top[i].room} · ${_formatCurrency(top[i].amountDue)} due',
                     style:
                         const TextStyle(fontSize: 12, color: AppColors.slate),
@@ -1729,7 +1728,7 @@ class _UpcomingVacanciesCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (noticeCount == 0 && items.isEmpty) {
-      return Container(
+    return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
@@ -1840,8 +1839,8 @@ class _QuickAction extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: onTap,
-          child: Column(
-            children: [
+      child: Column(
+        children: [
               Container(
                 width: 56,
                 height: 56,

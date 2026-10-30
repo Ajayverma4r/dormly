@@ -190,9 +190,9 @@ class _TenantPaymentsTab extends ConsumerWidget {
                 child: Row(
                   children: [
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                           const Text(
                             'Total Due',
                             style: TextStyle(
@@ -281,8 +281,8 @@ class _TenantPaymentsTab extends ConsumerWidget {
                           .toList()
                       : <Map<String, dynamic>>[];
 
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(14),
@@ -377,7 +377,7 @@ class _TenantPaymentsTab extends ConsumerWidget {
                               return Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 4),
-                                child: Row(
+                          child: Row(
                                   children: [
                                     Expanded(
                                       child: Text(
@@ -423,8 +423,8 @@ class _TenantPaymentsTab extends ConsumerWidget {
                         ],
                       ),
                     ),
-                  );
-                }),
+                );
+              }),
             ],
           );
         },
@@ -679,7 +679,7 @@ class _ServiceLinkCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
+      child: Row(
             children: [
               Container(
                 width: 44,

@@ -368,6 +368,12 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
         return;
       }
     }
+    final duplicates = duplicateRentalSpaceNames(setup.rentalSpaces);
+    if (duplicates.isNotEmpty) {
+      setState(() => _error =
+          'Space names must be unique on each floor. Rename: ${duplicates.map((n) => '"$n"').join(', ')}.');
+      return;
+    }
     // Stay in the property wizard — go to Review (never CreateSpaceScreen).
     setState(() {
       _error = null;
@@ -654,13 +660,19 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
     final typeKey = setup.propertyTypeKey ?? _selectedTypeKey;
     if (typeKey == null || setup.propertyName.trim().isEmpty) {
       setState(() => _error = 'Missing property details. Go back to Details.');
-      return;
-    }
+  return;
+}
     if (setup.isRentalHouse) {
       await _createRentalPropertyAndShowSuccess();
       return;
     } else if (setup.buildings.isEmpty || setup.totalRooms < 1) {
       setState(() => _error = 'Add buildings and rooms before creating.');
+      return;
+    }
+    final duplicates = duplicateStructureNames(setup);
+    if (duplicates.isNotEmpty) {
+      setState(() => _error =
+          'Names must be unique within each building and floor. Rename: ${duplicates.map((n) => '"$n"').join(', ')}.');
       return;
     }
 
@@ -1211,7 +1223,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
               ),
               const SizedBox(height: 16),
               ...options.map((opt) {
-                return Padding(
+      return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
                     color: Colors.white,
@@ -1232,9 +1244,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                             Text(opt.$2, style: const TextStyle(fontSize: 28)),
                             const SizedBox(width: 12),
                             Expanded(
-                              child: Column(
+        child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
+          children: [
                                   Text(
                                     opt.$3,
                                     style: const TextStyle(
@@ -1265,9 +1277,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                 );
               }),
               if (spaces.isNotEmpty) ...[
-                const SizedBox(height: 16),
+            const SizedBox(height: 16),
                 const Divider(),
-                const SizedBox(height: 8),
+            const SizedBox(height: 8),
                 const Text(
                   'Your spaces',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
@@ -1288,7 +1300,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                       ),
                       child: Row(
                         children: [
-                          Text(
+            Text(
                             _emojiForType(s.type),
                             style: const TextStyle(fontSize: 20),
                           ),
@@ -1344,11 +1356,11 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                     'Optional — tap a type to add a space, or skip and add later.',
                     style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                   ),
-                ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
-              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+            ],
             ],
           ),
         ),
@@ -1378,10 +1390,10 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
-                  ),
-                ),
-              ],
+              ),
             ),
+          ],
+        ),
           ),
         ),
       ],
@@ -1425,7 +1437,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
+          child: Text(
                         SetupRentalSpace(
                           id: '',
                           name: '',
@@ -1636,8 +1648,8 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                             width: double.infinity,
                             padding:
                                 const EdgeInsets.fromLTRB(16, 16, 16, 14),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
                               border: Border.all(
                                 color: isSelected
                                     ? AppColors.blueprint
@@ -1647,13 +1659,13 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                               color: isSelected
                                   ? AppColors.blueprint.withOpacity(0.03)
                                   : Colors.white,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
+                      children: [
                                     Icon(
                                       opt.icon,
                                       size: 28,
@@ -1819,10 +1831,10 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                         children: [
                           const Text('🏢', style: TextStyle(fontSize: 22)),
                           const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                                 Text(
                                   b.name,
                                   style: const TextStyle(
@@ -1837,9 +1849,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                                     color: Colors.grey.shade600,
                                   ),
                                 ),
-                              ],
-                            ),
+                            ],
                           ),
+                        ),
                           TextButton(
                             onPressed: () => _showBuildingSheet(existing: b),
                             child: const Text('Edit'),
@@ -1852,9 +1864,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                                         OrgStructurePreset.multipleBuildings
                                 ? () => notifier.removeBuilding(b.id)
                                 : null,
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
+                    ),
                     ),
                   );
                 }),
@@ -1930,10 +1942,10 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
-                  TextField(
+                      TextField(
                     controller: nameCtrl,
                     autofocus: true,
-                    decoration: InputDecoration(
+                        decoration: InputDecoration(
                       hintText: isApt ? 'Tower A' : 'Main Building',
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -1958,10 +1970,10 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                       Navigator.of(ctx).pop(true);
                     },
                   ),
-                ],
-              ),
-            );
-          },
+                  ],
+                ),
+              );
+            },
         );
       },
     );
@@ -2072,7 +2084,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                   final widgets = <Widget>[];
                   if (!singleBuilding) {
                     widgets.add(
-                      Padding(
+        Padding(
                         padding: const EdgeInsets.only(top: 12, bottom: 8),
                         child: Text(
                           building.name,
@@ -2362,9 +2374,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
   Widget _buildReviewStep() {
     final setup = ref.watch(propertySetupProvider);
 
-    return Column(
+              return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+                children: [
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
@@ -2378,10 +2390,10 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
+                  Container(
+                    width: double.infinity,
                 padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
+                    decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   color: AppColors.blueprint.withOpacity(0.06),
                   border: Border.all(
@@ -2390,7 +2402,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                      children: [
                     Text(
                       setup.propertyName,
                       style: const TextStyle(
@@ -2518,7 +2530,7 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
                           ).fold(0, (a, b) => a + b)
                         : 0;
                     rows.add(
-                      Padding(
+        Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
                           '${building.name} → ${building.floorLabel(f)} → '
@@ -2564,9 +2576,9 @@ class _PropertyWizardScreenState extends ConsumerState<PropertyWizardScreen> {
     bool loading = false,
   }) {
     return SizedBox(
-      height: 54,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
+            height: 54,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.blueprint,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -2665,9 +2677,9 @@ class _ChoiceCard extends StatelessWidget {
               Text(emoji, style: const TextStyle(fontSize: 28)),
               const SizedBox(width: 14),
               Expanded(
-                child: Column(
+          child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+            children: [
                     Text(
                       title,
                       style: const TextStyle(
@@ -2710,13 +2722,13 @@ class _StatChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
+                decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        children: [
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  children: [
           Text(
             value,
             style: const TextStyle(

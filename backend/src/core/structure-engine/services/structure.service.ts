@@ -25,6 +25,31 @@ export class StructureValidationError extends Error {
   }
 }
 
+export const MAX_NODE_NAME_LENGTH = 80;
+
+/** Trimmed, single-spaced node name, or a validation error for the user. */
+export function normalizeNodeName(raw: unknown): string {
+  if (typeof raw !== 'string') throw new StructureValidationError('Name is required.');
+  const name = raw.replace(/\s+/g, ' ').trim();
+  if (!name) throw new StructureValidationError('Name cannot be empty.');
+  if (name.length > MAX_NODE_NAME_LENGTH) {
+    throw new StructureValidationError(`Name can be at most ${MAX_NODE_NAME_LENGTH} characters.`);
+  }
+  return name;
+}
+
+/**
+ * Lower-cased label a node is shown with: a bare "109" on the Room level reads
+ * "Room 109", while a name that already mentions its level is shown as is.
+ * Two siblings with the same label are duplicates. Mirrored in SQL by
+ * PgHierarchyNodeRepository.findSiblingByLabel.
+ */
+export function nodeLabelKey(name: string, levelName: string | null | undefined): string {
+  const n = name.replace(/\s+/g, ' ').trim().toLowerCase();
+  const l = (levelName ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return !l || n.includes(l) ? n : `${l} ${n}`;
+}
+
 export class StructureService {
   constructor(
     private readonly levels: HierarchyLevelRepository,
@@ -137,18 +162,58 @@ export class StructureService {
       throw new StructureValidationError('Cannot add a node to a disabled level.');
     }
 
+    const name = normalizeNodeName(input.name);
     const siblings = await this.nodes.findByLevel(input.levelId, input.parentNodeId ?? null);
     if (!level.allowMultipleChildren && siblings.length >= 1) {
       throw new StructureValidationError(
         `"${level.displayName}" does not allow multiple entries under the same parent.`,
       );
     }
+    await this.assertNameFree(
+      input.propertyId,
+      input.parentNodeId ?? null,
+      nodeLabelKey(name, level.displayName),
+    );
 
-    return this.nodes.create({ ...input, orderIndex: siblings.length });
+    return this.nodes.create({ ...input, name, orderIndex: siblings.length });
   }
 
   async updateNode(nodeId: string, input: UpdateHierarchyNodeInput): Promise<HierarchyNode> {
-    return this.nodes.update(nodeId, input);
+    if (input.name === undefined) return this.nodes.update(nodeId, input);
+    const name = normalizeNodeName(input.name);
+    const node = await this.nodes.findById(nodeId);
+    if (!node) throw new StructureValidationError('Node not found.');
+    const level = await this.levels.findById(node.levelId);
+    await this.assertNameFree(
+      node.propertyId,
+      node.parentNodeId ?? null,
+      nodeLabelKey(name, level?.displayName),
+      nodeId,
+    );
+    return this.nodes.update(nodeId, { ...input, name });
+  }
+
+  // Labels are unique among the children of one parent (rooms on a floor, beds
+  // in a room, top-level blocks of a property), ignoring case and spacing.
+  private async assertNameFree(
+    propertyId: string,
+    parentNodeId: string | null,
+    labelKey: string,
+    excludeNodeId?: string,
+  ): Promise<void> {
+    const clash = await this.nodes.findSiblingByLabel(
+      propertyId,
+      parentNodeId,
+      labelKey,
+      excludeNodeId,
+    );
+    if (!clash) return;
+    const parent = parentNodeId ? await this.nodes.findById(parentNodeId) : null;
+    const where = parent?.name ? parent.name : 'this property';
+    const kind = clash.levelName?.trim() || 'space';
+    throw new StructureValidationError(
+      `A ${kind} named "${clash.name}" already exists in ${where}. Choose a different name.`,
+    );
   }
 
   async deleteNode(nodeId: string): Promise<void> {

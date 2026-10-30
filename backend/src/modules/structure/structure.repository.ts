@@ -302,4 +302,35 @@ export class PgHierarchyNodeRepository implements HierarchyNodeRepository {
     );
     return Number(rows[0]?.count ?? 0);
   }
+
+  async findSiblingByLabel(
+    propertyId: string,
+    parentNodeId: string | null,
+    labelKey: string,
+    excludeNodeId?: string,
+  ): Promise<{ id: string; name: string; levelName: string | null } | null> {
+    // Same rule as nodeLabelKey: prefix the level name unless the name has it.
+    const rows = await query<{ id: string; name: string; level_name: string | null }>(
+      `SELECT s.id, s.name, s.level_name
+         FROM (
+           SELECT n.id, n.name, l.display_name AS level_name,
+                  lower(regexp_replace(btrim(n.name), '\\s+', ' ', 'g')) AS norm,
+                  lower(regexp_replace(btrim(COALESCE(l.display_name, '')), '\\s+', ' ', 'g')) AS lvl
+             FROM hierarchy_nodes n
+             LEFT JOIN hierarchy_levels l ON l.id = n.level_id
+            WHERE n.property_id = $1
+              AND n.parent_node_id IS NOT DISTINCT FROM $2::uuid
+              AND COALESCE(n.is_active, true)
+              AND ($4::uuid IS NULL OR n.id <> $4::uuid)
+         ) s
+        WHERE CASE WHEN s.lvl = '' OR strpos(s.norm, s.lvl) > 0
+                   THEN s.norm
+                   ELSE s.lvl || ' ' || s.norm
+              END = $3
+        LIMIT 1`,
+      [propertyId, parentNodeId, labelKey, excludeNodeId ?? null],
+    );
+    const row = rows[0];
+    return row ? { id: row.id, name: row.name, levelName: row.level_name } : null;
+  }
 }
